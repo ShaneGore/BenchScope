@@ -3,6 +3,6 @@ from fastapi import FastAPI
 from app.main import app
 
 
-def test_application_imports_without_product_routes() -> None:
+def test_application_shell_has_only_health_routes() -> None:
     assert isinstance(app, FastAPI)
-    assert app.router.routes == []
+    assert {route.path for route in app.routes} == {"/health", "/ready"}
