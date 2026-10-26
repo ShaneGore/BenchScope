@@ -109,19 +109,13 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"][];
                     };
                 };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
             };
         };
         put?: never;
-        /** Create profile */
+        /**
+         * Create profile
+         * @description Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -131,16 +125,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": {
-                        name: string;
-                        model_name: string;
-                        quantization?: string | null;
-                        context_length?: number | null;
-                        inference_engine?: string;
-                        /** Format: uri */
-                        endpoint_url?: string | null;
-                        api_key_ref?: string | null;
-                    };
+                    "application/json": components["schemas"]["ProfileCreate"];
                 };
             };
             responses: {
@@ -153,19 +138,14 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"];
                     };
                 };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 /** @description Validation error */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -204,19 +184,23 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"];
                     };
                 };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 /** @description Not found */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Invalid profile id */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -241,20 +225,6 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Read-only demo mode */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 /** @description Not found */
                 404: {
                     headers: {
@@ -262,11 +232,23 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description Invalid profile id */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
             };
         };
         options?: never;
         head?: never;
-        /** Update profile */
+        /**
+         * Update profile
+         * @description Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
+         */
         patch: {
             parameters: {
                 query?: never;
@@ -276,18 +258,9 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: {
+            requestBody: {
                 content: {
-                    "application/json": {
-                        name?: string;
-                        model_name?: string;
-                        quantization?: string | null;
-                        context_length?: number | null;
-                        inference_engine?: string;
-                        /** Format: uri */
-                        endpoint_url?: string | null;
-                        api_key_ref?: string | null;
-                    };
+                    "application/json": components["schemas"]["ProfileUpdate"];
                 };
             };
             responses: {
@@ -299,26 +272,23 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"];
                     };
                 };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 /** @description Not found */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
                 /** @description Validation error */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -951,20 +921,47 @@ export interface components {
             prompt_set?: string;
         };
         ModelProfile: {
+            /** Format: uuid */
             id: string;
             owner_id: string;
             name: string;
             model_name: string;
-            quantization?: string | null;
-            context_length?: number | null;
-            inference_engine?: string | null;
-            /** Format: uri */
-            endpoint_url?: string | null;
-            api_key_ref?: string | null;
+            model_version: string | null;
+            quantisation: string | null;
+            /** @description Local mode only; treated as data and must not contain credentials. */
+            endpoint_url: string | null;
+            hardware_notes: string | null;
+            inference_config: {
+                [key: string]: unknown;
+            } | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        ProfileCreate: {
+            name: string;
+            model_name: string;
+            model_version?: string | null;
+            quantisation?: string | null;
+            /** @description Local mode only; treated as data and must not contain credentials. */
+            endpoint_url?: string | null;
+            hardware_notes?: string | null;
+            inference_config?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        ProfileUpdate: {
+            name?: string;
+            model_name?: string;
+            model_version?: string | null;
+            quantisation?: string | null;
+            /** @description Local mode only; treated as data and must not contain credentials. */
+            endpoint_url?: string | null;
+            hardware_notes?: string | null;
+            inference_config?: {
+                [key: string]: unknown;
+            } | null;
         };
         BenchmarkRun: {
             id: string;

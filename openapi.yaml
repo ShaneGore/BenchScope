@@ -79,19 +79,61 @@ components:
         prompt_set: { type: string }
     ModelProfile:
       type: object
-      required: [id, owner_id, name, model_name, created_at, updated_at]
+      additionalProperties: false
+      required:
+        - id
+        - owner_id
+        - name
+        - model_name
+        - model_version
+        - quantisation
+        - endpoint_url
+        - hardware_notes
+        - inference_config
+        - created_at
+        - updated_at
       properties:
-        id: { type: string }
+        id: { type: string, format: uuid }
         owner_id: { type: string }
         name: { type: string }
         model_name: { type: string }
-        quantization: { type: [string, "null"] }
-        context_length: { type: [number, "null"] }
-        inference_engine: { type: [string, "null"] }
-        endpoint_url: { type: [string, "null"], format: uri }
-        api_key_ref: { type: [string, "null"] }
+        model_version: { type: [string, "null"] }
+        quantisation: { type: [string, "null"] }
+        endpoint_url: { type: [string, "null"], description: Local mode only; treated as data and must not contain credentials. }
+        hardware_notes: { type: [string, "null"] }
+        inference_config:
+          type: [object, "null"]
+          additionalProperties: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ProfileCreate:
+      type: object
+      additionalProperties: false
+      required: [name, model_name]
+      properties:
+        name: { type: string, maxLength: 255 }
+        model_name: { type: string, maxLength: 255 }
+        model_version: { type: [string, "null"], maxLength: 255 }
+        quantisation: { type: [string, "null"], maxLength: 100 }
+        endpoint_url: { type: [string, "null"], description: Local mode only; treated as data and must not contain credentials. }
+        hardware_notes: { type: [string, "null"] }
+        inference_config:
+          type: [object, "null"]
+          additionalProperties: true
+    ProfileUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, maxLength: 255 }
+        model_name: { type: string, maxLength: 255 }
+        model_version: { type: [string, "null"], maxLength: 255 }
+        quantisation: { type: [string, "null"], maxLength: 100 }
+        endpoint_url: { type: [string, "null"], description: Local mode only; treated as data and must not contain credentials. }
+        hardware_notes: { type: [string, "null"] }
+        inference_config:
+          type: [object, "null"]
+          additionalProperties: true
     BenchmarkRun:
       type: object
       required: [id, owner_id, status, profile_snapshot, benchmark_config, started_at, metrics]
@@ -174,6 +216,7 @@ paths:
   /profiles:
     get:
       summary: List own profiles
+      security: []
       responses:
         "200":
           description: Profiles
@@ -182,82 +225,85 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ModelProfile" }
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ApiError" }
     post:
       summary: Create profile
+      description: Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
+      security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, model_name]
-              properties:
-                name: { type: string }
-                model_name: { type: string }
-                quantization: { type: [string, "null"] }
-                context_length: { type: [number, "null"] }
-                inference_engine: { type: string }
-                endpoint_url: { type: [string, "null"], format: uri }
-                api_key_ref: { type: [string, "null"] }
+            schema: { $ref: "#/components/schemas/ProfileCreate" }
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
-        "401": { description: Unauthorized }
-        "422": { description: Validation error }
-
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /profiles/{id}:
     parameters:
       - name: id
         in: path
         required: true
-        schema: { type: string }
+        schema: { type: string, format: uuid }
     get:
       summary: Get profile
+      security: []
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
-        "401": { description: Unauthorized }
-        "404": { description: Not found }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "422":
+          description: Invalid profile id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
     patch:
       summary: Update profile
+      description: Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
+      security: []
       requestBody:
+        required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                name: { type: string }
-                model_name: { type: string }
-                quantization: { type: [string, "null"] }
-                context_length: { type: [number, "null"] }
-                inference_engine: { type: string }
-                endpoint_url: { type: [string, "null"], format: uri }
-                api_key_ref: { type: [string, "null"] }
+            schema: { $ref: "#/components/schemas/ProfileUpdate" }
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
-        "401": { description: Unauthorized }
-        "404": { description: Not found }
-        "422": { description: Validation error }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
     delete:
       summary: Delete profile
+      security: []
       responses:
         "204": { description: Deleted }
-        "401": { description: Unauthorized }
-        "403": { description: Read-only demo mode }
         "404": { description: Not found }
+        "422":
+          description: Invalid profile id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /runs:
     get:
       summary: List runs
@@ -450,4 +496,3 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BenchmarkRun" }
         "404": { description: Not found }
-
