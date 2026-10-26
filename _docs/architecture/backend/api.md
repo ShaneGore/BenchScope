@@ -57,3 +57,9 @@ Basic per-user/per-IP limits on import and benchmark start to prevent abuse; spe
 ## Versioning
 
 `/api/v1`. Breaking changes require `/api/v2` or coordinated frontend release. OpenAPI exported to frontend build for type generation.
+## Contract authority and drift
+
+- Initial committed artifact: repository-root `openapi.yaml`, derived from the frontend service interface.
+- Maintenance command: `cd frontend && pnpm gen:api` regenerates `frontend/src/types/api.generated.ts`.
+- Drift check: `cd frontend && pnpm check:api` fails if generated types differ from the committed contract.
+- FastAPI-generated OpenAPI becomes the authoritative source of truth after backend feature tasks land; reconcile `openapi.yaml` against it before #13 integrates the real API client.

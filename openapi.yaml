@@ -1,0 +1,453 @@
+openapi: 3.1.0
+info:
+  title: BenchScope API
+  version: 0.1.0
+  description: Initial contract derived from the frontend service interface. Reconciliation target until FastAPI-generated OpenAPI becomes authoritative in later tasks.
+servers:
+  - url: /api/v1
+    description: API v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ApiError:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties:
+                type: string
+    RunStatus:
+      type: string
+      enum: [running, completed, failed, interrupted, cancelled]
+    ErrorCategory:
+      type: string
+      enum: [OOM, TIMEOUT, MODEL_ERROR, INFER_FRAMEWORK, CANCELLED, HOST_RESTART, UNKNOWN]
+    HardwareSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        gpu: { type: [string, "null"] }
+        gpu_vram_gb: { type: [number, "null"] }
+        cpu: { type: [string, "null"] }
+        ram_gb: { type: [number, "null"] }
+        os: { type: [string, "null"] }
+    RunEvent:
+      type: object
+      required: [ts, event]
+      properties:
+        ts: { type: string, format: date-time }
+        event: { type: string }
+        detail: { type: [string, "null"] }
+    RunMetrics:
+      type: object
+      additionalProperties: false
+      properties:
+        quality_score: { type: [number, "null"] }
+        pass_rate: { type: [number, "null"] }
+        ttft_ms: { type: [number, "null"] }
+        prompt_tokens: { type: [number, "null"] }
+        output_tokens: { type: [number, "null"] }
+        prompt_throughput_tps: { type: [number, "null"] }
+        generation_throughput_tps: { type: [number, "null"] }
+        elapsed_ms: { type: [number, "null"] }
+    ProfileSnapshot:
+      type: object
+      required: [profile_id, name, model_name]
+      properties:
+        profile_id: { type: string }
+        name: { type: string }
+        model_name: { type: string }
+        quantization: { type: [string, "null"] }
+        context_length: { type: [number, "null"] }
+        inference_engine: { type: [string, "null"] }
+    BenchmarkConfig:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        max_tokens: { type: integer }
+        concurrency: { type: integer }
+        prompt_set: { type: string }
+    ModelProfile:
+      type: object
+      required: [id, owner_id, name, model_name, created_at, updated_at]
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        name: { type: string }
+        model_name: { type: string }
+        quantization: { type: [string, "null"] }
+        context_length: { type: [number, "null"] }
+        inference_engine: { type: [string, "null"] }
+        endpoint_url: { type: [string, "null"], format: uri }
+        api_key_ref: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BenchmarkRun:
+      type: object
+      required: [id, owner_id, status, profile_snapshot, benchmark_config, started_at, metrics]
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        profile_snapshot: { $ref: "#/components/schemas/ProfileSnapshot" }
+        benchmark_config: { $ref: "#/components/schemas/BenchmarkConfig" }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        related_run_id: { type: [string, "null"] }
+        source: { type: [string, "null"], enum: [imported, launched, retry, null] }
+        fingerprint: { type: [string, "null"] }
+        artifact_ref: { type: [string, "null"] }
+        events: { type: array, items: { $ref: "#/components/schemas/RunEvent" } }
+        metrics: { $ref: "#/components/schemas/RunMetrics" }
+        error_category: { $ref: "#/components/schemas/ErrorCategory", nullable: true }
+        error_message_sanitised: { type: [string, "null"] }
+        process_exit_code: { type: [integer, "null"] }
+        hardware_snapshot: { $ref: "#/components/schemas/HardwareSnapshot", nullable: true }
+    PaginatedRuns:
+      type: object
+      required: [items, has_more]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/BenchmarkRun" } }
+        next_cursor: { type: [string, "null"] }
+        has_more: { type: boolean }
+    ImportResult:
+      type: object
+      oneOf:
+        - type: object
+          required: [ok, run]
+          properties:
+            ok: { const: true }
+            run: { $ref: "#/components/schemas/BenchmarkRun" }
+        - type: object
+          required: [ok, status, errors]
+          properties:
+            ok: { const: false }
+            status: { type: integer }
+            errors:
+              type: array
+              items:
+                type: object
+                required: [message]
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+            existingRun: { $ref: "#/components/schemas/BenchmarkRun" }
+    BenchmarkStartRequest:
+      type: object
+      required: [profile_id, config]
+      properties:
+        profile_id: { type: string }
+        config: { $ref: "#/components/schemas/BenchmarkConfig" }
+paths:
+  /health:
+    get:
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+  /ready:
+    get:
+      summary: Readiness check
+      security: []
+      responses:
+        "200":
+          description: Service is ready
+        "503":
+          description: Service is not ready
+  /profiles:
+    get:
+      summary: List own profiles
+      responses:
+        "200":
+          description: Profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ModelProfile" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+    post:
+      summary: Create profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, model_name]
+              properties:
+                name: { type: string }
+                model_name: { type: string }
+                quantization: { type: [string, "null"] }
+                context_length: { type: [number, "null"] }
+                inference_engine: { type: string }
+                endpoint_url: { type: [string, "null"], format: uri }
+                api_key_ref: { type: [string, "null"] }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401": { description: Unauthorized }
+        "422": { description: Validation error }
+
+  /profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get profile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    patch:
+      summary: Update profile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                model_name: { type: string }
+                quantization: { type: [string, "null"] }
+                context_length: { type: [number, "null"] }
+                inference_engine: { type: string }
+                endpoint_url: { type: [string, "null"], format: uri }
+                api_key_ref: { type: [string, "null"] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+        "422": { description: Validation error }
+    delete:
+      summary: Delete profile
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "403": { description: Read-only demo mode }
+        "404": { description: Not found }
+  /runs:
+    get:
+      summary: List runs
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/RunStatus" }
+        - name: model
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedRuns" }
+        "401": { description: Unauthorized }
+  /runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get run
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found }
+    delete:
+      summary: Delete run
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "403": { description: Read-only demo mode }
+        "404": { description: Not found }
+  /runs/import:
+    post:
+      summary: Import result JSON
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Imported
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportResult" }
+        "401": { description: Unauthorized }
+        "409":
+          description: Duplicate import
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportResult" }
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportResult" }
+  /runs/{id}/retry:
+    post:
+      summary: Retry failed run (local mode only)
+      x-local-only: true
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "403": { description: Not available in this mode }
+        "404": { description: Not found }
+        "409": { description: A benchmark run is already active }
+  /runs/compare:
+    get:
+      summary: Compare completed runs
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "422": { description: At least two runs required }
+
+  /benchmark/runs:
+    post:
+      summary: Start benchmark run (local mode only)
+      x-local-only: true
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BenchmarkStartRequest" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "404": { description: Not available in this mode }
+        "409": { description: A benchmark run is already active }
+  /benchmark/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Benchmark run status and events (local mode only)
+      x-local-only: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or not available }
+  /benchmark/runs/{id}/cancel:
+    post:
+      summary: Cancel benchmark run (local mode only)
+      x-local-only: true
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "401": { description: Unauthorized }
+        "404": { description: Not found or not available }
+        "409": { description: Run is not running }
+  /demo/runs:
+    get:
+      summary: Synthetic demo runs
+      security: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedRuns" }
+  /demo/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Synthetic demo run
+      security: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+        "404": { description: Not found }
+
