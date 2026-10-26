@@ -4,9 +4,9 @@
 
 ## Roles
 
-- PM - grooms a task before anyone implements it, follows _docs/team/pm.md
-- Engineer - implements one groomed task, follows _docs/team/software-engineer.md
-- QA - checks the result against the acceptance criteria, follows _docs/team/qa-engineer.md
+- PM - grooms a task before anyone implements it, follows `_docs/team/pm.md`; Copilot agent: `.github/agents/pm.agent.md`
+- Engineer - implements one groomed task, follows `_docs/team/software-engineer.md`; Copilot agent: `.github/agents/software-engineer.agent.md`
+- QA - checks the result against the acceptance criteria, follows `_docs/team/qa-engineer.md`; Copilot agent: `.github/agents/qa-engineer.agent.md`
 
 ## Commands
 
@@ -36,3 +36,7 @@
 ## Rules
 
 - Backend dependencies are added in `pyproject.toml` and locked with `uv.lock`; frontend dependencies are added in `package.json` and locked with `pnpm-lock.yaml`. Do not add one without asking.
+## Agent definitions
+
+- `_docs/team/` - required role instructions for PM, Software Engineer, and QA.
+- `.github/agents/` - required Copilot custom agent definitions for PM, Software Engineer, and QA.
