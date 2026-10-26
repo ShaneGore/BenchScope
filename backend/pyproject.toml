@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "BenchScope FastAPI backend"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.14",
     "fastapi>=0.115.0",
     "psycopg[binary]>=3.2.0",
     "pydantic-settings>=2.7.0",
+    "sqlalchemy>=2.0,<3.0",
     "uvicorn>=0.34.0",
 ]
 

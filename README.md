@@ -112,7 +112,7 @@ uv run ruff format .
 
 Prerequisites: Docker Engine or Docker Desktop with Compose v2.
 
-Compose builds the backend from `backend/` and runs PostgreSQL in a private Compose network. The database has no host-published port. The backend port is published only on `127.0.0.1`. Private benchmark, model endpoints, and raw artifacts remain on the host and are not mounted or packaged.
+Compose builds the backend from `backend/` and runs PostgreSQL in a private Compose network. PostgreSQL and the backend ports are published only on `127.0.0.1` for local development and host-run database tests. Private benchmark, model endpoints, and raw artifacts remain on the host and are not mounted or packaged.
 
 1. Copy the example environment file and replace its password placeholder with a local URL-safe password:
 
@@ -120,7 +120,7 @@ Compose builds the backend from `backend/` and runs PostgreSQL in a private Comp
    cp .env.example .env
    ```
 
-   Compose requires `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `API_PORT`.
+   Compose requires `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `API_PORT`. `POSTGRES_PORT` defaults to 5432.
 
 2. Build and start services:
 
@@ -147,6 +147,25 @@ Compose builds the backend from `backend/` and runs PostgreSQL in a private Comp
    ```sh
    docker compose down --volumes
    ```
+
+### PostgreSQL migrations and integration tests
+
+From `backend/`, set `DATABASE_URL` to the local Compose database URL and run
+`uv run alembic upgrade head` to apply the baseline. For integration tests,
+set `TEST_DATABASE_URL` to a disposable PostgreSQL database; the test creates
+and drops its own isolated schema. It refuses non-PostgreSQL URLs and skips
+when the variable is unset. For example, in PowerShell:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg://<user>:<password>@127.0.0.1:<port>/<database>"
+uv run alembic upgrade head
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
+uv run pytest tests/test_postgres_storage.py
+Remove-Item Env:DATABASE_URL, Env:TEST_DATABASE_URL
+```
+
+Pre-auth local storage fixtures use the fixed owner id `local`; owner ids are
+not accepted from callers.
 
 ## Offline smoke test
 

@@ -1,6 +1,7 @@
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
 from uuid import UUID, uuid4
@@ -11,9 +12,11 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import sessionmaker
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, load_settings
+from app.database import create_database_engine
 
 logger = logging.getLogger("app.request")
 CORRELATION_HEADER = "X-Correlation-ID"
@@ -106,14 +109,34 @@ def create_app(
     readiness_probe: Callable[[str | None], bool] | None = None,
 ) -> FastAPI:
     config = settings or load_settings()
+    database_url = (
+        config.database_url.get_secret_value() if config.database_url else None
+    )
+    engine = create_database_engine(database_url)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if engine is not None:
+                engine.dispose()
+
     app = FastAPI(
         title="BenchScope",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.settings = config
     app.state.readiness_probe = readiness_probe or database_is_ready
+    app.state.engine = engine
+    app.state.session_factory = (
+        sessionmaker(bind=engine, expire_on_commit=False)
+        if engine is not None
+        else None
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:
