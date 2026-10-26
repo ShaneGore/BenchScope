@@ -1,4 +1,5 @@
 ﻿- Tasks are tracked in `_docs/tasks.md`, one at a time
+- Once tasks are ported to GitHub issues, GitHub issues becomes the single source of truth for the backlog
 - Read the acceptance criteria before starting and before closing
 - Commit regularly
 
