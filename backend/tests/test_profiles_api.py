@@ -180,6 +180,43 @@ def test_invalid_create_and_patch_are_rejected_without_writes(
 
 
 @pytest.mark.parametrize(
+    ("endpoint_url", "secret"),
+    [
+        ("http://user:" + "malformed-secret@[::1", "malformed-secret"),
+        ("http://localhost/v1?sig=private-token", "private-token"),
+        ("http://localhost/v1?signature=private-token", "private-token"),
+        ("ftp://localhost/v1", "ftp://localhost"),
+        ("http:///v1", "/v1"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_invalid_endpoint_urls_are_rejected_without_writes(
+    local_api: tuple[TestClient, Engine],
+    endpoint_url: str,
+    secret: str,
+    operation: str,
+) -> None:
+    client, engine = local_api
+    profile = _create(client).json() if operation == "update" else None
+    if operation == "create":
+        response = _create(client, endpoint_url=endpoint_url)
+    else:
+        response = client.patch(
+            f"/profiles/{profile['id']}", json={"endpoint_url": endpoint_url}
+        )
+
+    assert response.status_code == 422
+    assert secret not in response.text
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(ModelProfile)) == int(
+            profile is not None
+        )
+    if profile is not None:
+        stored = client.get(f"/profiles/{profile['id']}").json()
+        assert stored["endpoint_url"] is None
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("endpoint_url", "http://private.example/v1"),

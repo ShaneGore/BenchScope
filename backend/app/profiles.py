@@ -31,6 +31,8 @@ _CREDENTIAL_QUERY_KEYS = {
     "privatekey",
     "secret",
     "secretkey",
+    "sig",
+    "signature",
     "token",
     "xapikey",
 }
@@ -42,8 +44,16 @@ def _validate_endpoint_url(value: str | None) -> str | None:
     try:
         parts = urlsplit(value)
         has_userinfo = parts.username is not None or parts.password is not None
+        hostname = parts.hostname
+        _ = parts.port
     except ValueError:
-        return value
+        raise ValueError("Invalid endpoint URL") from None
+    if (
+        parts.scheme.casefold() not in {"http", "https"}
+        or not parts.netloc
+        or not hostname
+    ):
+        raise ValueError("Endpoint URL must be an HTTP(S) URL with a host")
     has_credential_query = any(
         key.casefold().replace("_", "").replace("-", "").replace(".", "")
         in _CREDENTIAL_QUERY_KEYS
