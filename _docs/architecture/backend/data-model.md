@@ -74,3 +74,19 @@ All metric fields are nullable. Missing is distinct from zero; UI renders "unava
 ## Migrations
 
 Alembic; one migration per change; reviewed. No destructive changes without a rollback migration. Integration tests run against Postgres to avoid dialect drift.
+
+## PostgreSQL baseline
+
+The initial SQLAlchemy 2 schema stores `ModelProfile` and `BenchmarkRun` only.
+`RunEvent` remains optional and is not part of this baseline. The database uses
+UUID primary keys, timezone-aware timestamps, JSON columns for the documented
+snapshots/configuration, checked strings for run source/status, and the partial
+unique `(owner_id, import_fingerprint)` index. `started_at` is required;
+`completed_at` and every listed metric are nullable. Numeric precision and
+metric semantics remain unspecified; no additional benchmark-derived columns
+are introduced.
+
+Before authentication exists, local development and tests use the fixed owner
+`local` (`LOCAL_OWNER_ID`), never an owner supplied by a caller. `endpoint_url`
+is the documented local-only endpoint reference; credentials are not stored
+as separate fields or embedded in its value.
