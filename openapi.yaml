@@ -143,13 +143,13 @@ components:
           minItems: 1
           maxItems: 10000
           uniqueItems: true
-          items: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,127}$" }
+          items: { type: string, pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,126}[A-Za-z0-9._-])?$" }
     ImportedTaskResult:
       type: object
       additionalProperties: false
       required: [task_id, passed]
       properties:
-        task_id: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,127}$" }
+        task_id: { type: string, pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,126}[A-Za-z0-9._-])?$" }
         passed: { type: boolean }
     RunImportV2Request:
       type: object

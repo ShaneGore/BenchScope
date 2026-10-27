@@ -95,6 +95,79 @@ def test_export_maps_aliases_and_excludes_private_fields() -> None:
         assert private_key not in result_text
 
 
+def test_export_accepts_canonical_ids_with_case_and_internal_spaces() -> None:
+    manifest = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "Task A", "aliases": ["legacy-a"]},
+                {"release_id": "Task B"},
+            ],
+        }
+    ).encode()
+    result = export_run(
+        manifest,
+        row("Task A", True) + "\n" + row("Task B", False),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00Z",
+        ended_at="2026-10-26T10:00:01Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["benchmark_details"]["expected_task_ids"] == ["Task A", "Task B"]
+    assert result["task_results"] == [
+        {"task_id": "Task A", "passed": True},
+        {"task_id": "Task B", "passed": False},
+    ]
+    assert RunImportV2Request.model_validate(result).task_results[0].task_id == "Task A"
+
+
+def test_export_accepts_a_single_string_manifest_alias() -> None:
+    manifest = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [{"release_id": "Task A", "aliases": "legacy-A"}],
+        }
+    ).encode()
+    result = export_run(
+        manifest,
+        row("legacy-A", True),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00Z",
+        ended_at="2026-10-26T10:00:01Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["task_results"] == [{"task_id": "Task A", "passed": True}]
+
+
+@pytest.mark.parametrize(
+    "release_id", ["Task/A", r"Task\A", "Task:A", "Task\nA", " TaskA", "TaskA "]
+)
+def test_export_rejects_unsafe_or_whitespace_padded_ids(release_id: str) -> None:
+    manifest = json.dumps(
+        {"release": "release-1", "tasks": [{"release_id": release_id}]}
+    ).encode()
+    with pytest.raises(ExportError):
+        export_run(
+            manifest,
+            "",
+            benchmark_id="local-coding",
+            model_name="example/model",
+            profile_name="Local model",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1234,
+            repeat_index=0,
+        )
+
+
 @pytest.mark.parametrize(
     "jsonl",
     [

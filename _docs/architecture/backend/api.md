@@ -73,8 +73,8 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   and requires a selected seed/repeat group; both seed and repeat index are
   preserved in the allowlisted v2 benchmark config so distinct groups remain
   distinct imports. The manifest task-card shape is
-  `tasks: [{release_id, aliases?}]`; only canonical `release_id` values enter
-  the export.
+  `tasks: [{release_id, aliases?: string | string[]}]`; only canonical
+  `release_id` values enter the export.
 - `POST /runs/{id}/retry` — create a new attempt linked to a failed run (local mode only; hosted returns 403/404).
 
 ### Benchmark (local mode only)

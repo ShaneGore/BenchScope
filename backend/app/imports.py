@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -35,9 +36,9 @@ router = APIRouter()
 NonNegativeNumber = Annotated[StrictInt | StrictFloat, Field(ge=0, allow_inf_nan=False)]
 PositiveInteger = Annotated[StrictInt, Field(ge=1)]
 NonNegativeInteger = Annotated[StrictInt, Field(ge=0)]
-SafeTaskId = Annotated[
-    StrictStr, StringConstraints(pattern=r"^[a-z0-9][a-z0-9_-]{0,127}$")
-]
+SAFE_TASK_ID_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,126}[A-Za-z0-9._-])?$"
+SAFE_TASK_ID = re.compile(SAFE_TASK_ID_PATTERN)
+SafeTaskId = Annotated[StrictStr, StringConstraints(pattern=SAFE_TASK_ID_PATTERN)]
 
 
 class StrictObject(BaseModel):
@@ -120,12 +121,22 @@ class ImportedBenchmarkDetails(StrictObject):
     def expected_ids_must_be_unique(self) -> "ImportedBenchmarkDetails":
         if len(set(self.expected_task_ids)) != len(self.expected_task_ids):
             raise ValueError("expected_task_ids must be unique")
+        if any(
+            not SAFE_TASK_ID.fullmatch(task_id) for task_id in self.expected_task_ids
+        ):
+            raise ValueError("expected_task_ids must be safe canonical IDs")
         return self
 
 
 class ImportedTaskResult(StrictObject):
     task_id: SafeTaskId
     passed: StrictBool
+
+    @model_validator(mode="after")
+    def task_id_must_be_safe(self) -> "ImportedTaskResult":
+        if not SAFE_TASK_ID.fullmatch(self.task_id):
+            raise ValueError("task_id must be a safe canonical ID")
+        return self
 
 
 class RunImportV2Request(StrictObject):

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
+SAFE_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,126}[A-Za-z0-9._-])?$")
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 
@@ -59,7 +59,9 @@ def _manifest_task_ids(manifest: Any) -> tuple[str, list[str], dict[str, str]]:
             raise ExportError("manifest release_id is duplicated")
         task_ids.append(release_id)
         task_aliases = task.get("aliases", [])
-        if not isinstance(task_aliases, list):
+        if isinstance(task_aliases, str):
+            task_aliases = [task_aliases]
+        elif not isinstance(task_aliases, list):
             raise ExportError("manifest aliases are invalid")
         if any(not isinstance(alias, str) or not alias for alias in task_aliases):
             raise ExportError("manifest alias is invalid")

@@ -121,21 +121,21 @@ def valid_v2_request() -> dict[str, object]:
             "benchmark_id": "local-coding",
             "release": "release-1",
             "manifest_sha256": "a" * 64,
-            "expected_task_ids": ["task-a", "task-b"],
+            "expected_task_ids": ["Task A", "Task B"],
         },
-        "task_results": [{"task_id": "task-a", "passed": True}],
+        "task_results": [{"task_id": "Task A", "passed": True}],
     }
 
 
 def test_v2_validates_safe_unique_results_and_allows_incomplete_coverage() -> None:
     imported = RunImportV2Request.model_validate(valid_v2_request())
     assert imported.task_results[0].passed is True
-    assert imported.benchmark_details.expected_task_ids == ["task-a", "task-b"]
+    assert imported.benchmark_details.expected_task_ids == ["Task A", "Task B"]
 
     invalid = valid_v2_request()
     invalid["task_results"] = [
-        {"task_id": "task-a", "passed": True},
-        {"task_id": "task-a", "passed": False},
+        {"task_id": "Task A", "passed": True},
+        {"task_id": "Task A", "passed": False},
     ]
     with pytest.raises(ValidationError):
         RunImportV2Request.model_validate(invalid)
