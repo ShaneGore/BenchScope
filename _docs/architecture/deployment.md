@@ -1,12 +1,12 @@
 # Deployment design and readiness
 
-This document describes a possible hosted layout, not an active deployment.
-Issue #20 adds local image builds and a Pages-ready Vite build only. No account,
-service, repository environment, provider terms, or paid option has been
-configured or accepted. Before any provisioning, the owner must verify the
-current official terms below against the $0 recurring-cost constraint and
-approve the provider choice and configuration. Do not provision a provider or
-fallback before both checks.
+This document describes an owner-approved non-production test layout, not an
+active deployment. Issue #20 adds local image builds and a Pages-ready Vite
+build only. On 2026-10-27 the owner approved GitHub Pages for the public static
+frontend, Render Free for the API, Neon Free for a disposable database, and
+Clerk Hobby only if provisioning remains $0 and requires no payment method.
+Use synthetic data and test identities only. Stop if a provider requests
+payment details or a paid upgrade. No service is provisioned yet.
 
 ## Hosted layout
 
@@ -17,11 +17,13 @@ fallback before both checks.
 | Database | Neon PostgreSQL | Persistent application records through `DATABASE_URL` |
 | Authentication | Clerk, if enabled | Frontend sign-in; API verifies Clerk JWTs |
 
-These are candidates, not verified or provisioned services. GitHub Pages cannot
-run the backend, database, or benchmark runner. The browser's `VITE_API_URL`
-must point to the separately approved API origin. The API's `CORS_ORIGINS` must
-be an explicit allowlist of the deployed Pages origin(s), without wildcards.
-Local development continues to use the root Vite path and local API.
+GitHub Pages cannot run the backend, database, or benchmark runner. The
+browser's `VITE_API_URL` must point to the approved API origin. The API's
+`CORS_ORIGINS` must be an explicit allowlist of the deployed Pages origin(s),
+without wildcards. Local development continues to use the root Vite path and
+local API. Do not publish a frontend build until its API URL and hosted auth
+configuration are available; an unusable or misconfigured public site is not
+a successful deployment.
 
 ## Build and configuration boundaries
 
@@ -80,42 +82,72 @@ Current code behavior is limited to the following known facts:
   procedures, free-tier sleep timing, cold-start duration, or service limits.
   Verify each against current official provider documentation before use.
 
-## Staged promotion and rollback
+## Staged promotion, rollback, and recreation
 
 1. Keep development local; review a pull request and require its backend,
    frontend, and container image build jobs to pass.
-2. After owner approval and current terms checks, configure an isolated hosted
-   development environment with synthetic data and separate credentials.
-3. Use issue #21 for owner-approved hosted health/readiness, CORS, and smoke
-   verification. Promote to production only after that review and explicit
-   owner approval; use distinct production secrets and database configuration.
-4. For a frontend rollback, redeploy the last known-good Pages artifact from
-   its source commit (or revert the change and rebuild). For an API rollback,
-   redeploy the last known-good image/commit using the selected host's reviewed
-   procedure. For a database migration issue, stop promotion and follow a
-   previously verified backup/restore or forward-fix procedure; do not assume
-   migrations are reversible.
+2. The owner has authorized this isolated hosted development environment.
+   Provision only the services in the table above, with synthetic fixtures,
+   separate test credentials, no payment method, and no paid upgrade.
+3. Before smoke tests, configure GitHub Pages with a Vite build containing the
+   public API URL and Pages base path; configure the API with hosted mode,
+   explicit Pages CORS origin, test Clerk issuer/audience/JWKS values, and
+   `BENCHMARK_ENABLED=false`. Keep all backend secrets outside GitHub Pages and
+   the repository.
+4. Use issue #21 to record health/readiness, anonymous demo, auth, import,
+   comparison, owner-isolation, and rollback results. Promote to production
+   only after that review and separate explicit owner approval.
+5. **Frontend rollback:** redeploy the Pages site from the last-known-good
+   source commit using the Pages deployment workflow, or revert through a PR
+   and redeploy. Keep the source commit and successful deployment URL in
+   issue #21.
+6. **API rollback:** use Render's rollback to a known-good deploy when it is
+   available; otherwise redeploy the last-known-good source commit. Free
+   service rollback history is limited, so do not depend on old deployment
+   entries remaining available.
+7. **Database recovery:** Neon Free is disposable test storage, not a backup
+   target. For a failed migration or contaminated test data, stop smoke tests,
+   discard the test branch/database, create a fresh disposable database, run
+   the reviewed Alembic migrations, and seed synthetic fixtures again. Do not
+   rely on point-in-time restore or assume migrations are reversible.
+8. **Auth recreation:** use only the separate Clerk test application and
+   synthetic identities. If its test state is unusable, recreate the test
+   identities in that application; never copy production identities or
+   credentials.
 
-This is a documented procedure only. Deployment, health/readiness, production
-CORS, promotion, and rollback have not been exercised; those require approved
-owner-controlled configuration and belong to #21.
+No deployment, hosted health/readiness check, CORS check, migration, smoke test,
+rollback, or recreation has been exercised yet. Record actual deployment URLs
+and rehearsal results in #21; do not mark its acceptance criteria complete
+until verified.
 
 ## Provider terms to recheck before provisioning
 
-Current requirements, eligibility, limits, and payment-method rules have not
-been verified for this task. Check the official sources immediately before
-provisioning; confirm $0 recurring cost, payment-method requirements, and
-owner approval. No provider or fallback may be provisioned until those checks
-are complete.
+Current documented free-tier limits were checked on 2026-10-27; they do not
+guarantee that account onboarding will avoid a payment-method prompt. Stop at
+any such prompt. Do not add a provider or fallback outside the approved list.
+
+- Render Free web services sleep after 15 minutes without inbound traffic and
+  take about a minute to start again. Free web services have a 750
+  instance-hour monthly workspace allowance and are explicitly not for
+  production. Free Render Postgres expires after 30 days and has no backups;
+  do not use it.
+- Neon Free is permanent and does not require a credit card according to its
+  pricing page. Limits include 100 CU-hours/project, 1 GB/project, scale-to-
+  zero after five minutes, and a six-hour history window; Instant Restore is
+  not included. Do not treat this as backup/PITR.
+- Clerk Hobby is free and does not require a credit card according to its
+  pricing page; the current allowance is 50,000 MRUs per app. Use a separate
+  test application.
 
 - GitHub Pages eligibility, terms, and usage restrictions:
   [GitHub Pages documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)
   and [GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
-- Render free-tier pricing, service behavior, and payment-method requirements:
-  [Render pricing](https://render.com/pricing).
-- Neon limits, usage billing, and payment requirements:
-  [Neon pricing](https://neon.tech/pricing).
-- Clerk terms and plan limits if authentication is deployed:
+- Render free-tier service behavior:
+  [Render free instances](https://render.com/docs/free) and
+  [Render deploys and rollbacks](https://render.com/docs/deploys#rollback-a-deploy).
+- Neon plan limits:
+  [Neon pricing](https://neon.com/pricing).
+- Clerk plan limits:
   [Clerk pricing](https://clerk.com/pricing).
 
 Do not treat earlier free-tier descriptions or numbers elsewhere in the
