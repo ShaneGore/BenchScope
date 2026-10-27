@@ -81,12 +81,12 @@ compose.yaml      Local backend and PostgreSQL stack
 From `frontend/`:
 
 ```sh
-pnpm install
-pnpm dev
-pnpm test
-pnpm build
-pnpm gen:api
-pnpm check:api
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
+corepack pnpm test
+corepack pnpm build
+corepack pnpm gen:api
+corepack pnpm check:api
 ```
 
 ## Backend
@@ -94,11 +94,49 @@ pnpm check:api
 From `backend/`:
 
 ```sh
-uv sync
+uv sync --locked --group dev
+uv lock --check
 uv run uvicorn app.main:app --reload
 uv run pytest
 uv run ruff check .
-uv run ruff format .
+uv run ruff format --check .
+```
+
+## CI quality gates
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`. Its
+`backend` and `frontend` jobs are the required quality, test, and API-contract
+checks; both fail the workflow on failure. The backend job uses a health-checked,
+ephemeral PostgreSQL service and runs the full test suite, including OpenAPI
+contract tests. The frontend build includes `tsc --noEmit`, and `check:api`
+verifies generated API types have no drift. No optional checks are included.
+The separate Playwright `test:journey` script is not part of this required
+workflow.
+
+The workflow has read-only repository permissions and needs no credentials,
+private benchmark materials, model weights, GPU, or paid service. Docker image
+builds are deferred to issue #20, which owns both Dockerfiles and image checks.
+
+To run the same checks locally, start a disposable PostgreSQL instance and set
+`TEST_DATABASE_URL` to its URL. From the repository root in PowerShell:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql+psycopg://<user>:<password>@127.0.0.1:<port>/<database>"
+Push-Location backend
+uv sync --locked --group dev
+uv lock --check
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+Pop-Location
+
+Push-Location frontend
+corepack pnpm install --frozen-lockfile
+corepack pnpm test
+corepack pnpm build
+corepack pnpm check:api
+Pop-Location
+Remove-Item Env:TEST_DATABASE_URL
 ```
 
 ## API contract

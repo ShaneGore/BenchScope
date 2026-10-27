@@ -40,16 +40,26 @@ Local and hosted share one codebase; mode via `APP_MODE`.
 
 ## 6. CI/CD (GitHub Actions)
 
-Pipeline stages:
-1. Lint + typecheck (Python ruff/pyright; TS ESLint/tsc).
-2. Tests (pytest against Postgres service container; Vitest; Playwright).
-3. Build images (backend; frontend).
-4. Deploy frontend to Pages.
-5. Deploy backend to Render (trigger deploy hook or Render auto-deploy).
-6. Smoke test hosted endpoints.
-7. Promote (manual) from dev to prod where applicable.
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`. The
+`backend` and `frontend` jobs are the required quality, test, and contract
+gates; configure both job checks as required in the repository ruleset to block
+merges when either fails. No optional jobs are defined.
 
-Runs on public repo = unlimited minutes. Private benchmark not available in CI; tests use fakes/fixtures.
+- Backend: Python 3.12, locked `uv` development dependencies, Ruff lint and
+  format checks, and the full pytest suite against a health-checked,
+  ephemeral PostgreSQL service.
+- Frontend: Node 22, pnpm selected from `frontend/package.json`, frozen-lock
+  install, Vitest, production build (`tsc --noEmit`), and generated API drift
+  check.
+- The workflow uses read-only repository permissions and does not need secrets,
+  private benchmark materials, model weights, a GPU, or paid services.
+- Dockerfiles and image-build checks are deferred to #20. Hosted deploy,
+  smoke-test, and promotion steps are not part of this workflow. Python
+  type-checker and frontend lint scripts are not currently configured.
+- The separate Playwright `test:journey` script is not a required CI check.
+
+See the repository README for exact local commands. The tests use synthetic
+fixtures and fake adapters; private benchmark assets remain local-only.
 
 ## 7. Rollback
 

@@ -31,14 +31,14 @@
 | Container base | Multi-stage Dockerfiles (backend via `uv`, frontend via Node build) |
 | Observability (local) | OpenTelemetry (FastAPI + React) → OTLP; Prometheus + Loki + Tempo + Grafana, self-hosted in Compose |
 | Observability (hosted) | Optional Grafana Cloud Free for hosted API telemetry; not required for MVP |
-| CI/CD | GitHub Actions (lint, typecheck, tests, image build, deploy, promote) |
+| CI/CD | GitHub Actions (required tests, Ruff checks, and API contract checks; Docker image builds deferred to #20) |
 | Error monitoring | None by default (add only if a concrete need justifies it; Sentry not included) |
 | Testing (backend) | pytest + pytest-asyncio + HTTPX |
 | Testing (frontend) | Vitest + React Testing Library |
 | Testing (e2e) | Playwright |
 | Lint/format (Python) | ruff (lint + format) |
-| Type checking (Python) | pyright (or mypy) |
-| Lint/format (TS) | ESLint + Prettier |
+| Type checking (Python) | Not currently configured |
+| Lint/format (TS) | No frontend lint script currently configured |
 
 ## 2. Why this stack (rationale and trade-offs)
 
