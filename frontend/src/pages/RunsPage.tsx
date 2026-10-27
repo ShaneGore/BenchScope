@@ -264,7 +264,16 @@ function RunsTable({
                   </button>
                 </td>
                 <td className="px-2 py-2.5 hidden md:table-cell">
-                  <span className="text-xs text-text-secondary font-mono">{r.benchmark_config.name}</span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-text-secondary font-mono">{r.benchmark_config.name}</span>
+                    {r.benchmark_details && (
+                      <span className="text-[10px] text-text-muted">
+                        {r.benchmark_details.benchmark_id} · {r.benchmark_details.release} ·{' '}
+                        {r.task_results?.length ?? 0}/{r.benchmark_details.expected_task_ids.length} tasks · seed{' '}
+                        {r.benchmark_config.seed ?? '—'} / repeat {r.benchmark_config.repeat_index ?? '—'}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-2 py-2.5 text-right font-mono tabular-nums text-xs">
                   {metricAvailable(r.metrics.quality_score) ? (

@@ -45,6 +45,8 @@ class BenchmarkRunResponse(BaseModel):
     error_message_sanitised: str | None = None
     process_exit_code: int | None = None
     hardware_snapshot: dict[str, Any] | None = None
+    benchmark_details: dict[str, Any] | None = None
+    task_results: list[dict[str, Any]] | None = None
 
 
 class PaginatedRunsResponse(BaseModel):

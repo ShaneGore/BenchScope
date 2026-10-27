@@ -513,7 +513,7 @@ export interface paths {
         put?: never;
         /**
          * Import result JSON
-         * @description Imports one normalized, completed run summary. A trusted exporter must create benchscope.run.v1; private per-trial JSONL is not accepted and the raw request bytes are not retained. Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
+         * @description Imports one normalized, completed run summary in strict benchscope.run.v1 or benchscope.run.v2 format. Private per-trial JSONL is not accepted directly and raw request bytes are not retained. V2 includes safe benchmark details and canonical binary task results; incomplete task coverage keeps pass_rate null. V2 imports may include per-task token totals and elapsed time only; other metrics remain null. Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
          */
         post: {
             parameters: {
@@ -524,7 +524,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["RunImportRequest"];
+                    "application/json": components["schemas"]["RunImportRequest"] | components["schemas"]["RunImportV2Request"];
                 };
             };
             responses: {
@@ -660,7 +660,7 @@ export interface paths {
         };
         /**
          * Compare completed runs
-         * @description Requires at least two distinct UUIDs. If any ID is missing or not owned by the authenticated owner, rejects the entire batch with the same generic 404. Returns completed runs only, in input order; if fewer than two remain, returns 422. Metric values are passed through, including null values.
+         * @description Requires at least two distinct UUIDs. If any ID is missing or not owned by the authenticated owner, rejects the entire batch with the same generic 404. Returns completed runs only, in input order; if fewer than two remain, returns 422. Metric values are passed through, including null values. V2 task results are returned on each run; clients may compare them only when benchmark ID, release, manifest digest, and expected task IDs match.
          */
         get: {
             parameters: {
@@ -1026,6 +1026,16 @@ export interface components {
             ctx?: number;
             seed?: number;
         };
+        ImportedBenchmarkConfigV2: {
+            name: string;
+            temperature?: number;
+            max_tokens?: number;
+            reasoning?: boolean;
+            mtp?: boolean;
+            ctx?: number;
+            seed?: number;
+            repeat_index: number;
+        };
         ImportedMetrics: {
             quality_score?: number | null;
             pass_rate?: number | null;
@@ -1034,6 +1044,15 @@ export interface components {
             output_tokens?: number | null;
             prompt_throughput_tps?: number | null;
             generation_throughput_tps?: number | null;
+            elapsed_ms?: number | null;
+        };
+        /** @description Only allowlisted aggregate metrics with confirmed semantics. Prompt and output token totals are null unless every selected task row contains a valid non-negative integer. Elapsed time is derived from the supplied timezone-aware start and end timestamps. */
+        ImportedMetricsV2: {
+            /** @description Aggregate prompt tokens. */
+            prompt_tokens?: number | null;
+            /** @description Aggregate output tokens. */
+            output_tokens?: number | null;
+            /** @description End minus start in milliseconds. */
             elapsed_ms?: number | null;
         };
         ImportedHardwareSnapshot: {
@@ -1062,6 +1081,37 @@ export interface components {
             metrics?: components["schemas"]["ImportedMetrics"];
             hardware_snapshot?: components["schemas"]["ImportedHardwareSnapshot"] | null;
         };
+        ImportedBenchmarkDetails: {
+            benchmark_id: string;
+            /** @description Benchmark version from the manifest's release field. */
+            release: string;
+            manifest_sha256: string;
+            expected_task_ids: string[];
+        };
+        ImportedTaskResult: {
+            task_id: string;
+            passed: boolean;
+        };
+        RunImportV2Request: {
+            /** @constant */
+            format_version: "benchscope.run.v2";
+            profile_snapshot: components["schemas"]["ImportedProfileSnapshot"];
+            benchmark_config: components["schemas"]["ImportedBenchmarkConfigV2"];
+            /**
+             * Format: date-time
+             * @description Must include an operator-supplied timezone offset.
+             */
+            started_at: string;
+            /**
+             * Format: date-time
+             * @description Must include an operator-supplied timezone offset and be at or after started_at.
+             */
+            ended_at: string;
+            benchmark_details: components["schemas"]["ImportedBenchmarkDetails"];
+            /** @description Outcomes may be incomplete but task IDs must be unique and expected. */
+            task_results: components["schemas"]["ImportedTaskResult"][];
+            metrics?: components["schemas"]["ImportedMetricsV2"];
+        };
         ProfileSnapshot: {
             profile_id?: string | null;
             name: string;
@@ -1080,6 +1130,7 @@ export interface components {
             mtp?: boolean | null;
             ctx?: number | null;
             seed?: number | null;
+            repeat_index?: number | null;
             concurrency?: number;
             prompt_set?: string;
         };
@@ -1148,6 +1199,8 @@ export interface components {
             error_message_sanitised?: string | null;
             process_exit_code?: number | null;
             hardware_snapshot?: components["schemas"]["HardwareSnapshot"];
+            benchmark_details?: components["schemas"]["ImportedBenchmarkDetails"] | null;
+            task_results?: components["schemas"]["ImportedTaskResult"][] | null;
         };
         PaginatedRuns: {
             items: components["schemas"]["BenchmarkRun"][];

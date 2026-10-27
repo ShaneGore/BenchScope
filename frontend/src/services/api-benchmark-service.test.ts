@@ -126,11 +126,22 @@ test('maps profile CRUD to the in-scope API contract', async () => {
 });
 
 test('filters history, preserves empty results and nullable metrics, maps detail and compare', async () => {
+  const taskRun: ApiRun = {
+    ...run,
+    benchmark_config: { name: 'local-coding', seed: 1234, repeat_index: 0 },
+    benchmark_details: {
+      benchmark_id: 'local-coding',
+      release: 'release-1',
+      manifest_sha256: 'a'.repeat(64),
+      expected_task_ids: ['task-a', 'task-b'],
+    },
+    task_results: [{ task_id: 'task-a', passed: true }],
+  };
   const { fetcher, mock } = fetchQueue(
     jsonResponse({ items: [], next_cursor: null, has_more: false }),
-    jsonResponse({ items: [run], next_cursor: null, has_more: false }),
-    jsonResponse(run),
-    jsonResponse([run, run])
+    jsonResponse({ items: [taskRun], next_cursor: null, has_more: false }),
+    jsonResponse(taskRun),
+    jsonResponse([taskRun, taskRun])
   );
   const service = new ApiBenchmarkService('http://localhost:8000', fetcher);
 
@@ -151,6 +162,12 @@ test('filters history, preserves empty results and nullable metrics, maps detail
     ttft_ms: null,
     output_tokens: 100,
     elapsed_ms: null,
+  });
+  expect(filtered.items[0]?.benchmark_details?.release).toBe('release-1');
+  expect(filtered.items[0]?.task_results).toEqual([{ task_id: 'task-a', passed: true }]);
+  expect(filtered.items[0]?.benchmark_config).toMatchObject({
+    seed: 1234,
+    repeat_index: 0,
   });
   expect(mock.mock.calls[1]?.[0]).toContain(
     '/api/v1/runs?status=completed&model=example%2Fmodel&from=2026-01-01T00%3A00%3A00Z&limit=10'

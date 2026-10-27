@@ -1,0 +1,314 @@
+import json
+
+import pytest
+
+from app.imports import RunImportV2Request
+from scripts.export_private_jsonl import ExportError, export_run
+
+MANIFEST = {
+    "release": "release-1",
+    "tasks": [
+        {"release_id": "release-task-a", "aliases": ["legacy-a"]},
+        {"release_id": "release-task-b", "aliases": ["legacy-b"]},
+    ],
+}
+MANIFEST_BYTES = json.dumps(MANIFEST).encode()
+
+
+def row(task_id: str, passed: bool, **extra: object) -> str:
+    return json.dumps(
+        {
+            "task_id": task_id,
+            "seed": 1234,
+            "repeat_index": 0,
+            "pass": passed,
+            "prompt": "private prompt",
+            "served_model_path": "private path",
+            "error": "private error",
+            "generated_code": "private output",
+            "api_key": "private credential",
+            "prompt_sha256_16": "private hash",
+            "prompt_tokens": 17,
+            "output_tokens": 9,
+            "wall_s": "private wall time",
+            "tok_per_s": "private throughput",
+            "vram_peak_mib": "private VRAM",
+            "timestamp_utc": "private trial time",
+            **extra,
+        }
+    )
+
+
+def export(jsonl: str, **overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "benchmark_id": "local-coding",
+        "model_name": "example/model",
+        "profile_name": "Local model",
+        "started_at": "2026-10-26T10:00:00Z",
+        "ended_at": "2026-10-26T10:10:00+00:00",
+        "seed": 1234,
+        "repeat_index": 0,
+    }
+    values.update(overrides)
+    return export_run(MANIFEST_BYTES, jsonl, **values)  # type: ignore[arg-type]
+
+
+def test_export_maps_aliases_and_excludes_private_fields() -> None:
+    result = export(row("legacy-a", True) + "\n" + row("release-task-b", False))
+    result_text = json.dumps(result)
+
+    assert result["format_version"] == "benchscope.run.v2"
+    assert result["benchmark_config"] == {
+        "name": "local-coding",
+        "seed": 1234,
+        "repeat_index": 0,
+    }
+    assert result["benchmark_details"]["expected_task_ids"] == [
+        "release-task-a",
+        "release-task-b",
+    ]
+    assert result["task_results"] == [
+        {"task_id": "release-task-a", "passed": True},
+        {"task_id": "release-task-b", "passed": False},
+    ]
+    assert result["metrics"] == {
+        "prompt_tokens": 34,
+        "output_tokens": 18,
+        "elapsed_ms": 600000,
+    }
+    assert (
+        RunImportV2Request.model_validate(result).task_results[0].task_id
+        == "release-task-a"
+    )
+    assert result["benchmark_details"]["manifest_sha256"]
+    for private in (
+        "private prompt",
+        "private path",
+        "private error",
+        "private output",
+        "private credential",
+        "private wall time",
+        "private throughput",
+        "private VRAM",
+    ):
+        assert private not in result_text
+    for private_key in (
+        "prompt_sha256_16",
+        "served_model_path",
+        "error",
+        "generated_code",
+        "api_key",
+        "wall_s",
+        "tok_per_s",
+        "vram_peak_mib",
+        "timestamp_utc",
+    ):
+        assert private_key not in result_text
+
+
+def test_export_preserves_null_token_totals_and_computes_elapsed_ms() -> None:
+    first = json.loads(row("release-task-a", True, prompt_tokens=None))
+    second = json.loads(row("release-task-b", False))
+    del second["output_tokens"]
+    result = export_run(
+        MANIFEST_BYTES,
+        json.dumps(first) + "\n" + json.dumps(second),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00.125Z",
+        ended_at="2026-10-26T10:00:03.625Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["metrics"] == {
+        "prompt_tokens": None,
+        "output_tokens": None,
+        "elapsed_ms": 3500,
+    }
+    assert RunImportV2Request.model_validate(result).metrics.prompt_tokens is None
+
+
+@pytest.mark.parametrize(
+    ("metric", "value"),
+    [
+        ("prompt_tokens", -1),
+        ("prompt_tokens", True),
+        ("prompt_tokens", 1.5),
+        ("output_tokens", "9"),
+    ],
+)
+def test_export_rejects_invalid_token_values(metric: str, value: object) -> None:
+    with pytest.raises(ExportError, match=f"invalid {metric}"):
+        export(row("release-task-a", True, **{metric: value}))
+
+
+def test_export_accepts_canonical_ids_with_case_and_internal_spaces() -> None:
+    manifest = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "Task A", "aliases": ["legacy-a"]},
+                {"release_id": "Task B"},
+            ],
+        }
+    ).encode()
+    result = export_run(
+        manifest,
+        row("Task A", True) + "\n" + row("Task B", False),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00Z",
+        ended_at="2026-10-26T10:00:01Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["benchmark_details"]["expected_task_ids"] == ["Task A", "Task B"]
+    assert result["task_results"] == [
+        {"task_id": "Task A", "passed": True},
+        {"task_id": "Task B", "passed": False},
+    ]
+    assert RunImportV2Request.model_validate(result).task_results[0].task_id == "Task A"
+
+
+def test_export_accepts_a_single_string_manifest_alias() -> None:
+    manifest = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [{"release_id": "Task A", "aliases": "legacy-A"}],
+        }
+    ).encode()
+    result = export_run(
+        manifest,
+        row("legacy-A", True),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00Z",
+        ended_at="2026-10-26T10:00:01Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["task_results"] == [{"task_id": "Task A", "passed": True}]
+
+
+@pytest.mark.parametrize(
+    "release_id", ["Task/A", r"Task\A", "Task:A", "Task\nA", " TaskA", "TaskA "]
+)
+def test_export_rejects_unsafe_or_whitespace_padded_ids(release_id: str) -> None:
+    manifest = json.dumps(
+        {"release": "release-1", "tasks": [{"release_id": release_id}]}
+    ).encode()
+    with pytest.raises(ExportError):
+        export_run(
+            manifest,
+            "",
+            benchmark_id="local-coding",
+            model_name="example/model",
+            profile_name="Local model",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1234,
+            repeat_index=0,
+        )
+
+
+@pytest.mark.parametrize(
+    "jsonl",
+    [
+        "{",
+        "[]",
+        row("release-task-a", "yes"),  # type: ignore[arg-type]
+        row("release-task-a", True, seed="1234"),
+    ],
+)
+def test_rejects_malformed_records(jsonl: str) -> None:
+    with pytest.raises(ExportError):
+        export(jsonl)
+
+
+def test_rejects_duplicate_canonical_outcomes_after_alias_mapping() -> None:
+    with pytest.raises(ExportError, match="duplicate task outcome"):
+        export(row("legacy-a", True) + "\n" + row("release-task-a", False))
+
+
+def test_selects_one_seed_repeat_group_and_requires_explicit_zoned_times() -> None:
+    selected = row("legacy-a", True)
+    other_group = row("release-task-b", False, repeat_index=1)
+    result = export(selected + "\n" + other_group)
+    assert result["task_results"] == [{"task_id": "release-task-a", "passed": True}]
+
+    with pytest.raises(ExportError, match="timezone"):
+        export(selected, started_at="2026-10-26T10:00:00")
+    with pytest.raises(ExportError, match="no records"):
+        export(row("release-task-a", True), repeat_index=2)
+    repeat_one = export(row("release-task-a", True, repeat_index=1), repeat_index=1)
+    assert repeat_one["benchmark_config"]["repeat_index"] == 1
+
+
+def test_rejects_alias_that_shadows_another_canonical_release_id() -> None:
+    conflicting = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "task-a"},
+                {"release_id": "task-b", "aliases": ["task-a"]},
+            ],
+        }
+    ).encode()
+
+    with pytest.raises(ExportError, match="conflicts with a canonical release_id"):
+        export_run(
+            conflicting,
+            row("task-a", True),
+            benchmark_id="id",
+            model_name="model",
+            profile_name="profile",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1,
+            repeat_index=0,
+        )
+
+
+def test_rejects_unsafe_release_ids_and_ambiguous_aliases() -> None:
+    unsafe = json.dumps(
+        {"release": "release-1", "tasks": [{"release_id": "../private"}]}
+    ).encode()
+    with pytest.raises(ExportError):
+        export_run(
+            unsafe,
+            "",
+            benchmark_id="id",
+            model_name="model",
+            profile_name="profile",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1,
+            repeat_index=0,
+        )
+    ambiguous = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "task-a", "aliases": ["same"]},
+                {"release_id": "task-b", "aliases": ["same"]},
+            ],
+        }
+    ).encode()
+    with pytest.raises(ExportError, match="ambiguous"):
+        export_run(
+            ambiguous,
+            "",
+            benchmark_id="id",
+            model_name="model",
+            profile_name="profile",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1,
+            repeat_index=0,
+        )

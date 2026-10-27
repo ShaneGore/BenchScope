@@ -8,6 +8,7 @@ import { linkProps, navigate } from '@/lib/router';
 import { usePolling } from '@/lib/hooks';
 import { fmtDate, fmtElapsed } from '@/lib/format';
 import { METRIC_DEFS, metricAvailable, runProfileLabel } from '@/lib/metrics';
+import { taskResult } from '@/lib/task-results';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -172,6 +173,22 @@ export function RunDetailPage({
             />
             <MetaRow label="Engine" value={run.profile_snapshot.inference_engine ?? 'Unavailable'} />
             <MetaRow label="Config" value={run.benchmark_config.name} />
+            {run.benchmark_details && (
+              <>
+                <MetaRow label="Seed" value={run.benchmark_config.seed?.toString() ?? 'Unavailable'} />
+                <MetaRow label="Repeat" value={run.benchmark_config.repeat_index?.toString() ?? 'Unavailable'} />
+              </>
+            )}
+            {run.benchmark_details && (
+              <>
+                <MetaRow label="Benchmark" value={run.benchmark_details.benchmark_id} />
+                <MetaRow label="Release" value={run.benchmark_details.release} />
+                <MetaRow
+                  label="Task coverage"
+                  value={`${run.task_results?.length ?? 0}/${run.benchmark_details.expected_task_ids.length}`}
+                />
+              </>
+            )}
             <MetaRow label="Started" value={fmtDate(run.started_at)} />
             <MetaRow label="Ended" value={fmtDate(run.ended_at)} />
             <MetaRow label="Elapsed" value={fmtElapsed(run.started_at, run.ended_at)} />
@@ -180,6 +197,41 @@ export function RunDetailPage({
           </dl>
         </Card>
       </div>
+
+      {run.benchmark_details && (
+        <Card>
+          <CardHeader
+            title="Benchmark task outcomes"
+            subtitle={`${run.benchmark_details.benchmark_id} · ${run.benchmark_details.release}`}
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left">
+                  <th className="px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Task</th>
+                  <th className="px-2 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-text-muted">Outcome</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {run.benchmark_details.expected_task_ids.map((taskId) => {
+                  const passed = taskResult(run, taskId);
+                  return (
+                    <tr key={taskId}>
+                      <td className="px-2 py-2 font-mono text-text-secondary">{taskId}</td>
+                      <td className="px-2 py-2 text-right text-text-primary">
+                        {passed == null ? 'Not run' : passed ? 'Pass' : 'Fail'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-text-muted font-mono break-all">
+            Manifest SHA-256: {run.benchmark_details.manifest_sha256}
+          </p>
+        </Card>
+      )}
 
       {isFailed && (
         <Card>

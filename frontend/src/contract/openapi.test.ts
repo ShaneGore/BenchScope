@@ -113,3 +113,21 @@ test("nullable metrics are represented as number | null", () => {
   expect(m.quality_score).toBeNull();
   expect(m.ttft_ms).toBe(12);
 });
+
+test("v2 contract exposes safe benchmark details and task outcomes", () => {
+  type ImportV2 = components["schemas"]["RunImportV2Request"];
+  type ImportMetricsV2 = components["schemas"]["ImportedMetricsV2"];
+  type TaskResult = components["schemas"]["ImportedTaskResult"];
+  const task: TaskResult = { task_id: "task-a", passed: true };
+  const metrics: ImportMetricsV2 = {
+    prompt_tokens: 17,
+    output_tokens: null,
+    elapsed_ms: 1000,
+  };
+  expectTypeOf<ImportV2>().toHaveProperty("benchmark_details");
+  expectTypeOf<ImportV2>().toHaveProperty("task_results");
+  expectTypeOf<ImportV2>().toHaveProperty("metrics");
+  expectTypeOf<ImportMetricsV2>().not.toHaveProperty("quality_score");
+  expect(task.passed).toBe(true);
+  expect(metrics.elapsed_ms).toBe(1000);
+});
