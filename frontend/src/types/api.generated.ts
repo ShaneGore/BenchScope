@@ -590,7 +590,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Retry failed run (local mode only) */
+        /**
+         * Retry failed launched run (local mode only)
+         * @description Creates a distinct attempt linked to the prior run. Retry lineage and configuration are server-derived from the owner-scoped failed run.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -602,12 +605,12 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                201: {
+                202: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["BenchmarkRun"];
+                        "application/json": components["schemas"]["RunStartResponse"];
                     };
                 };
                 /** @description Missing or invalid authentication token */
@@ -619,22 +622,22 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
-                /** @description Not available in this mode */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not found */
+                /** @description Not found or not available in this mode */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description A benchmark run is already active */
+                /** @description Run cannot be retried or another run is active */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No benchmark adapter is configured */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -725,7 +728,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start benchmark run (local mode only) */
+        /**
+         * Start benchmark run (local mode only; interim adapter seam)
+         * @description Returns 503 if no real adapter is configured. A concurrent 409 creates no run row. The test fake is never selectable in production.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -739,12 +745,12 @@ export interface paths {
                 };
             };
             responses: {
-                201: {
+                202: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["BenchmarkRun"];
+                        "application/json": components["schemas"]["RunStartResponse"];
                     };
                 };
                 /** @description Unauthorized */
@@ -761,8 +767,22 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description A benchmark run is already active */
+                /** @description A benchmark run is already active; no row is created */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid profile or configuration UUID */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No benchmark adapter is configured */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -785,7 +805,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Benchmark run status and events (local mode only) */
+        /** Benchmark run status and sanitized diagnostics (local mode only) */
         get: {
             parameters: {
                 query?: never;
@@ -802,7 +822,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["BenchmarkRun"];
+                        "application/json": components["schemas"]["RunStatusResponse"];
                     };
                 };
                 /** @description Unauthorized */
@@ -823,64 +843,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/benchmark/runs/{id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cancel benchmark run (local mode only) */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["BenchmarkRun"];
-                    };
-                };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not found or not available */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Run is not running */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -980,7 +942,7 @@ export interface components {
         /** @enum {string} */
         RunStatus: "running" | "completed" | "failed" | "interrupted";
         /** @enum {string} */
-        ErrorCategory: "OOM" | "TIMEOUT" | "MODEL_ERROR" | "INFER_FRAMEWORK" | "CANCELLED" | "HOST_RESTART" | "UNKNOWN";
+        ErrorCategory: "OOM" | "TIMEOUT" | "MODEL_ERROR" | "INFER_FRAMEWORK" | "HOST_RESTART" | "UNKNOWN" | "timeout" | "adapter_error" | "interrupted";
         HardwareSnapshot: {
             gpu?: string | null;
             gpu_vram_gb?: number | null;
@@ -1165,8 +1127,34 @@ export interface components {
             }[];
         };
         BenchmarkStartRequest: {
+            /** Format: uuid */
             profile_id: string;
-            config: components["schemas"]["BenchmarkConfig"];
+            /**
+             * Format: uuid
+             * @description Opaque configuration identifier; no config catalog is implemented by the interim seam.
+             */
+            config_id: string;
+        };
+        RunStartResponse: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            status: "running";
+        };
+        RunStatusResponse: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["RunStatus"];
+            /** Format: uuid */
+            related_run_id: string | null;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            completed_at: string | null;
+            elapsed_ms: number | null;
+            metrics: components["schemas"]["RunMetrics"];
+            error_category: components["schemas"]["ErrorCategory"];
+            error_message_sanitised: string | null;
         };
     };
     responses: never;

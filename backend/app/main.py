@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+import asyncio
 import logging
 import sqlite3
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
 from uuid import UUID, uuid4
 
@@ -21,6 +25,9 @@ from app.imports import router as imports_router
 from app.observability import RequestTelemetryMiddleware, Telemetry
 from app.profiles import router as profiles_router
 from app.run_history import router as run_history_router
+
+if TYPE_CHECKING:
+    from app.runner import BenchmarkAdapter
 
 logger = logging.getLogger("app.request")
 CORRELATION_HEADER = "X-Correlation-ID"
@@ -113,8 +120,11 @@ def create_app(
     settings: Settings | None = None,
     readiness_probe: Callable[[str | None], bool] | None = None,
     telemetry: Telemetry | None = None,
+    *,
+    benchmark_adapter: BenchmarkAdapter | None = None,
 ) -> FastAPI:
     config = settings or load_settings()
+    runner_enabled = config.app_mode == "local" and config.benchmark_enabled
     request_telemetry = telemetry or Telemetry(enabled=config.app_mode == "local")
     database_url = (
         config.database_url.get_secret_value() if config.database_url else None
@@ -124,6 +134,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
+            if runner_enabled and _app.state.session_factory is not None:
+                from app.runner import reconcile_interrupted_runs
+
+                reconcile_interrupted_runs(_app.state.session_factory)
             yield
         finally:
             request_telemetry.close()
@@ -146,6 +160,13 @@ def create_app(
         if engine is not None
         else None
     )
+    if runner_enabled:
+        from app.runner import router as runner_router
+
+        app.state.benchmark_adapter = benchmark_adapter
+        app.state.benchmark_lock = asyncio.Lock()
+        app.state.benchmark_tasks = set()
+        app.include_router(runner_router, prefix=API_PREFIX)
     app.include_router(profiles_router, prefix=API_PREFIX)
     app.include_router(imports_router, prefix=API_PREFIX)
     app.include_router(run_history_router, prefix=API_PREFIX)

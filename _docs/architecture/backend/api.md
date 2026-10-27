@@ -58,11 +58,12 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 - `POST /runs/{id}/retry` — create a new attempt linked to a failed run (local mode only; hosted returns 403/404).
 
 ### Benchmark (local mode only)
-- `POST /benchmark/runs` — start a run with `{profile_id, config}`. Returns run id + status. 409 if a run is already active (single-flight).
-- `GET /benchmark/runs/{id}` — status + events.
-- `POST /benchmark/runs/{id}/cancel` — request cancellation.
+- `POST /benchmark/runs` — start a run with UUID `{profile_id, config_id}`. Returns run id + `running`; 409 if a run is already active (the rejected request creates no row), 503 if no adapter is configured.
+- `GET /benchmark/runs/{id}` — owner-scoped status and sanitized diagnostics.
+- `POST /runs/{id}/retry` — retry an owned failed launched run, creating a distinct linked attempt.
 
 In hosted mode these routes are not registered (404).
+The interim config UUID is opaque; no config catalog or private adapter mapping is claimed. Cancellation is not implemented or exposed; its semantics are deferred to #25.
 
 ### Demo (anonymous, read-only)
 - `GET /demo/runs` — synthetic dataset.

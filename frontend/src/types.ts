@@ -14,7 +14,10 @@ export type ErrorCategory =
   | 'INFER_FRAMEWORK'
   | 'CANCELLED'
   | 'HOST_RESTART'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  | 'timeout'
+  | 'adapter_error'
+  | 'interrupted';
 
 export interface HardwareSnapshot {
   gpu?: string | null;

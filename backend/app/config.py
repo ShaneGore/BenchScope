@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     host: str | None = None
     port: int = Field(default=8000, gt=0, le=65535)
     max_upload_bytes: int = Field(default=1024 * 1024, gt=0)
+    benchmark_enabled: bool = False
+    benchmark_timeout_seconds: float = Field(default=3600, gt=0, allow_inf_nan=False)
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
     clerk_audience: str | None = None

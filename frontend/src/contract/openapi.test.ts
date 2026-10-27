@@ -75,7 +75,19 @@ test("contract exposes required endpoints", () => {
   expectTypeOf<paths>().toHaveProperty("/api/v1/runs/import");
   expectTypeOf<paths>().toHaveProperty("/api/v1/runs/compare");
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs");
+  expectTypeOf<paths>().toHaveProperty("/benchmark/runs/{id}");
+  expectTypeOf<paths>().toHaveProperty("/runs/{id}/retry");
+  expectTypeOf<paths>().not.toHaveProperty("/benchmark/runs/{id}/cancel");
   expectTypeOf<paths>().toHaveProperty("/demo/runs");
+});
+
+test("interim runner contract validates IDs and exposes no cancellation mapping", () => {
+  type StartRequest = components["schemas"]["BenchmarkStartRequest"];
+  expectTypeOf<StartRequest>().toHaveProperty("profile_id");
+  expectTypeOf<StartRequest>().toHaveProperty("config_id");
+  expectTypeOf<components["schemas"]["RunStatus"]>().toEqualTypeOf<
+    "running" | "completed" | "failed" | "interrupted"
+  >();
 });
 
 test("profile contract has CRUD operations and excludes unapproved fields", () => {

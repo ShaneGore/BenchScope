@@ -30,7 +30,7 @@ components:
       enum: [running, completed, failed, interrupted]
     ErrorCategory:
       type: string
-      enum: [OOM, TIMEOUT, MODEL_ERROR, INFER_FRAMEWORK, CANCELLED, HOST_RESTART, UNKNOWN]
+      enum: [OOM, TIMEOUT, MODEL_ERROR, INFER_FRAMEWORK, HOST_RESTART, UNKNOWN, timeout, adapter_error, interrupted]
     HardwareSnapshot:
       type: object
       additionalProperties: false
@@ -250,10 +250,32 @@ components:
                   message: { type: string }
     BenchmarkStartRequest:
       type: object
-      required: [profile_id, config]
+      additionalProperties: false
+      required: [profile_id, config_id]
       properties:
-        profile_id: { type: string }
-        config: { $ref: "#/components/schemas/BenchmarkConfig" }
+        profile_id: { type: string, format: uuid }
+        config_id: { type: string, format: uuid, description: Opaque configuration identifier; no config catalog is implemented by the interim seam. }
+    RunStartResponse:
+      type: object
+      additionalProperties: false
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status: { const: running }
+    RunStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [id, status, related_run_id, started_at, completed_at, elapsed_ms, metrics, error_category, error_message_sanitised]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        related_run_id: { type: [string, "null"], format: uuid }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        elapsed_ms: { type: [integer, "null"], minimum: 0 }
+        metrics: { $ref: "#/components/schemas/RunMetrics" }
+        error_category: { $ref: "#/components/schemas/ErrorCategory", nullable: true }
+        error_message_sanitised: { type: [string, "null"] }
 paths:
   /health:
     get:
@@ -514,7 +536,8 @@ paths:
               schema: { $ref: "#/components/schemas/ImportResult" }
   /runs/{id}/retry:
     post:
-      summary: Retry failed run (local mode only)
+      summary: Retry failed launched run (local mode only)
+      description: Creates a distinct attempt linked to the prior run. Retry lineage and configuration are server-derived from the owner-scoped failed run.
       x-local-only: true
       parameters:
         - name: id
@@ -522,18 +545,18 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "201":
+        "202":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+              schema: { $ref: "#/components/schemas/RunStartResponse" }
         "401":
           description: Missing or invalid authentication token
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
-        "403": { description: Not available in this mode }
-        "404": { description: Not found }
-        "409": { description: A benchmark run is already active }
+        "404": { description: Not found or not available in this mode }
+        "409": { description: Run cannot be retried or another run is active }
+        "503": { description: No benchmark adapter is configured }
   /api/v1/runs/compare:
     get:
       summary: Compare completed runs
@@ -579,7 +602,8 @@ paths:
 
   /benchmark/runs:
     post:
-      summary: Start benchmark run (local mode only)
+      summary: Start benchmark run (local mode only; interim adapter seam)
+      description: Returns 503 if no real adapter is configured. A concurrent 409 creates no run row. The test fake is never selectable in production.
       x-local-only: true
       security:
         - bearerAuth: []
@@ -589,46 +613,31 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/BenchmarkStartRequest" }
       responses:
-        "201":
+        "202":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+              schema: { $ref: "#/components/schemas/RunStartResponse" }
         "401": { description: Unauthorized }
         "404": { description: Not available in this mode }
-        "409": { description: A benchmark run is already active }
+        "409": { description: A benchmark run is already active; no row is created }
+        "422": { description: Invalid profile or configuration UUID }
+        "503": { description: No benchmark adapter is configured }
   /benchmark/runs/{id}:
     parameters:
       - name: id
         in: path
         required: true
-        schema: { type: string }
+        schema: { type: string, format: uuid }
     get:
-      summary: Benchmark run status and events (local mode only)
+      summary: Benchmark run status and sanitized diagnostics (local mode only)
       x-local-only: true
       responses:
         "200":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/BenchmarkRun" }
+              schema: { $ref: "#/components/schemas/RunStatusResponse" }
         "401": { description: Unauthorized }
         "404": { description: Not found or not available }
-  /benchmark/runs/{id}/cancel:
-    post:
-      summary: Cancel benchmark run (local mode only)
-      x-local-only: true
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/BenchmarkRun" }
-        "401": { description: Unauthorized }
-        "404": { description: Not found or not available }
-        "409": { description: Run is not running }
   /demo/runs:
     get:
       summary: Synthetic demo runs

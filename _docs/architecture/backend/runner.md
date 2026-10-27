@@ -2,11 +2,11 @@
 
 ## 1. Goals
 
-Launch the private benchmark against a configured local model endpoint without blocking the web UI, record status/metrics/diagnostics, survive restarts, and enforce single-flight. No arbitrary commands from the browser.
+Provide a local-only runner lifecycle boundary that can later launch the private benchmark, record sanitized run status/results, survive restarts, and enforce single-flight. The real private benchmark adapter is deferred to #25.
 
-## 2. Lifecycle
+## 2. Target lifecycle (real integration deferred)
 
-States: `running` → `completed` | `failed` | `interrupted` | `cancelled`.
+Persisted states: `running` → `completed` | `failed` | `interrupted`.
 
 1. `POST /benchmark/runs` creates a `BenchmarkRun` row (status `running`) with profile snapshot, returns immediately.
 2. Runner acquires the single-flight lock; if busy, returns 409.
@@ -21,7 +21,7 @@ States: `running` → `completed` | `failed` | `interrupted` | `cancelled`.
 - No shell (`create_subprocess_exec`, args as list). No user-supplied command/path.
 - Only allowlisted env/config passed to subprocess; private paths from server config, not request.
 - Bounded output capture; truncate + flag if exceeded; never store raw prompts/code.
-- Process group termination on timeout/cancel (avoid orphans).
+- Process group termination on timeout (avoid orphans); cancellation remains unresolved and deferred.
 - Single-flight lock prevents concurrent runs (MVP only needs one at a time).
 
 ## 4. Metrics capture
@@ -32,7 +32,7 @@ States: `running` → `completed` | `failed` | `interrupted` | `cancelled`.
 
 ## 5. Diagnostics
 
-- Sanitised error category (enum: `timeout`, `process_exit`, `parse_error`, `endpoint_unavailable`, `adapter_error`, `cancelled`, `interrupted`).
+- Sanitised error category (enum: `timeout`, `process_exit`, `parse_error`, `endpoint_unavailable`, `adapter_error`, `interrupted`).
 - Short sanitised message; no raw stdout/stderr, no code, no prompts.
 - Process exit code stored when available.
 
@@ -44,9 +44,19 @@ States: `running` → `completed` | `failed` | `interrupted` | `cancelled`.
 
 ## 7. Mode gating
 
-- Runner module imported only when `APP_MODE=local` and `BENCHMARK_ENABLED=true`.
+- Runner routes are registered only when `APP_MODE=local` and `BENCHMARK_ENABLED=true`.
+- `BENCHMARK_TIMEOUT_SECONDS` bounds the interim adapter coroutine; its default is 3600 seconds.
 - Endpoints absent otherwise. Frontend hides launch UI in hosted mode but backend is authoritative.
 
 ## 8. Open dependency
 
 Exact adapter interface and result schema are unresolved (`plan.md` §11.1–4). Until confirmed, implement adapter seam + a fake adapter for tests. Do not block other work.
+
+### Interim seam implemented by #15
+
+- The internal adapter protocol accepts only an owner-validated profile snapshot and a UUID config identifier and returns a normalized run-level result. This is provisional, not the private benchmark's confirmed interface or schema.
+- The test suite injects its synthetic fake. Production app creation does not select or register a fake adapter; with no real adapter configured, launch and retry return 503 without creating a run.
+- This interim seam does not launch subprocesses, invoke `llama-server`, parse output, aggregate trials, derive missing metrics, or expose cancellation. The adapter must be cancellation-cooperative and may not detach child tasks. `asyncio.wait_for` awaits coroutine cleanup before the run is marked failed on timeout. No child process is launched by this seam.
+- Only the metric allowlist is persisted. The profile snapshot contains `name`, `model_name`, `model_version`, and `quantisation`; endpoint URLs and free-form inference settings are excluded. The config identifier is validated as a UUID and stored opaquely; no config catalog or mapping is claimed.
+- A concurrent start returns 409 and creates no row. Accepted work is persisted as `running`; startup changes stale `running` rows to `interrupted`. Retry accepts an owned failed launched run and creates a new row linked by `related_run_id`.
+- Persisted statuses remain `running`, `completed`, `failed`, and `interrupted`. Cancellation semantics and any cancellation endpoint/status mapping remain deferred to #25.

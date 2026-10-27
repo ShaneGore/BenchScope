@@ -9,7 +9,7 @@ Developers running local language models often produce one-off benchmark results
 ## What the system does
 
 - Records benchmark attempts with model/profile snapshots, configuration, timestamps, status, metrics, hardware information, and sanitised diagnostics.
-- Tracks run lifecycle states: `running`, `completed`, `failed`, `interrupted`, and `cancelled`.
+- Tracks persisted run lifecycle states: `running`, `completed`, `failed`, and `interrupted`. Cancellation is deferred to #25.
 - Keeps failed and interrupted attempts in history without presenting them as successful results.
 - Distinguishes missing metrics from zero values.
 - Supports model profiles with name, version, quantisation, endpoint, hardware notes, and benchmark settings.

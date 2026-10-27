@@ -46,7 +46,7 @@ Frontend and backend are separate top-level folders (per request): `frontend/`, 
 
 ## 5. Runner (local only)
 
-See `runner.md`. In-process, single-flight (`asyncio` + `asyncio.create_subprocess_exec`), DB-backed status, `asyncio.wait_for` timeout, startup reconciliation of stale "running" rows. Disabled in hosted mode (endpoints absent).
+See `runner.md`. The interim seam is in-process, single-flight, DB-backed, timeout-bounded, and reconciles stale `running` rows at startup; it does not launch subprocesses or include a production adapter. Disabled in hosted mode (endpoints absent).
 
 ## 6. Storage
 
@@ -69,4 +69,4 @@ See `runner.md`. In-process, single-flight (`asyncio` + `asyncio.create_subproce
 
 ## 9. Configuration (env)
 
-Key settings: `APP_MODE`, `APP_ENV`, `DATABASE_URL`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUDIENCE`, `CORS_ORIGINS`, `BENCHMARK_ENABLED`, `BENCHMARK_ADAPTER`, `LOCAL_AUTH_BYPASS`, `MAX_UPLOAD_BYTES`, `OTEL_EXPORTER_OTLP_ENDPOINT`. All via pydantic-settings; no secrets in code.
+Key settings: `APP_MODE`, `APP_ENV`, `DATABASE_URL`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUDIENCE`, `CORS_ORIGINS`, `BENCHMARK_ENABLED`, `BENCHMARK_TIMEOUT_SECONDS`, `LOCAL_AUTH_BYPASS`, `MAX_UPLOAD_BYTES`, `OTEL_EXPORTER_OTLP_ENDPOINT`. All via pydantic-settings; no secrets in code. The interim scope has no adapter-selection setting; production launch remains unavailable until a real adapter is configured in a later task.
