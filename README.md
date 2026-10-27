@@ -280,10 +280,12 @@ project/database. All Compose-published endpoints are loopback-only.
 
 Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
 the repository's `compose.yaml` and `observability/` files. The required host
-TCP ports are `5432` (PostgreSQL), `8000` (API), `4318` (OTLP), `9090`
-(Prometheus), `3100` (Loki), `3200` (Tempo), and `3000` (Grafana). Check every
-port before starting anything. If a port is occupied or the check is
-uncertain, abort without stopping or changing its listener.
+TCP ports are `8000` (API), `4318` (OTLP), `9090` (Prometheus), `3100`
+(Loki), `3200` (Tempo), `3000` (Grafana), and one PostgreSQL host port. Keep
+the fixed API/observability ports unchanged. Use PostgreSQL host port `5432`
+when free; if it is occupied, choose a verified-free alternate (for example
+`15441`) through `POSTGRES_PORT`. Compose still connects the API to the DB at
+`db:5432`. Never stop or alter an existing listener.
 
 In a clean PowerShell session from the repository root, confirm the local
 Docker context and preflight all published ports:
@@ -293,26 +295,35 @@ $context = docker context show
 $endpoint = docker context inspect $context --format '{{.Endpoints.docker.Host}}'
 if ($endpoint -notmatch '^(npipe:|unix://)') { throw "Not a local Docker context; abort." }
 
-$ports = 5432, 8000, 4318, 9090, 3100, 3200, 3000
+$fixedPorts = 8000, 4318, 9090, 3100, 3200, 3000
 try {
   $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
 } catch {
   throw "Port check failed or is uncertain; abort without starting Compose."
 }
-$busy = @($listeners | Where-Object { $ports -contains $_.Port })
-if ($busy.Count -gt 0) {
-  $busy | Sort-Object Port, Address | Format-Table Address, Port
-  throw "A required port is occupied; abort without stopping or changing its listener."
+$busyFixed = @($listeners | Where-Object { $fixedPorts -contains $_.Port })
+if ($busyFixed.Count -gt 0) {
+  $busyFixed | Sort-Object Port, Address | Format-Table Address, Port
+  throw "A fixed API/observability port is occupied; abort without changing its listener."
 }
+$dbPort = 5432
+if (@($listeners | Where-Object { $_.Port -eq 5432 }).Count -gt 0) {
+  $dbPort = 15441
+  while (@($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0 -and $dbPort -lt 15500) { $dbPort++ }
+}
+if ($dbPort -ge 15500 -or @($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0) {
+  throw "No verified-free PostgreSQL host port found; abort without changing any listener."
+}
+Write-Output "Using verified-free PostgreSQL host port $dbPort"
 ```
 
-Only after that check succeeds, create a unique project name and a temporary,
-synthetic environment file outside the worktree. Do not use the repository
-`.env` or any existing project:
+Only after that check succeeds, create a unique project name and temporary
+`.env.task23` file in the worktree. It is ignored by Git and must be removed
+after cleanup. Use only synthetic settings; do not use the repository `.env`
+or any existing project:
 
 ```powershell
 $project = "benchscope-task23-$([guid]::NewGuid().ToString('N'))"
-$envFile = Join-Path $env:TEMP "$project.env"
 $bytes = New-Object byte[] 24
 $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 $rng.GetBytes($bytes)
@@ -321,16 +332,30 @@ $password = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Rep
 POSTGRES_DB=benchscope_incident
 POSTGRES_USER=incident
 POSTGRES_PASSWORD=$password
-POSTGRES_PORT=5432
+POSTGRES_PORT=$dbPort
 API_PORT=8000
 APP_MODE=local
 APP_ENV=development
 LOCAL_AUTH_BYPASS=false
 BENCHMARK_ENABLED=false
-"@ | Set-Content -Encoding ascii $envFile
+"@ | Set-Content -Encoding ascii .env.task23
 
-docker compose --env-file $envFile -p $project up --build --wait --detach
-docker compose --env-file $envFile -p $project ps
+try {
+  $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+} catch {
+  Remove-Item .env.task23
+  throw "Final port check failed or is uncertain; abort without starting Compose."
+}
+$selectedPorts = $fixedPorts + $dbPort
+$busy = @($listeners | Where-Object { $selectedPorts -contains $_.Port })
+if ($busy.Count -gt 0) {
+  $busy | Sort-Object Port, Address | Format-Table Address, Port
+  Remove-Item .env.task23
+  throw "A selected port became occupied; abort without changing its listener."
+}
+
+docker compose --env-file .env.task23 -p $project up --build --wait --detach
+docker compose --env-file .env.task23 -p $project ps
 Invoke-RestMethod http://127.0.0.1:8000/ready
 Invoke-RestMethod http://127.0.0.1:9090/-/healthy
 Invoke-RestMethod http://127.0.0.1:3000/api/health
@@ -352,17 +377,25 @@ Prometheus must report `up{job="api"} == 0`. Inspect the alert in Prometheus
 Do not rely on a particular operating-system connection-error string.
 
 ```powershell
-docker compose --env-file $envFile -p $project stop api
+docker compose --env-file .env.task23 -p $project stop api
 Start-Sleep -Seconds 20
-# Capture API endpoint failures, the `up{job="api"}` value, and pending alert.
+# Report only HTTP status (0 means no HTTP response; do not assert an OS error string).
+function Get-HttpStatus($url) {
+  try { return [int](Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 3).StatusCode }
+  catch { if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }; return 0 }
+}
+"health=$(Get-HttpStatus 'http://127.0.0.1:8000/health') ready=$(Get-HttpStatus 'http://127.0.0.1:8000/ready')"
+Invoke-RestMethod 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+Invoke-RestMethod 'http://127.0.0.1:9090/api/v1/alerts'
+Invoke-RestMethod 'http://127.0.0.1:9090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%7D'
 Start-Sleep -Seconds 70
-# Capture API endpoint failures, the `up{job="api"}` value, and firing alert.
+# Repeat endpoint/query/alert checks; inspect the alert panel in Grafana.
 ```
 
 Before recovery, confirm the database remains healthy with
-`docker compose --env-file $envFile -p $project exec db pg_isready -U incident -d benchscope_incident`.
+`docker compose --env-file .env.task23 -p $project exec db pg_isready -U incident -d benchscope_incident`.
 Inspect API/database logs with
-`docker compose --env-file $envFile -p $project logs --no-color --tail 100 api db`.
+`docker compose --env-file .env.task23 -p $project logs --no-color --tail 100 api db`.
 Inspect the stopped API container's non-secret settings (`APP_MODE`,
 `APP_ENV`, `LOCAL_AUTH_BYPASS`, and the `DATABASE_URL` host/database only);
 never print or record credentials. Confirm the database target is the
@@ -370,15 +403,20 @@ synthetic `db` service. Then restore only the API and verify readiness, target,
 and alert resolution after the next scrape/evaluation:
 
 ```powershell
-docker compose --env-file $envFile -p $project start api
+docker compose --env-file .env.task23 -p $project start api
 Invoke-RestMethod http://127.0.0.1:8000/ready
 curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+Invoke-RestMethod http://127.0.0.1:9090/api/v1/alerts
 ```
+
+Wait for the `up` value to return to `1` and for
+`BenchScopeApiUnavailable` to disappear from the active alert list after the
+next scrape/evaluation.
 
 Run the exact rule test against the same disposable project:
 
 ```powershell
-docker compose --env-file $envFile -p $project run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
+docker compose --env-file .env.task23 -p $project run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
 ```
 
 Record only sanitized target/query results, alert transitions, service state,
@@ -393,8 +431,8 @@ and telemetry volumes, delete the temporary environment file, and verify no
 containers/volumes with its Compose project label remain:
 
 ```powershell
-docker compose --env-file $envFile -p $project down --volumes --remove-orphans
-Remove-Item $envFile
+docker compose --env-file .env.task23 -p $project down --volumes --remove-orphans --rmi local
+Remove-Item .env.task23
 docker ps -a --filter "label=com.docker.compose.project=$project"
 docker volume ls --filter "label=com.docker.compose.project=$project"
 ```
