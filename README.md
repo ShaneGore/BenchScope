@@ -269,22 +269,140 @@ The dashboard shows route/status request rates, validation/server failures,
 alert state, and correlated logs. Open Tempo Explore from the dashboard to
 search `benchscope-frontend` traces and follow the trace-to-log link.
 
-Run the controlled alert test (the API stays up; synthetic `up` samples prove
-pending, firing, and resolution) from the repository root:
+### Task 23: disposable local API-availability incident exercise
+
+This is a **local-development-only** exercise of the existing
+`BenchScopeApiUnavailable` alert, not a production or hosted behavior test.
+It injects an API outage by stopping only the API in a uniquely named,
+disposable Compose project. Use synthetic settings and data; do not use hosted
+URLs, real user data, an external receiver, or a developer's persistent Compose
+project/database. All Compose-published endpoints are loopback-only.
+
+Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
+the repository's `compose.yaml` and `observability/` files. The required host
+TCP ports are `5432` (PostgreSQL), `8000` (API), `4318` (OTLP), `9090`
+(Prometheus), `3100` (Loki), `3200` (Tempo), and `3000` (Grafana). Check every
+port before starting anything. If a port is occupied or the check is
+uncertain, abort without stopping or changing its listener.
+
+In a clean PowerShell session from the repository root, confirm the local
+Docker context and preflight all published ports:
 
 ```powershell
-docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
+$context = docker context show
+$endpoint = docker context inspect $context --format '{{.Endpoints.docker.Host}}'
+if ($endpoint -notmatch '^(npipe:|unix://)') { throw "Not a local Docker context; abort." }
+
+$ports = 5432, 8000, 4318, 9090, 3100, 3200, 3000
+try {
+  $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+} catch {
+  throw "Port check failed or is uncertain; abort without starting Compose."
+}
+$busy = @($listeners | Where-Object { $ports -contains $_.Port })
+if ($busy.Count -gt 0) {
+  $busy | Sort-Object Port, Address | Format-Table Address, Port
+  throw "A required port is occupied; abort without stopping or changing its listener."
+}
 ```
 
-The local alert is `up{job="api"} == 0` pending for 1 minute. To verify the
-live path as well, stop only the local API for 90 seconds and inspect
-`BenchScopeApiUnavailable` in Grafana/Prometheus; restart it and wait for the
-next scrape/evaluation to resolve the alert. The operator action is to inspect
-`/ready` and API/database logs, then restart the API only after confirming the
-database and configuration. No external notification receiver is configured.
+Only after that check succeeds, create a unique project name and a temporary,
+synthetic environment file outside the worktree. Do not use the repository
+`.env` or any existing project:
 
-Stop with `docker compose down`; add `--volumes` only when intentionally
-deleting the local database and telemetry history.
+```powershell
+$project = "benchscope-task23-$([guid]::NewGuid().ToString('N'))"
+$envFile = Join-Path $env:TEMP "$project.env"
+$bytes = New-Object byte[] 24
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$password = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+@"
+POSTGRES_DB=benchscope_incident
+POSTGRES_USER=incident
+POSTGRES_PASSWORD=$password
+POSTGRES_PORT=5432
+API_PORT=8000
+APP_MODE=local
+APP_ENV=development
+LOCAL_AUTH_BYPASS=false
+BENCHMARK_ENABLED=false
+"@ | Set-Content -Encoding ascii $envFile
+
+docker compose --env-file $envFile -p $project up --build --wait --detach
+docker compose --env-file $envFile -p $project ps
+Invoke-RestMethod http://127.0.0.1:8000/ready
+Invoke-RestMethod http://127.0.0.1:9090/-/healthy
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+```
+
+Before injection, confirm `db`, `api`, Prometheus, and Grafana are healthy;
+`/ready` succeeds and the Prometheus query value is `1`. The approved alert is
+`up{job="api"} == 0` for `1m`. Capture UTC timestamps, the target/query,
+service health, and alert state without recording credentials or raw
+benchmark/user data.
+
+Stop only this project's API. Capture the pending state while it remains
+stopped, then leave it stopped for at least 90 seconds and capture the firing
+state. Both `/health` and `/ready` must fail with a non-success HTTP response;
+Prometheus must report `up{job="api"} == 0`. Inspect the alert in Prometheus
+(`http://127.0.0.1:9090/alerts`) and the local Grafana dashboard/alert UI
+(`http://127.0.0.1:3000/d/benchscope-local-journey/benchscope-local-journey`).
+Do not rely on a particular operating-system connection-error string.
+
+```powershell
+docker compose --env-file $envFile -p $project stop api
+Start-Sleep -Seconds 20
+# Capture API endpoint failures, the `up{job="api"}` value, and pending alert.
+Start-Sleep -Seconds 70
+# Capture API endpoint failures, the `up{job="api"}` value, and firing alert.
+```
+
+Before recovery, confirm the database remains healthy with
+`docker compose --env-file $envFile -p $project exec db pg_isready -U incident -d benchscope_incident`.
+Inspect API/database logs with
+`docker compose --env-file $envFile -p $project logs --no-color --tail 100 api db`.
+Inspect the stopped API container's non-secret settings (`APP_MODE`,
+`APP_ENV`, `LOCAL_AUTH_BYPASS`, and the `DATABASE_URL` host/database only);
+never print or record credentials. Confirm the database target is the
+synthetic `db` service. Then restore only the API and verify readiness, target,
+and alert resolution after the next scrape/evaluation:
+
+```powershell
+docker compose --env-file $envFile -p $project start api
+Invoke-RestMethod http://127.0.0.1:8000/ready
+curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+```
+
+Run the exact rule test against the same disposable project:
+
+```powershell
+docker compose --env-file $envFile -p $project run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
+```
+
+Record only sanitized target/query results, alert transitions, service state,
+and relevant API/database log/config findings in `_docs/incidents/task-23.md`.
+No API trace is expected while its process is stopped. This is recovery from
+the injected API stop, not an application-code or root-cause fix.
+
+Clean up only after verifying `$project` is the unique disposable project
+created above. Never run `down` against an unqualified/default or other
+project. Remove that project's containers, network, and synthetic database
+and telemetry volumes, delete the temporary environment file, and verify no
+containers/volumes with its Compose project label remain:
+
+```powershell
+docker compose --env-file $envFile -p $project down --volumes --remove-orphans
+Remove-Item $envFile
+docker ps -a --filter "label=com.docker.compose.project=$project"
+docker volume ls --filter "label=com.docker.compose.project=$project"
+```
+
+Confirm the project's published listeners are gone. If a port is later
+occupied by another listener, do not stop or alter it. The alert is local-only;
+no hosted or production service, external telemetry, or notification receiver
+is involved.
 
 Pre-auth local storage fixtures use the fixed owner id `local`; owner ids are
 not accepted from callers.
