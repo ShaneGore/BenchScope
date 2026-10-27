@@ -79,7 +79,8 @@ test("contract exposes required endpoints", () => {
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs/{id}");
   expectTypeOf<paths>().toHaveProperty("/runs/{id}/retry");
   expectTypeOf<paths>().not.toHaveProperty("/benchmark/runs/{id}/cancel");
-  expectTypeOf<paths>().toHaveProperty("/demo/runs");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/demo/runs");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/demo/runs/{id}");
 });
 
 test("interim runner contract validates IDs and exposes no cancellation mapping", () => {

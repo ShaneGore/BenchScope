@@ -57,9 +57,12 @@ Timeline events for a launched run (status transitions, timeout). Owned via run.
 
 - `id`, `run_id` (fk), `event_type`, `occurred_at`, `payload` (json, sanitised)
 
-## DemoDataset (read-only, sentinel owner)
+## Anonymous demo fixture
 
-Synthetic runs stored with `owner_id = 'demo'` (or a separate table). Read-only endpoints; no writes from API.
+Demo runs are immutable synthetic response models in the application package,
+not database rows. Only the demo GET endpoints read them; no startup seeding or
+write endpoint exists. Fixture fields exclude owners, endpoints, credentials,
+artifacts, prompts, and raw diagnostics.
 
 ## Metric nullability
 

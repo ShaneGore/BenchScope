@@ -42,3 +42,24 @@ def test_contract_declares_error_schema() -> None:
 def test_contract_declares_ownership_friendly_404s() -> None:
     text = CONTRACT.read_text(encoding="utf-8")
     assert "Not found" in text
+
+
+def test_demo_contract_is_anonymous_get_only_and_excludes_personal_fields() -> None:
+    text = CONTRACT.read_text(encoding="utf-8")
+    demo_list = text.split("  /api/v1/demo/runs:", 1)[1].split(
+        "  /api/v1/demo/runs/{id}:", 1
+    )[0]
+    demo_detail = text.split("  /api/v1/demo/runs/{id}:", 1)[1]
+    demo_schema = text.split("    DemoRun:", 1)[1].split("    ImportResult:", 1)[0]
+
+    assert "security: []" in demo_list
+    assert "security: []" in demo_detail
+    assert "\n    post:" not in demo_list
+    assert "\n    patch:" not in demo_list
+    assert "\n    delete:" not in demo_list
+    assert "\n    post:" not in demo_detail
+    assert "\n    patch:" not in demo_detail
+    assert "\n    delete:" not in demo_detail
+    assert "DemoRun" in demo_list and "DemoRun" in demo_detail
+    assert "endpoint_url" not in demo_schema
+    assert "artifact_ref" not in demo_schema

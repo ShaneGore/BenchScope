@@ -37,14 +37,18 @@ def auth_api(
     from app.auth import _jwks_client
 
     _jwks_client.cache_clear()
-    app = create_app(
-        Settings(
-            database_url=SecretStr(f"sqlite:///{tmp_path / 'auth.db'}"),
-            clerk_jwks_url=JWKS_URL,
-            clerk_issuer=ISSUER,
-            clerk_audience=AUDIENCE,
-        )
+    settings = Settings.model_construct(
+        app_mode="hosted",
+        app_env="production",
+        local_auth_bypass=False,
+        database_url=SecretStr(f"sqlite:///{tmp_path / 'auth.db'}"),
+        cors_origins=["https://dashboard.example"],
+        host="0.0.0.0",
+        clerk_jwks_url=JWKS_URL,
+        clerk_issuer=ISSUER,
+        clerk_audience=AUDIENCE,
     )
+    app = create_app(settings)
     engine = app.state.engine
     assert engine is not None
     Base.metadata.create_all(engine)

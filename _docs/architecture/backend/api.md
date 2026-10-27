@@ -66,8 +66,12 @@ In hosted mode these routes are not registered (404).
 The interim config UUID is opaque; no config catalog or private adapter mapping is claimed. Cancellation is not implemented or exposed; its semantics are deferred to #25.
 
 ### Demo (anonymous, read-only)
-- `GET /demo/runs` — synthetic dataset.
-- `GET /demo/runs/{id}`.
+- `GET /demo/runs` — deterministic synthetic fixture records; no authentication,
+  database seed, or write path.
+- `GET /demo/runs/{id}` — one fixture record; unknown IDs return 404.
+- Demo responses contain only synthetic profile/configuration metadata,
+  timestamps, nullable metrics, and synthetic hardware values. They exclude
+  personal owners, endpoints, credentials, artifacts, prompts, and diagnostics.
 
 ### Comparison
 - `GET /runs/compare?ids=...` — requires at least two distinct comma-delimited UUIDs.

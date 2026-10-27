@@ -227,6 +227,46 @@ components:
         items: { type: array, items: { $ref: "#/components/schemas/BenchmarkRun" } }
         next_cursor: { type: [string, "null"], format: uuid, description: UUID of the last returned run when has_more is true. }
         has_more: { type: boolean }
+    DemoProfileSnapshot:
+      type: object
+      additionalProperties: false
+      required: [name, model_name, model_version, quantisation]
+      properties:
+        name: { type: string }
+        model_name: { type: string }
+        model_version: { type: [string, "null"] }
+        quantisation: { type: [string, "null"] }
+    DemoBenchmarkConfig:
+      type: object
+      additionalProperties: false
+      required: [name, temperature, max_tokens]
+      properties:
+        name: { type: string }
+        temperature: { type: [number, "null"] }
+        max_tokens: { type: [integer, "null"] }
+    DemoHardwareSnapshot:
+      type: object
+      additionalProperties: false
+      required: [cpu, gpu, ram_gb, gpu_vram_gb, os]
+      properties:
+        cpu: { type: [string, "null"] }
+        gpu: { type: [string, "null"] }
+        ram_gb: { type: [number, "null"] }
+        gpu_vram_gb: { type: [number, "null"] }
+        os: { type: [string, "null"] }
+    DemoRun:
+      type: object
+      additionalProperties: false
+      required: [id, status, profile_snapshot, benchmark_config, started_at, ended_at, metrics, hardware_snapshot]
+      properties:
+        id: { type: string }
+        status: { const: completed }
+        profile_snapshot: { $ref: "#/components/schemas/DemoProfileSnapshot" }
+        benchmark_config: { $ref: "#/components/schemas/DemoBenchmarkConfig" }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        metrics: { $ref: "#/components/schemas/RunMetrics" }
+        hardware_snapshot: { $ref: "#/components/schemas/DemoHardwareSnapshot" }
     ImportResult:
       type: object
       oneOf:
@@ -638,27 +678,34 @@ paths:
               schema: { $ref: "#/components/schemas/RunStatusResponse" }
         "401": { description: Unauthorized }
         "404": { description: Not found or not available }
-  /demo/runs:
+  /api/v1/demo/runs:
     get:
-      summary: Synthetic demo runs
+      summary: List immutable synthetic demo runs
+      description: Anonymous read-only application fixture; no database seed or mutation endpoints.
       security: []
       responses:
         "200":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/PaginatedRuns" }
-  /demo/runs/{id}:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DemoRun" }
+  /api/v1/demo/runs/{id}:
     parameters:
       - name: id
         in: path
         required: true
         schema: { type: string }
     get:
-      summary: Synthetic demo run
+      summary: Read one immutable synthetic demo run
       security: []
       responses:
         "200":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/BenchmarkRun" }
-        "404": { description: Not found }
+              schema: { $ref: "#/components/schemas/DemoRun" }
+        "404":
+          description: Unknown fixture ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }

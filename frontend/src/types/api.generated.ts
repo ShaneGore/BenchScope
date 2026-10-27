@@ -849,14 +849,17 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/demo/runs": {
+    "/api/v1/demo/runs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Synthetic demo runs */
+        /**
+         * List immutable synthetic demo runs
+         * @description Anonymous read-only application fixture; no database seed or mutation endpoints.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -871,7 +874,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["PaginatedRuns"];
+                        "application/json": components["schemas"]["DemoRun"][];
                     };
                 };
             };
@@ -884,7 +887,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/demo/runs/{id}": {
+    "/api/v1/demo/runs/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -893,7 +896,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Synthetic demo run */
+        /** Read one immutable synthetic demo run */
         get: {
             parameters: {
                 query?: never;
@@ -910,15 +913,17 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["BenchmarkRun"];
+                        "application/json": components["schemas"]["DemoRun"];
                     };
                 };
-                /** @description Not found */
+                /** @description Unknown fixture ID */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -1112,6 +1117,37 @@ export interface components {
              */
             next_cursor?: string | null;
             has_more: boolean;
+        };
+        DemoProfileSnapshot: {
+            name: string;
+            model_name: string;
+            model_version: string | null;
+            quantisation: string | null;
+        };
+        DemoBenchmarkConfig: {
+            name: string;
+            temperature: number | null;
+            max_tokens: number | null;
+        };
+        DemoHardwareSnapshot: {
+            cpu: string | null;
+            gpu: string | null;
+            ram_gb: number | null;
+            gpu_vram_gb: number | null;
+            os: string | null;
+        };
+        DemoRun: {
+            id: string;
+            /** @constant */
+            status: "completed";
+            profile_snapshot: components["schemas"]["DemoProfileSnapshot"];
+            benchmark_config: components["schemas"]["DemoBenchmarkConfig"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            ended_at: string;
+            metrics: components["schemas"]["RunMetrics"];
+            hardware_snapshot: components["schemas"]["DemoHardwareSnapshot"];
         };
         ImportResult: {
             /** @constant */

@@ -60,6 +60,8 @@ implemented locally and registered only when `APP_MODE=local` and `BENCHMARK_ENA
 
 - Public HTTPS API (Render Free).
 - Auth required (Clerk JWT) for all personal data; anonymous read-only demo available.
+- The anonymous demo is an immutable sanitized application fixture served by
+  GET only; it has no database seed or mutation path.
 - Import + compare + profile management only. **Runner disabled**; no localhost endpoint access.
 - DB: Neon Free (or configured `DATABASE_URL`).
 - CORS restricted to the GitHub Pages origin(s).

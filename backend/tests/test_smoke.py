@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from app.main import app
 
 
-def test_application_shell_registers_health_and_profile_routes() -> None:
+def test_application_registers_health_personal_and_demo_routes() -> None:
     assert isinstance(app, FastAPI)
     assert set(app.openapi()["paths"]) == {
         "/health",
@@ -14,4 +14,6 @@ def test_application_shell_registers_health_and_profile_routes() -> None:
         "/api/v1/runs/compare",
         "/api/v1/runs/{id}",
         "/api/v1/runs/import",
+        "/api/v1/demo/runs",
+        "/api/v1/demo/runs/{id}",
     }

@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, load_settings
 from app.database import create_database_engine
+from app.demo import router as demo_router
 from app.imports import router as imports_router
 from app.observability import RequestTelemetryMiddleware, Telemetry
 from app.profiles import router as profiles_router
@@ -170,6 +171,7 @@ def create_app(
     app.include_router(profiles_router, prefix=API_PREFIX)
     app.include_router(imports_router, prefix=API_PREFIX)
     app.include_router(run_history_router, prefix=API_PREFIX)
+    app.include_router(demo_router, prefix=API_PREFIX)
     if request_telemetry.enabled:
         app.mount("/metrics", request_telemetry.metrics_app)
 
