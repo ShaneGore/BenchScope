@@ -15,8 +15,8 @@ def test_contract_declares_bearer_auth() -> None:
 
 def test_contract_declares_nullable_metrics() -> None:
     text = CONTRACT.read_text(encoding="utf-8")
-    assert "quality_score: { type: [number, \"null\"] }" in text
-    assert "ttft_ms: { type: [number, \"null\"] }" in text
+    assert 'quality_score: { type: [number, "null"], minimum: 0 }' in text
+    assert 'ttft_ms: { type: [number, "null"], minimum: 0 }' in text
 
 
 def test_contract_declares_local_only_benchmark_routes() -> None:
@@ -29,7 +29,7 @@ def test_contract_declares_local_only_benchmark_routes() -> None:
 def test_contract_declares_error_schema() -> None:
     text = CONTRACT.read_text(encoding="utf-8")
     assert "ApiError:" in text
-    assert 'detail:' in text
+    assert "detail:" in text
 
 
 def test_contract_declares_ownership_friendly_404s() -> None:

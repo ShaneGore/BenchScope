@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] | None = None
     host: str | None = None
     port: int = Field(default=8000, gt=0, le=65535)
+    max_upload_bytes: int = Field(default=1024 * 1024, gt=0)
 
     @field_validator("cors_origins")
     @classmethod

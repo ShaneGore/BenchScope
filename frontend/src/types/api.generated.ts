@@ -446,7 +446,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Import result JSON */
+        /**
+         * Import result JSON
+         * @description Imports one normalized, completed run summary. A trusted exporter must create benchscope.run.v1; private per-trial JSONL is not accepted and the raw request bytes are not retained. Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
+         */
         post: {
             parameters: {
                 query?: never;
@@ -456,7 +459,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["RunImportRequest"];
                 };
             };
             responses: {
@@ -476,7 +479,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Duplicate import */
+                /** @description Duplicate import for this owner; no row was created */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -485,7 +488,16 @@ export interface paths {
                         "application/json": components["schemas"]["ImportResult"];
                     };
                 };
-                /** @description Validation error */
+                /** @description Upload exceeds MAX_UPLOAD_BYTES; the request body was not buffered */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImportResult"];
+                    };
+                };
+                /** @description Invalid JSON, unsupported or incomplete version, invalid values, or non-JSON content type */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -906,17 +918,75 @@ export interface components {
             generation_throughput_tps?: number | null;
             elapsed_ms?: number | null;
         };
-        ProfileSnapshot: {
-            profile_id: string;
+        ImportedProfileSnapshot: {
             name: string;
             model_name: string;
+            model_version?: string | null;
+            quantisation?: string | null;
+        };
+        ImportedBenchmarkConfig: {
+            name: string;
+            temperature?: number;
+            max_tokens?: number;
+            reasoning?: boolean;
+            mtp?: boolean;
+            ctx?: number;
+            seed?: number;
+        };
+        ImportedMetrics: {
+            quality_score?: number | null;
+            pass_rate?: number | null;
+            ttft_ms?: number | null;
+            prompt_tokens?: number | null;
+            output_tokens?: number | null;
+            prompt_throughput_tps?: number | null;
+            generation_throughput_tps?: number | null;
+            elapsed_ms?: number | null;
+        };
+        ImportedHardwareSnapshot: {
+            cpu?: string | null;
+            gpu?: string | null;
+            ram_gb?: number | null;
+            gpu_vram_gb?: number | null;
+            os?: string | null;
+        };
+        RunImportRequest: {
+            /** @constant */
+            format_version: "benchscope.run.v1";
+            source_run_id?: string | null;
+            profile_snapshot: components["schemas"]["ImportedProfileSnapshot"];
+            benchmark_config: components["schemas"]["ImportedBenchmarkConfig"];
+            /**
+             * Format: date-time
+             * @description Must include a timezone offset.
+             */
+            started_at: string;
+            /**
+             * Format: date-time
+             * @description Must include a timezone offset and be at or after started_at.
+             */
+            ended_at: string;
+            metrics?: components["schemas"]["ImportedMetrics"];
+            hardware_snapshot?: components["schemas"]["ImportedHardwareSnapshot"] | null;
+        };
+        ProfileSnapshot: {
+            profile_id?: string | null;
+            name: string;
+            model_name: string;
+            model_version?: string | null;
+            quantisation?: string | null;
             quantization?: string | null;
             context_length?: number | null;
             inference_engine?: string | null;
         };
         BenchmarkConfig: {
             name: string;
+            temperature?: number | null;
             max_tokens?: number;
+            reasoning?: boolean | null;
+            mtp?: boolean | null;
+            ctx?: number | null;
+            seed?: number | null;
             concurrency?: number;
             prompt_set?: string;
         };

@@ -51,21 +51,81 @@ components:
       type: object
       additionalProperties: false
       properties:
-        quality_score: { type: [number, "null"] }
-        pass_rate: { type: [number, "null"] }
-        ttft_ms: { type: [number, "null"] }
-        prompt_tokens: { type: [number, "null"] }
-        output_tokens: { type: [number, "null"] }
-        prompt_throughput_tps: { type: [number, "null"] }
-        generation_throughput_tps: { type: [number, "null"] }
-        elapsed_ms: { type: [number, "null"] }
+        quality_score: { type: [number, "null"], minimum: 0 }
+        pass_rate: { type: [number, "null"], minimum: 0, maximum: 1 }
+        ttft_ms: { type: [number, "null"], minimum: 0 }
+        prompt_tokens: { type: [integer, "null"], minimum: 0 }
+        output_tokens: { type: [integer, "null"], minimum: 0 }
+        prompt_throughput_tps: { type: [number, "null"], minimum: 0 }
+        generation_throughput_tps: { type: [number, "null"], minimum: 0 }
+        elapsed_ms: { type: [integer, "null"], minimum: 0 }
+    ImportedProfileSnapshot:
+      type: object
+      additionalProperties: false
+      required: [name, model_name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        model_name: { type: string, minLength: 1, maxLength: 255 }
+        model_version: { type: [string, "null"], maxLength: 255 }
+        quantisation: { type: [string, "null"], maxLength: 100 }
+    ImportedBenchmarkConfig:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        temperature: { type: number, minimum: 0 }
+        max_tokens: { type: integer, minimum: 1 }
+        reasoning: { type: boolean }
+        mtp: { type: boolean }
+        ctx: { type: integer, minimum: 1 }
+        seed: { type: integer, minimum: 0 }
+    ImportedMetrics:
+      type: object
+      additionalProperties: false
+      properties:
+        quality_score: { type: [number, "null"], minimum: 0 }
+        pass_rate: { type: [number, "null"], minimum: 0, maximum: 1 }
+        ttft_ms: { type: [number, "null"], minimum: 0 }
+        prompt_tokens: { type: [integer, "null"], minimum: 0 }
+        output_tokens: { type: [integer, "null"], minimum: 0 }
+        prompt_throughput_tps: { type: [number, "null"], minimum: 0 }
+        generation_throughput_tps: { type: [number, "null"], minimum: 0 }
+        elapsed_ms: { type: [integer, "null"], minimum: 0 }
+    ImportedHardwareSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        cpu: { type: [string, "null"] }
+        gpu: { type: [string, "null"] }
+        ram_gb: { type: [number, "null"], minimum: 0 }
+        gpu_vram_gb: { type: [number, "null"], minimum: 0 }
+        os: { type: [string, "null"] }
+    RunImportRequest:
+      type: object
+      additionalProperties: false
+      required: [format_version, profile_snapshot, benchmark_config, started_at, ended_at]
+      properties:
+        format_version: { const: benchscope.run.v1 }
+        source_run_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+        profile_snapshot: { $ref: "#/components/schemas/ImportedProfileSnapshot" }
+        benchmark_config: { $ref: "#/components/schemas/ImportedBenchmarkConfig" }
+        started_at: { type: string, format: date-time, description: Must include a timezone offset. }
+        ended_at: { type: string, format: date-time, description: Must include a timezone offset and be at or after started_at. }
+        metrics: { $ref: "#/components/schemas/ImportedMetrics" }
+        hardware_snapshot:
+          anyOf:
+            - $ref: "#/components/schemas/ImportedHardwareSnapshot"
+            - type: "null"
     ProfileSnapshot:
       type: object
-      required: [profile_id, name, model_name]
+      required: [name, model_name]
       properties:
-        profile_id: { type: string }
+        profile_id: { type: [string, "null"] }
         name: { type: string }
         model_name: { type: string }
+        model_version: { type: [string, "null"] }
+        quantisation: { type: [string, "null"] }
         quantization: { type: [string, "null"] }
         context_length: { type: [number, "null"] }
         inference_engine: { type: [string, "null"] }
@@ -74,7 +134,12 @@ components:
       required: [name]
       properties:
         name: { type: string }
+        temperature: { type: [number, "null"], minimum: 0 }
         max_tokens: { type: integer }
+        reasoning: { type: [boolean, "null"] }
+        mtp: { type: [boolean, "null"] }
+        ctx: { type: [integer, "null"], minimum: 1 }
+        seed: { type: [integer, "null"], minimum: 0 }
         concurrency: { type: integer }
         prompt_set: { type: string }
     ModelProfile:
@@ -357,12 +422,16 @@ paths:
   /runs/import:
     post:
       summary: Import result JSON
+      description: >-
+        Imports one normalized, completed run summary. A trusted exporter must
+        create benchscope.run.v1; private per-trial JSONL is not accepted and
+        the raw request bytes are not retained. Uploads are limited by
+        MAX_UPLOAD_BYTES (default 1 MiB).
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
+            schema: { $ref: "#/components/schemas/RunImportRequest" }
       responses:
         "201":
           description: Imported
@@ -371,12 +440,17 @@ paths:
               schema: { $ref: "#/components/schemas/ImportResult" }
         "401": { description: Unauthorized }
         "409":
-          description: Duplicate import
+          description: Duplicate import for this owner; no row was created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportResult" }
+        "413":
+          description: Upload exceeds MAX_UPLOAD_BYTES; the request body was not buffered
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ImportResult" }
         "422":
-          description: Validation error
+          description: Invalid JSON, unsupported or incomplete version, invalid values, or non-JSON content type
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ImportResult" }

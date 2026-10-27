@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, load_settings
 from app.database import create_database_engine
+from app.imports import router as imports_router
 from app.profiles import router as profiles_router
 
 logger = logging.getLogger("app.request")
@@ -139,6 +140,7 @@ def create_app(
         else None
     )
     app.include_router(profiles_router)
+    app.include_router(imports_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -62,6 +62,7 @@ class BenchmarkRun(Base):
         Uuid, ForeignKey("model_profiles.id")
     )
     profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    benchmark_config: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     source_run_id: Mapped[str | None] = mapped_column(String(255))
     import_fingerprint: Mapped[str | None] = mapped_column(String(255))
     benchmark_version: Mapped[str | None] = mapped_column(String(255))

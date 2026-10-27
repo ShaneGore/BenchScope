@@ -26,7 +26,23 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 - `GET /runs` — list/filter own.
 - `GET /runs/{id}` — get (owner check).
 - `DELETE /runs/{id}` — delete own.
-- `POST /runs/import` — import a result JSON (multipart or JSON). Validates, normalises, dedups by fingerprint. Returns created run or `409` on duplicate.
+- `POST /runs/import` — import one strict `benchscope.run.v1` JSON run summary.
+  A trusted exporter must normalize completed-run data before upload; private
+  per-trial JSONL is not accepted and aggregate metrics are never derived here.
+  The request requires a profile snapshot, named benchmark config, and
+  timezone-aware start/end timestamps. Only `temperature`, `max_tokens`,
+  `reasoning`, `mtp`, `ctx`, and `seed` are accepted as config settings.
+  Canonical metrics may be omitted or null; values are passed through, never
+  derived, and missing values remain null. Unknown fields are rejected at every
+  level. The server assigns the fixed local owner, `source=imported`, and
+  `status=completed`; imports have no profile foreign key, events, or artifacts.
+  A provided `source_run_id` is hashed with a versioned namespace; otherwise a
+  SHA-256 fingerprint is calculated from canonical JSON for the validated
+  allowlisted request. Fingerprint uniqueness is scoped to the owner. Raw
+  request bytes are not retained, logged, or echoed. JSON uploads are streamed
+  up to `MAX_UPLOAD_BYTES` (default 1 MiB, configurable via Pydantic settings).
+  Returns the existing `ImportResult` success shape (`201`) or errors (`409`
+  duplicate, `413` too large, `422` malformed/unsupported/invalid request).
 - `POST /runs/{id}/retry` — create a new attempt linked to a failed run (local mode only; hosted returns 403/404).
 
 ### Benchmark (local mode only)
@@ -46,6 +62,9 @@ In hosted mode these routes are not registered (404).
 ## Ownership rules
 
 - `owner_id` is always taken from the verified JWT, never request body/path.
+- Import v1 uses the fixed `LOCAL_OWNER_ID` until authenticated ownership is
+  implemented; owner, source, status, profile FK, fingerprint, event and
+  artifact fields are never accepted from the request.
 - Every `{id}` lookup includes `WHERE owner_id = current_owner`; mismatch → 404 (not 403, to avoid enumeration).
 - Batch endpoints (compare) filter the provided IDs by owner; unowned IDs are silently dropped or rejected (decide at implementation; document).
 - Hosted profile endpoint fields are validated/stripped of `endpoint_url` and credentials.

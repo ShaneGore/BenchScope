@@ -10,4 +10,5 @@ def test_application_shell_registers_health_and_profile_routes() -> None:
         "/ready",
         "/profiles",
         "/profiles/{id}",
+        "/runs/import",
     }

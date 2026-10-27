@@ -31,6 +31,7 @@ One attempt (imported or launched). Owned.
 - `status` (enum: `running` | `completed` | `failed` | `interrupted`)
 - `profile_id` (fk → ModelProfile, nullable) — snapshot taken at run time
 - `profile_snapshot` (json) — model/hardware/config captured to preserve historical meaning
+- `benchmark_config` (json, nullable) — allowlisted summary config for imported runs
 - `source_run_id` (string, nullable) — benchmark's own run id
 - `import_fingerprint` (string, nullable, unique per owner where present) — duplicate detection
 - `benchmark_version` (string, nullable)
@@ -85,6 +86,11 @@ unique `(owner_id, import_fingerprint)` index. `started_at` is required;
 `completed_at` and every listed metric are nullable. Numeric precision and
 metric semantics remain unspecified; no additional benchmark-derived columns
 are introduced.
+
+The v1 result importer stores only the normalized allowlist, optional
+`source_run_id`, and a SHA-256 import fingerprint. It does not store raw request
+bytes, prompts, generated code, private task identifiers, raw outputs,
+credentials, events, artifacts, or error data.
 
 Before authentication exists, local development and tests use the fixed owner
 `local` (`LOCAL_OWNER_ID`), never an owner supplied by a caller. `endpoint_url`
