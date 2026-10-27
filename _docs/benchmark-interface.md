@@ -44,6 +44,26 @@ material.
 - The runner is not self-contained and requires environment-specific absolute
   path edits before use.
 
+## Verified v2 runner investigation
+
+- The v2 `tools/run47.py` is byte-for-byte identical to the v1 runner. As
+  exported, it has hard-coded source, repository, output, and model paths, no
+  supported environment or configuration override, and is not a
+  BenchScope-callable adapter.
+- It emits per-task/seed JSONL records, not a native run-level import contract.
+- It starts `llama-server` with `CREATE_NEW_PROCESS_GROUP`, but cleanup only
+  terminates, waits for, and may kill the server child PID. There is no
+  cancellation API or process-tree cleanup guarantee.
+- Existing PowerShell matrix/watch scripts target an older v1 evaluation path
+  and are not a safe v2 cancellation wrapper.
+- No benchmark was run for this verification.
+- Owner-approved BenchScope status mapping: cancellation → `cancelled`, timeout
+  → `failed`, and unexpected process loss → `interrupted`. These mappings do
+  not mean the external runner supports cancellation.
+- Unknown: v2 behavior under cancellation or timeout, whether descendants
+  survive cleanup, and how its trial records would be imported or represented
+  as a BenchScope run.
+
 ## Verified configuration
 
 | Setting | Value |
