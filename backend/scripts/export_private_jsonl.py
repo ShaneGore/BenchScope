@@ -47,28 +47,37 @@ def _manifest_task_ids(manifest: Any) -> tuple[str, list[str], dict[str, str]]:
     release = manifest.get("release")
     if not isinstance(release, str) or not SAFE_LABEL.fullmatch(release):
         raise ExportError("manifest release is invalid")
-    aliases: dict[str, str] = {}
     task_ids: list[str] = []
+    aliases_by_task: list[tuple[str, list[str]]] = []
     for task in manifest["tasks"]:
         if not isinstance(task, dict):
             raise ExportError("manifest task record is invalid")
         release_id = task.get("release_id")
         if not isinstance(release_id, str) or not SAFE_ID.fullmatch(release_id):
             raise ExportError("manifest release_id is invalid")
-        if release_id in aliases:
+        if release_id in task_ids:
             raise ExportError("manifest release_id is duplicated")
         task_ids.append(release_id)
         task_aliases = task.get("aliases", [])
         if not isinstance(task_aliases, list):
             raise ExportError("manifest aliases are invalid")
+        if any(not isinstance(alias, str) or not alias for alias in task_aliases):
+            raise ExportError("manifest alias is invalid")
+        aliases_by_task.append((release_id, task_aliases))
+    if not task_ids:
+        raise ExportError("manifest has no release_id task IDs")
+
+    canonical_ids = set(task_ids)
+    aliases: dict[str, str] = {}
+    for release_id, task_aliases in aliases_by_task:
         for alias in task_aliases:
-            if not isinstance(alias, str) or not alias:
-                raise ExportError("manifest alias is invalid")
+            if alias in canonical_ids and alias != release_id:
+                raise ExportError(
+                    "manifest alias conflicts with a canonical release_id"
+                )
             if alias in aliases:
                 raise ExportError("manifest alias is ambiguous")
             aliases[alias] = release_id
-    if not task_ids:
-        raise ExportError("manifest has no release_id task IDs")
     return release, sorted(task_ids), aliases
 
 

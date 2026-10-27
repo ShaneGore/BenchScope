@@ -16,7 +16,7 @@ const details = {
   expected_task_ids: ['task-a', 'task-b'],
 };
 
-function run(id: string, release = 'release-1'): BenchmarkRun {
+function run(id: string, detailChanges: Partial<typeof details> = {}): BenchmarkRun {
   return {
     id,
     owner_id: 'owner',
@@ -25,7 +25,7 @@ function run(id: string, release = 'release-1'): BenchmarkRun {
     benchmark_config: { name: 'local-coding' },
     started_at: '2026-10-26T10:00:00Z',
     metrics: { pass_rate: 0.5 },
-    benchmark_details: { ...details, release },
+    benchmark_details: { ...details, ...detailChanges },
     task_results: [{ task_id: 'task-a', passed: true }],
   };
 }
@@ -44,7 +44,21 @@ describe('ComparePage task outcomes', () => {
   });
 
   it('hides task outcomes and pass rates for mismatched v2 releases', async () => {
-    compareRuns.mockResolvedValue([run('one'), run('two', 'release-2')]);
+    compareRuns.mockResolvedValue([run('one'), run('two', { release: 'release-2' })]);
+    render(<ComparePage ids={['one', 'two']} />);
+
+    expect(
+      await screen.findByText(/Task outcomes and pass rates are hidden/)
+    ).toBeTruthy();
+    expect(screen.queryByText('Per-task outcomes')).toBeNull();
+    expect(screen.queryByText('Pass Rate')).toBeNull();
+  });
+
+  it.each([
+    ['benchmark IDs', { benchmark_id: 'other-benchmark' }],
+    ['manifest digests', { manifest_sha256: 'b'.repeat(64) }],
+  ])('hides task outcomes and pass rates for mismatched %s', async (_label, changes) => {
+    compareRuns.mockResolvedValue([run('one'), run('two', changes)]);
     render(<ComparePage ids={['one', 'two']} />);
 
     expect(

@@ -128,6 +128,31 @@ def test_selects_one_seed_repeat_group_and_requires_explicit_zoned_times() -> No
     assert repeat_one["benchmark_config"]["repeat_index"] == 1
 
 
+def test_rejects_alias_that_shadows_another_canonical_release_id() -> None:
+    conflicting = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "task-a"},
+                {"release_id": "task-b", "aliases": ["task-a"]},
+            ],
+        }
+    ).encode()
+
+    with pytest.raises(ExportError, match="conflicts with a canonical release_id"):
+        export_run(
+            conflicting,
+            row("task-a", True),
+            benchmark_id="id",
+            model_name="model",
+            profile_name="profile",
+            started_at="2026-10-26T10:00:00Z",
+            ended_at="2026-10-26T10:00:01Z",
+            seed=1,
+            repeat_index=0,
+        )
+
+
 def test_rejects_unsafe_release_ids_and_ambiguous_aliases() -> None:
     unsafe = json.dumps(
         {"release": "release-1", "tasks": [{"release_id": "../private"}]}
