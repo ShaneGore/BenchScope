@@ -47,6 +47,50 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:?Set API_PORT in .env}:8000"
 
+  alert-receiver:
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --no-sync
+      - uvicorn
+      - app.alert_receiver:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ALERT_RECEIVER_SECRET_FILE: /run/secrets/alert-receiver-bearer
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    secrets:
+      - alert-receiver-bearer
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --web.listen-address=:9093
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    secrets:
+      - alert-receiver-bearer
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.136.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -72,6 +116,8 @@ services:
       - prometheus-data:/prometheus
     depends_on:
       api:
+        condition: service_started
+      alertmanager:
         condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
@@ -141,3 +187,7 @@ volumes:
   loki-data:
   tempo-data:
   grafana-data:
+
+secrets:
+  alert-receiver-bearer:
+    file: ${ALERT_RECEIVER_SECRET_FILE:?Set ALERT_RECEIVER_SECRET_FILE to an ignored local secret file}

@@ -52,3 +52,169 @@ project-built API images. `.env.task23` was absent. The selected published
 ports `8000`, `4318`, `9090`, `3100`, `3200`, `3000`, and `15441` had no
 listeners. No other Compose project or the original 5432 listener was
 stopped, altered, or cleaned up.
+
+## Issue #32 — Stage 1 authenticated alert intake
+
+This is a local-only verification of the Prometheus-managed
+`BenchScopeApiUnavailable` rule being sent through Alertmanager to the
+separate, bearer-authenticated receiver. It verifies a sanitized incident
+record and its resolved update. It does **not** verify AI investigation,
+recovery automation, or completion of the course incident-response criterion.
+Use synthetic data only. Do not use the repository `.env`, hosted services,
+real user data, private benchmark material, external notification targets, or
+a mock receiver.
+
+The environment in which this procedure was added had all fixed published
+ports (`8000`, `4318`, `9090`, `3100`, `3200`, `3000`) occupied and did not
+have `prom/alertmanager:v0.28.1` cached. The integration was therefore not
+run; no service was stopped, no image was pulled, and real alert delivery is
+not claimed. Run the steps below only after the local-only preflight passes
+and every required image is already present.
+
+From the repository root in a clean PowerShell session, confirm the Docker
+context is local, the exact disposable project does not already exist, and
+the fixed service ports plus a PostgreSQL host port are free. If a fixed port
+or a required image is unavailable, stop here without changing anything.
+Choose an unused PostgreSQL host port if `5432` is occupied; never stop or
+alter another listener.
+
+```powershell
+$project = "benchscope-incident-response-disposable"
+$context = docker context show
+$endpoint = docker context inspect $context --format '{{.Endpoints.docker.Host}}'
+if ($endpoint -notmatch '^(npipe:|unix://)') { throw "Not a local Docker context; abort." }
+
+if (@(docker ps -aq --filter "label=com.docker.compose.project=$project").Count -gt 0) {
+  throw "The disposable Compose project already exists; inspect it and abort."
+}
+
+$fixedPorts = 8000, 4318, 9090, 3100, 3200, 3000
+try {
+  $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+} catch {
+  throw "Port check failed or is uncertain; abort without starting Compose."
+}
+if (@($listeners | Where-Object { $fixedPorts -contains $_.Port }).Count -gt 0) {
+  throw "A required fixed port is occupied; abort without changing its listener."
+}
+$dbPort = 5432
+if (@($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0) {
+  $dbPort = 15441
+  while (@($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0 -and $dbPort -lt 15500) { $dbPort++ }
+}
+if ($dbPort -ge 15500 -or @($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0) {
+  throw "No verified-free PostgreSQL host port; abort."
+}
+
+$requiredImages = @(
+  "postgres:17-alpine",
+  "prom/prometheus:v3.5.0",
+  "prom/alertmanager:v0.28.1",
+  "grafana/loki:3.5.3",
+  "grafana/tempo:2.8.1",
+  "grafana/grafana:12.1.1",
+  "otel/opentelemetry-collector-contrib:0.136.0",
+  "ghcr.io/astral-sh/uv:0.12.5",
+  "python:3.12-slim"
+)
+foreach ($image in $requiredImages) {
+  docker image inspect $image *> $null
+  if ($LASTEXITCODE -ne 0) { throw "Required image is not cached; do not pull it; abort." }
+}
+```
+
+Only after that preflight succeeds, make the dedicated ignored configuration
+file `.env.incident-response-disposable` and its ignored Compose-secret file.
+Both credentials below are generated randomly and remain local. The bearer
+secret is supplied only as a Compose secret to Alertmanager and the receiver;
+it is never placed in an environment variable or printed.
+
+```powershell
+New-Item -ItemType Directory -Force secrets | Out-Null
+$bytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$dbPassword = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+$rng.GetBytes($bytes)
+$bearer = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+[IO.File]::WriteAllText((Join-Path $PWD "secrets/alert-receiver-bearer"), $bearer, [Text.Encoding]::ASCII)
+[Array]::Clear($bytes, 0, $bytes.Length)
+$rng.Dispose()
+
+@"
+POSTGRES_DB=benchscope_incident
+POSTGRES_USER=incident
+POSTGRES_PASSWORD=$dbPassword
+POSTGRES_PORT=$dbPort
+API_PORT=8000
+ALERT_RECEIVER_SECRET_FILE=./secrets/alert-receiver-bearer
+APP_MODE=local
+APP_ENV=development
+LOCAL_AUTH_BYPASS=false
+BENCHMARK_ENABLED=false
+"@ | Set-Content -Encoding ascii .env.incident-response-disposable
+Remove-Variable dbPassword, bearer
+
+docker compose --env-file .env.incident-response-disposable -p $project config --quiet
+docker compose --env-file .env.incident-response-disposable -p $project up --build --pull never --wait --detach
+docker compose --env-file .env.incident-response-disposable -p $project ps
+```
+
+Do not substitute `.env` or start the default Compose project. The Alertmanager
+and receiver have no published host ports; the API, Prometheus, and other
+existing development services retain their loopback-only ports.
+
+Verify that the API is ready, Prometheus is healthy, `up{job="api"}` is `1`,
+the alert is clear, and no existing incident record is being mistaken for
+this exercise. Then stop only the API in this exact project and wait long
+enough for the one-minute rule and Alertmanager delivery:
+
+```powershell
+docker compose --env-file .env.incident-response-disposable -p $project stop api
+Start-Sleep -Seconds 100
+Invoke-RestMethod "http://127.0.0.1:9090/api/v1/alerts"
+curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%2Calertstate%3D%22firing%22%7D'
+docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
+```
+
+The Prometheus alert must be firing and the database row must show
+`firing|complete` for complete evidence. `firing|partial` or `firing|failed`
+proves authenticated delivery but records incomplete diagnostics; record that
+state without describing the evidence as complete. No row means delivery was
+not verified. The receiver writes no record for missing or invalid
+authentication, and it stores no raw webhook or datasource response.
+
+Restart only this project's API. Wait for readiness, `up=1`, and the alert to
+resolve; then confirm the same incident row is resolved rather than duplicated:
+
+```powershell
+docker compose --env-file .env.incident-response-disposable -p $project start api
+Invoke-RestMethod http://127.0.0.1:8000/ready
+Start-Sleep -Seconds 30
+curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+Invoke-RestMethod http://127.0.0.1:9090/api/v1/alerts
+docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
+```
+
+Before cleanup, verify that every container carries the exact
+`com.docker.compose.project=benchscope-incident-response-disposable` label.
+Remove only that verified project, its disposable volumes, generated local
+image, configuration file, and secret file. Verify that no project-labelled
+containers or volumes remain. If project identity is uncertain, do not run
+`down`.
+
+```powershell
+$containers = @(docker ps -aq --filter "label=com.docker.compose.project=$project")
+if ($containers.Count -eq 0) { throw "Project containers not found; inspect before cleanup." }
+$labels = docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' $containers
+if (@($labels | Where-Object { $_ -ne $project }).Count -gt 0) { throw "Project identity mismatch; do not clean up." }
+docker compose --env-file .env.incident-response-disposable -p $project down --volumes --remove-orphans --rmi local
+Remove-Item .env.incident-response-disposable
+Remove-Item secrets/alert-receiver-bearer
+docker ps -a --filter "label=com.docker.compose.project=$project"
+docker volume ls --filter "label=com.docker.compose.project=$project"
+```
+
+This exercise demonstrates only authenticated local alert delivery, persistent
+deduplication, and bounded sanitized evidence. It does not demonstrate AI
+investigation, recovery automation, or completion of the course criterion.

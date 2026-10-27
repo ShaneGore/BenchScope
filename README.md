@@ -238,6 +238,21 @@ configured. Local authentication bypass is only for a developer workstation.
    # Edit .env locally; do not commit it.
    ```
 
+   Create the local bearer secret file referenced by `.env`; keep the value
+   out of `.env`, source files, and logs:
+
+   ```powershell
+   New-Item -ItemType Directory -Force secrets | Out-Null
+   $bytes = New-Object byte[] 32
+   $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+   $rng.GetBytes($bytes)
+   $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+   [IO.File]::WriteAllText("secrets/alert-receiver-bearer", $secret, [Text.Encoding]::ASCII)
+   [Array]::Clear($bytes, 0, $bytes.Length)
+   $rng.Dispose()
+   Remove-Variable secret
+   ```
+
 2. Start the stack. The Compose API container applies its Alembic migrations
    before serving requests:
 
@@ -289,6 +304,12 @@ It injects an API outage by stopping only the API in a uniquely named,
 disposable Compose project. Use synthetic settings and data; do not use hosted
 URLs, real user data, an external receiver, or a developer's persistent Compose
 project/database. All Compose-published endpoints are loopback-only.
+
+The authenticated Alertmanager delivery procedure added for issue #32 is
+documented in [`_docs/incidents/task-23.md`](./_docs/incidents/task-23.md)
+under “Issue #32 — Stage 1 alert intake”. It uses its own ignored synthetic
+configuration and Compose project; the earlier Task 23 result above does not
+claim that alert delivery was exercised.
 
 Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
 the repository's `compose.yaml` and `observability/` files. The required host
