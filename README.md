@@ -1,4 +1,4 @@
-﻿# BenchScope
+# BenchScope
 
 BenchScope is a local-first web application for recording, comparing, and understanding the performance of local language models on an independent coding benchmark. It turns isolated benchmark results into a durable, inspectable history while keeping the proprietary benchmark itself out of this repository.
 
@@ -46,7 +46,7 @@ This repository currently contains:
 - Generated typed frontend contract artifacts at `frontend/src/types/api.generated.ts`.
 - Contract tests in `frontend/src/contract/` and `backend/tests/test_contract.py`.
 - A backend-independent mock frontend service for hosted/demo mode and benchmark runner workflows.
-- Docker Compose support for local backend plus PostgreSQL.
+- Docker Compose support for local backend, PostgreSQL, and OpenTelemetry/Prometheus/Loki/Tempo/Grafana.
 
 Backend domain routes are not yet implemented; the OpenAPI contract is the reconciliation target until FastAPI-generated OpenAPI becomes authoritative.
 
@@ -138,8 +138,8 @@ Compose builds the backend from `backend/` and runs PostgreSQL in a private Comp
 
    ```sh
    docker compose ps
-   curl http://127.0.0.1:8001/health
-   curl http://127.0.0.1:8001/ready
+   curl http://127.0.0.1:8000/health
+   curl http://127.0.0.1:8000/ready
    ```
 
 4. Stop while retaining data:
@@ -172,44 +172,71 @@ Remove-Item Env:DATABASE_URL, Env:TEST_DATABASE_URL
 
 ### Local frontend/API browser smoke
 
-The local-mode frontend uses `VITE_API_URL` for the FastAPI origin. Hosted/demo
-mode and benchmark runner operations continue to use the mock. In PowerShell,
-start the existing Compose database/API services and apply the database
-migrations from the host (the API image does not run migrations):
+The local-mode frontend uses `VITE_API_URL` for FastAPI and sends privacy-safe
+browser traces to the local OTLP collector. Compose binds every service to
+loopback; no hosted telemetry endpoint or external notification receiver is
+configured. Local authentication bypass is only for a developer workstation.
+
+1. Copy `.env.example` to `.env`, set a local URL-safe `POSTGRES_PASSWORD`, and
+   set `LOCAL_AUTH_BYPASS=true` (keep `APP_MODE=local` and
+   `APP_ENV=development`):
+
+   ```powershell
+   Copy-Item .env.example .env
+   # Edit .env locally; do not commit it.
+   ```
+
+2. Start the stack. The Compose API container applies its Alembic migrations
+   before serving requests:
+
+   ```powershell
+   docker compose up --build --wait --detach
+   docker compose ps
+   Invoke-RestMethod http://127.0.0.1:8000/ready
+   Invoke-WebRequest http://127.0.0.1:8000/metrics
+   Invoke-RestMethod http://127.0.0.1:9090/-/healthy
+   Invoke-RestMethod http://127.0.0.1:3100/ready
+   Invoke-RestMethod http://127.0.0.1:3200/ready
+   Invoke-RestMethod http://127.0.0.1:3000/api/health
+   ```
+
+3. Install and run the real-UI journey from `frontend/`. Playwright starts Vite
+   with `VITE_API_URL=http://127.0.0.1:8000` and
+   `VITE_OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318/v1/traces`:
+
+   ```powershell
+   Push-Location frontend
+   corepack pnpm install --frozen-lockfile
+   corepack pnpm exec playwright install chromium
+   corepack pnpm test:journey
+   Pop-Location
+   ```
+
+The journey imports one synthetic valid run, views it in history and detail,
+and submits an invalid import. Browser request spans and FastAPI spans carry
+W3C trace context into Tempo; FastAPI's structured, payload-free request logs
+go to Loki. Open Grafana at
+`http://127.0.0.1:3000/d/benchscope-local-journey/benchscope-local-journey`.
+The dashboard shows route/status request rates, validation/server failures,
+alert state, and correlated logs. Open Tempo Explore from the dashboard to
+search `benchscope-frontend` traces and follow the trace-to-log link.
+
+Run the controlled alert test (the API stays up; synthetic `up` samples prove
+pending, firing, and resolution) from the repository root:
 
 ```powershell
-$env:POSTGRES_DB = "benchscope"
-$env:POSTGRES_USER = "benchscope"
-$env:POSTGRES_PASSWORD = "choose-a-local-url-safe-password"
-$env:API_PORT = "8001"
-$env:POSTGRES_PORT = "5433"
-docker compose up --build --wait --detach
-
-$env:DATABASE_URL = "postgresql+psycopg://$($env:POSTGRES_USER):$($env:POSTGRES_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/$($env:POSTGRES_DB)"
-Push-Location backend
-uv run alembic upgrade head
-Pop-Location
-Invoke-RestMethod http://127.0.0.1:8001/health
-Invoke-RestMethod http://127.0.0.1:8001/ready
+docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
 ```
 
-In a second terminal, start Vite with the local API origin:
+The local alert is `up{job="api"} == 0` pending for 1 minute. To verify the
+live path as well, stop only the local API for 90 seconds and inspect
+`BenchScopeApiUnavailable` in Grafana/Prometheus; restart it and wait for the
+next scrape/evaluation to resolve the alert. The operator action is to inspect
+`/ready` and API/database logs, then restart the API only after confirming the
+database and configuration. No external notification receiver is configured.
 
-```powershell
-$env:VITE_APP_MODE = "local"
-$env:VITE_API_URL = "http://127.0.0.1:8001"
-Push-Location frontend
-corepack pnpm install --frozen-lockfile
-corepack pnpm dev -- --host 127.0.0.1
-```
-
-Open the printed Vite URL and manually verify: create, edit, list, and delete a
-profile; import two normalized `benchscope.run.v1` JSON files with distinct
-`source_run_id` values; filter by status, model, and dates; open a run detail;
-select the two imported runs for comparison; then delete one from its detail or
-history. Confirm an unmatched filter shows the empty history state and null
-metrics display as unavailable. This is a browser smoke procedure, not an
-automated Playwright test (Playwright is not a project dependency).
+Stop with `docker compose down`; add `--volumes` only when intentionally
+deleting the local database and telemetry history.
 
 Pre-auth local storage fixtures use the fixed owner id `local`; owner ids are
 not accepted from callers.

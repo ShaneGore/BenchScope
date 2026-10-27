@@ -6,6 +6,11 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.14",
     "fastapi>=0.115.0",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-exporter-prometheus>=0.66b1",
+    "opentelemetry-sdk>=1.45.1",
+    "prometheus-client>=0.26.0",
     "psycopg[binary]>=3.2.0",
     "pydantic-settings>=2.7.0",
     "pyjwt[crypto]>=2.15.1",

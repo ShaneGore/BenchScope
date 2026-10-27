@@ -18,6 +18,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import Settings, load_settings
 from app.database import create_database_engine
 from app.imports import router as imports_router
+from app.observability import RequestTelemetryMiddleware, Telemetry
 from app.profiles import router as profiles_router
 from app.run_history import router as run_history_router
 
@@ -111,8 +112,10 @@ class CorrelationIdMiddleware:
 def create_app(
     settings: Settings | None = None,
     readiness_probe: Callable[[str | None], bool] | None = None,
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     config = settings or load_settings()
+    request_telemetry = telemetry or Telemetry(enabled=config.app_mode == "local")
     database_url = (
         config.database_url.get_secret_value() if config.database_url else None
     )
@@ -123,6 +126,7 @@ def create_app(
         try:
             yield
         finally:
+            request_telemetry.close()
             if engine is not None:
                 engine.dispose()
 
@@ -134,6 +138,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = config
+    app.state.telemetry = request_telemetry
     app.state.readiness_probe = readiness_probe or database_is_ready
     app.state.engine = engine
     app.state.session_factory = (
@@ -144,6 +149,8 @@ def create_app(
     app.include_router(profiles_router, prefix=API_PREFIX)
     app.include_router(imports_router, prefix=API_PREFIX)
     app.include_router(run_history_router, prefix=API_PREFIX)
+    if request_telemetry.enabled:
+        app.mount("/metrics", request_telemetry.metrics_app)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -181,6 +188,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(RequestTelemetryMiddleware, telemetry=request_telemetry)
     return app
 
 

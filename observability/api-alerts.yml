@@ -1,0 +1,13 @@
+groups:
+  - name: benchscope-local
+    rules:
+      - alert: BenchScopeApiUnavailable
+        expr: up{job="api"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: BenchScope API scrape is unavailable
+          description: >-
+            Inspect /ready and the API/database logs. Restart the API only after
+            confirming the database and configuration.

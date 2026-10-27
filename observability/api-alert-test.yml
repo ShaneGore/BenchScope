@@ -1,0 +1,30 @@
+rule_files:
+  - /etc/prometheus/rules/api-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="api",instance="api:8000"}'
+        values: "1 0 0 0 0 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BenchScopeApiUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: BenchScopeApiUnavailable
+        exp_alerts:
+          - exp_labels:
+              alertname: BenchScopeApiUnavailable
+              instance: api:8000
+              job: api
+              severity: warning
+            exp_annotations:
+              summary: BenchScope API scrape is unavailable
+              description: >-
+                Inspect /ready and the API/database logs. Restart the API only
+                after confirming the database and configuration.
+      - eval_time: 2m30s
+        alertname: BenchScopeApiUnavailable
+        exp_alerts: []

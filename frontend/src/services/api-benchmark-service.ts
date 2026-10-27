@@ -10,6 +10,7 @@ import type {
   RunFilters,
 } from '@/types';
 import type { BenchmarkService } from './benchmark-service';
+import { journeyRoute, traceJourneyRequest } from '@/observability';
 
 type ApiProfile = components['schemas']['ModelProfile'];
 type ApiProfileCreate = components['schemas']['ProfileCreate'];
@@ -155,29 +156,38 @@ export class ApiBenchmarkService implements BenchmarkService {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = await sessionTokenProvider?.();
-    if (this.requireSessionToken && !token) {
-      throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
-    }
-    const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}${path}`, {
-      ...init,
-      headers: {
-        Accept: 'application/json',
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...init?.headers,
-      },
-    });
-    if (response.status === 204) return undefined as T;
+    const method = init?.method ?? 'GET';
+    return traceJourneyRequest(
+      journeyRoute(path, method),
+      method,
+      async (traceHeaders, recordResponse) => {
+        const token = await sessionTokenProvider?.();
+        if (this.requireSessionToken && !token) {
+          throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
+        }
+        const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}${path}`, {
+          ...init,
+          headers: {
+            Accept: 'application/json',
+            ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...init?.headers,
+            ...traceHeaders,
+          },
+        });
+        recordResponse(response.status);
+        if (response.status === 204) return undefined as T;
 
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
-    if (!response.ok) throw toApiError(response.status, body);
-    return body as T;
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch {
+          body = null;
+        }
+        if (!response.ok) throw toApiError(response.status, body);
+        return body as T;
+      }
+    );
   }
 
   async listProfiles(): Promise<ModelProfile[]> {
@@ -214,34 +224,42 @@ export class ApiBenchmarkService implements BenchmarkService {
   }
 
   async importRun(payload: unknown): Promise<ImportResult> {
-    const token = await sessionTokenProvider?.();
-    if (this.requireSessionToken && !token) {
-      throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
-    }
-    const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}/runs/import`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-    let body: ApiImportResult | null = null;
-    try {
-      body = (await response.json()) as ApiImportResult;
-    } catch {
-      body = null;
-    }
-    if (body && !body.ok) {
-      return {
-        ok: false,
-        status: body.status || response.status,
-        errors: importErrors(body),
-      };
-    }
-    if (!response.ok || !body) throw toApiError(response.status, body);
-    return { ok: true, run: mapRun(body.run) };
+    return traceJourneyRequest(
+      '/api/v1/runs/import',
+      'POST',
+      async (traceHeaders, recordResponse) => {
+        const token = await sessionTokenProvider?.();
+        if (this.requireSessionToken && !token) {
+          throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
+        }
+        const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}/runs/import`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            ...traceHeaders,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+        recordResponse(response.status);
+        let body: ApiImportResult | null = null;
+        try {
+          body = (await response.json()) as ApiImportResult;
+        } catch {
+          body = null;
+        }
+        if (body && !body.ok) {
+          return {
+            ok: false,
+            status: body.status || response.status,
+            errors: importErrors(body),
+          };
+        }
+        if (!response.ok || !body) throw toApiError(response.status, body);
+        return { ok: true, run: mapRun(body.run) };
+      }
+    );
   }
 
   async listRuns(filters: RunFilters = {}): Promise<Paginated<BenchmarkRun>> {
