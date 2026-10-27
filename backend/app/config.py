@@ -94,12 +94,22 @@ class Settings(BaseSettings):
                 jwks = None
             if (
                 jwks is None
-                or jwks.scheme != "https"
+                or jwks.scheme not in {"https", "http"}
                 or not jwks.hostname
                 or jwks.username
                 or jwks.password
             ):
-                raise ValueError("CLERK_JWKS_URL must be an HTTPS URL")
+                raise ValueError("CLERK_JWKS_URL must be a valid HTTPS URL")
+            if jwks.scheme == "http" and (
+                self.app_env != "test"
+                or self.app_mode != "local"
+                or not self.bind_host_is_loopback
+                or not resolved_loopback_addresses(jwks.hostname)
+            ):
+                raise ValueError(
+                    "HTTP CLERK_JWKS_URL requires APP_ENV=test, APP_MODE=local, "
+                    "and loopback-only HOST and JWKS resolution"
+                )
         if any(
             (self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)
         ) and not all((self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)):
@@ -120,16 +130,26 @@ class Settings(BaseSettings):
 
     @property
     def bind_host_is_loopback(self) -> bool:
-        try:
-            addresses = {
-                ipaddress.ip_address(result[4][0])
-                for result in socket.getaddrinfo(
-                    self.bind_host, None, type=socket.SOCK_STREAM
-                )
-            }
-        except (OSError, ValueError):
+        return bool(resolved_loopback_addresses(self.bind_host))
+
+    @property
+    def test_local_http_jwks(self) -> bool:
+        if (
+            not self.clerk_jwks_url
+            or self.app_env != "test"
+            or self.app_mode != "local"
+        ):
             return False
-        return bool(addresses) and all(address.is_loopback for address in addresses)
+        try:
+            jwks = urlsplit(self.clerk_jwks_url)
+        except ValueError:
+            return False
+        return (
+            jwks.scheme == "http"
+            and bool(jwks.hostname)
+            and self.bind_host_is_loopback
+            and bool(resolved_loopback_addresses(jwks.hostname))
+        )
 
 
 def load_settings() -> Settings:
@@ -146,3 +166,20 @@ def load_settings() -> Settings:
         raise ConfigurationError(message) from None
     except SettingsError:
         raise ConfigurationError("Invalid application configuration") from None
+
+
+def resolved_loopback_addresses(
+    host: str,
+) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    try:
+        addresses = {
+            ipaddress.ip_address(result[4][0])
+            for result in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        }
+    except (OSError, ValueError):
+        return set()
+    return (
+        addresses
+        if addresses and all(address.is_loopback for address in addresses)
+        else set()
+    )

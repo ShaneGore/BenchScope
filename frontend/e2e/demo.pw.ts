@@ -1,49 +1,49 @@
 import { expect, test } from '@playwright/test';
+import { readE2EState } from './support';
 
-const demoRun = {
-  id: 'demo-run-01',
-  status: 'completed',
-  profile_snapshot: {
-    name: 'Synthetic browser model',
-    model_name: 'synthetic/browser',
-    model_version: null,
-    quantisation: null,
-  },
-  benchmark_config: { name: 'synthetic-demo', temperature: 0, max_tokens: 32 },
-  started_at: '2026-01-01T00:00:00Z',
-  ended_at: '2026-01-01T00:00:01Z',
-  metrics: { quality_score: null },
-  hardware_snapshot: { cpu: 'Demo CPU', gpu: null, ram_gb: null, gpu_vram_gb: null, os: null },
-};
-
-test('anonymous synthetic demo list and detail stay read-only and use only demo GET endpoints', async ({ page }) => {
-  const requests: string[] = [];
-  await page.route('**/api/v1/**', async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    requests.push(`${request.method()} ${path}`);
-    if (path.endsWith('/demo/runs')) {
-      await route.fulfill({ json: [demoRun] });
-    } else if (path.endsWith(`/demo/runs/${demoRun.id}`)) {
-      await route.fulfill({ json: demoRun });
-    } else {
-      await route.fulfill({ status: 404, json: { detail: 'Unexpected endpoint' } });
-    }
+test('hosted anonymous demo stays GET-only and never contacts auth or runner APIs', async ({
+  page,
+}) => {
+  const requests: { method: string; path: string; authorization?: string }[] = [];
+  page.on('request', (request) => {
+    if (!request.url().includes('/api/v1/')) return;
+    requests.push({
+      method: request.method(),
+      path: new URL(request.url()).pathname,
+      authorization: request.headers().authorization,
+    });
   });
 
   await page.goto('/#/demo');
-  await expect(page.getByText('Synthetic browser model')).toBeVisible();
-  await page.getByRole('button', { name: /Synthetic browser model/ }).click();
+  await expect(page.getByText('Sample Model A')).toBeVisible();
+  await page.getByRole('button', { name: /Sample Model A/ }).click();
   await expect(page).toHaveURL(/#\/demo\/runs\/demo-run-01$/);
-  await expect(page.getByRole('heading', { name: 'Synthetic browser model' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sample Model A' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Retry run' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Compare' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Import|Launch/ })).toHaveCount(0);
+
+  expect(requests.length).toBeGreaterThanOrEqual(2);
   expect(requests.every((request) =>
-    request === 'GET /api/v1/demo/runs' ||
-    request === `GET /api/v1/demo/runs/${demoRun.id}`
+    request.method === 'GET' &&
+    (request.path === '/api/v1/demo/runs' ||
+      request.path === '/api/v1/demo/runs/demo-run-01') &&
+    !request.authorization
   )).toBe(true);
-  expect(requests).toContain('GET /api/v1/demo/runs');
-  expect(requests).toContain(`GET /api/v1/demo/runs/${demoRun.id}`);
+  expect(requests.map(({ path }) => path)).toContain('/api/v1/demo/runs');
+  expect(requests.map(({ path }) => path)).toContain(
+    '/api/v1/demo/runs/demo-run-01'
+  );
+
+  const runnerEndpoint = await page.request.get(
+    'http://127.0.0.1:8000/api/v1/benchmark/runs/00000000-0000-4000-8000-000000000001'
+  );
+  expect(runnerEndpoint.status()).toBe(404);
+  const runnerStart = await page.request.post(
+    'http://127.0.0.1:8000/api/v1/benchmark/runs',
+    { data: {} }
+  );
+  expect(runnerStart.status()).toBe(404);
+  expect(readE2EState().jwks_fetches).toBe(0);
 });
