@@ -5,7 +5,7 @@ import {
   ListTree,
   Upload,
 } from 'lucide-react';
-import type { BenchmarkRun } from '@/types';
+import type { AppMode, BenchmarkRun } from '@/types';
 import { getBenchmarkService } from '@/services/benchmark-service';
 import { useAsync } from '@/lib/hooks';
 import { APP_MODE, canImport, canLaunch, isDemo } from '@/lib/mode';
@@ -17,8 +17,8 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
-export function DashboardPage() {
-  const store = getBenchmarkService(APP_MODE);
+export function DashboardPage({ serviceMode = APP_MODE }: { serviceMode?: AppMode } = {}) {
+  const store = getBenchmarkService(serviceMode);
   const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), []);
 
   const summary = useMemo(() => computeSummary(data?.items ?? []), [data]);
@@ -292,4 +292,3 @@ function DashboardSkeleton() {
     </div>
   );
 }
-

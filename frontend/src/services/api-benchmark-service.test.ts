@@ -5,7 +5,10 @@ import {
   ApiBenchmarkService,
   setApiSessionTokenProvider,
 } from './api-benchmark-service';
-import { createBenchmarkService } from './benchmark-service';
+import {
+  createBenchmarkService,
+  getBenchmarkService,
+} from './benchmark-service';
 
 type ApiRun = components['schemas']['BenchmarkRun'];
 type ApiProfile = components['schemas']['ModelProfile'];
@@ -239,19 +242,43 @@ test('attaches the current Clerk session token to personal API requests', async 
   });
 });
 
-test('only local mode selects the API service', async () => {
+test('local mode still selects the API service', async () => {
   const { fetcher: localFetch, mock: localMock } = fetchQueue(
     jsonResponse({ items: [], next_cursor: null, has_more: false })
   );
   const local = createBenchmarkService('local', 'http://127.0.0.1:8000', localFetch);
   await local.listRuns();
   expect(localMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:8000/api/v1/runs');
+});
 
-  for (const mode of ['hosted', 'demo'] as const) {
-    resetStore(mode);
-    const fetcher = vi.fn();
-    const service = createBenchmarkService(mode, 'http://127.0.0.1:8000', fetcher);
-    expect((await service.listProfiles()).length).toBeGreaterThan(0);
-    expect(fetcher).not.toHaveBeenCalled();
+test('running hosted service sends a session token and never fetches while signed out or in demo', async () => {
+  const fetcher = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse([profile])
+  );
+  vi.stubGlobal('fetch', fetcher);
+
+  try {
+    setApiSessionTokenProvider(async () => 'hosted-session-jwt');
+    await getBenchmarkService('hosted').listProfiles();
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain('/api/v1/profiles');
+    expect((fetcher.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      Authorization: 'Bearer hosted-session-jwt',
+    });
+
+    setApiSessionTokenProvider(undefined);
+    expect((await getBenchmarkService('hosted').listProfiles()).length).toBeGreaterThan(0);
+    setApiSessionTokenProvider(async () => 'hosted-session-jwt');
+    expect((await getBenchmarkService('demo').listProfiles()).length).toBeGreaterThan(0);
+    expect(fetcher).toHaveBeenCalledOnce();
+
+    setApiSessionTokenProvider(async () => null);
+    await expect(getBenchmarkService('hosted').listProfiles()).rejects.toEqual({
+      status: 401,
+      detail: 'Not authenticated',
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally {
+    setApiSessionTokenProvider(undefined);
+    vi.unstubAllGlobals();
   }
 });

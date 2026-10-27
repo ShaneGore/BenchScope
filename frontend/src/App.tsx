@@ -73,7 +73,7 @@ export default function App() {
       page = <DashboardPage />;
       break;
     case 'demo':
-      page = <DashboardPage />;
+      page = <DashboardPage serviceMode="demo" />;
       break;
     case 'runs':
       page = <RunsPage initialStatus={query.status} />;

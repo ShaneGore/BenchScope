@@ -1,5 +1,5 @@
 import { ClerkProvider, useAuth } from '@clerk/react';
-import { useLayoutEffect, type ReactNode } from 'react';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { resetStore } from '@/mock/store';
 import { APP_MODE } from '@/lib/mode';
 import { setApiSessionTokenProvider } from '@/services/api-benchmark-service';
@@ -23,17 +23,21 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 }
 
 function ClerkSession({ children }: { children: ReactNode }) {
-  const { getToken, userId } = useAuth();
+  const { getToken, isLoaded, isSignedIn, userId } = useAuth();
+  const [activeUserId, setActiveUserId] = useState<string | null>();
 
   useLayoutEffect(() => {
-    setApiSessionTokenProvider(() => getToken());
+    if (!isLoaded) return;
+    setApiSessionTokenProvider(isSignedIn ? () => getToken() : undefined);
     resetStore('hosted');
+    setActiveUserId(userId ?? null);
     return () => {
       setApiSessionTokenProvider(undefined);
       resetStore('hosted');
     };
-  }, [getToken, userId]);
+  }, [getToken, isLoaded, isSignedIn, userId]);
 
+  if (!isLoaded || activeUserId !== (userId ?? null)) return null;
   // A new identity gets a fresh component tree and no prior mock/server state.
   return <div key={userId ?? 'signed-out'}>{children}</div>;
 }

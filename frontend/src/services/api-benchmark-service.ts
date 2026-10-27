@@ -27,6 +27,10 @@ export function setApiSessionTokenProvider(
   sessionTokenProvider = provider;
 }
 
+export function hasApiSessionTokenProvider(): boolean {
+  return sessionTokenProvider !== undefined;
+}
+
 function mapProfile(profile: ApiProfile): ModelProfile {
   const config = profile.inference_config ?? {};
   return {
@@ -143,7 +147,8 @@ export class ApiBenchmarkService implements BenchmarkService {
 
   constructor(
     apiUrl: string,
-    fetcher: typeof fetch = globalThis.fetch
+    fetcher: typeof fetch = globalThis.fetch,
+    private readonly requireSessionToken = false
   ) {
     this.baseUrl = apiUrl.replace(/\/+$/, '');
     this.fetcher = fetcher.bind(globalThis);
@@ -151,6 +156,9 @@ export class ApiBenchmarkService implements BenchmarkService {
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const token = await sessionTokenProvider?.();
+    if (this.requireSessionToken && !token) {
+      throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
+    }
     const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}${path}`, {
       ...init,
       headers: {
@@ -207,6 +215,9 @@ export class ApiBenchmarkService implements BenchmarkService {
 
   async importRun(payload: unknown): Promise<ImportResult> {
     const token = await sessionTokenProvider?.();
+    if (this.requireSessionToken && !token) {
+      throw { status: 401, detail: 'Not authenticated' } satisfies ApiError;
+    }
     const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}/runs/import`, {
       method: 'POST',
       headers: {

@@ -7,7 +7,10 @@ import type {
   RunFilters,
 } from '@/types';
 import { getStore } from '@/mock/store';
-import { ApiBenchmarkService } from './api-benchmark-service';
+import {
+  ApiBenchmarkService,
+  hasApiSessionTokenProvider,
+} from './api-benchmark-service';
 
 export interface BenchmarkService {
   listProfiles(): Promise<ModelProfile[]>;
@@ -29,17 +32,21 @@ export function createBenchmarkService(
   apiUrl: string | undefined,
   fetcher: typeof fetch = fetch
 ): BenchmarkService {
-  return mode === 'local'
-    ? new ApiBenchmarkService(apiUrl ?? '', fetcher)
-    : getStore(mode);
+  if (mode === 'local') return new ApiBenchmarkService(apiUrl ?? '', fetcher);
+  if (mode === 'hosted' && hasApiSessionTokenProvider()) {
+    return new ApiBenchmarkService(apiUrl ?? '', fetcher, true);
+  }
+  return getStore(mode);
 }
 
 let localService: BenchmarkService | null = null;
 
 export function getBenchmarkService(mode: AppMode): BenchmarkService {
-  if (mode !== 'local') return getStore(mode);
-  if (!localService) {
-    localService = createBenchmarkService(mode, import.meta.env.VITE_API_URL);
+  if (mode === 'local') {
+    if (!localService) {
+      localService = createBenchmarkService(mode, import.meta.env.VITE_API_URL);
+    }
+    return localService;
   }
-  return localService;
+  return createBenchmarkService(mode, import.meta.env.VITE_API_URL);
 }
