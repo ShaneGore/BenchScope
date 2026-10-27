@@ -48,7 +48,10 @@ This repository currently contains:
 - Environment-selected API services for local/hosted personal data, an anonymous read-only demo service, and mock fixtures for tests.
 - Docker Compose support for local backend, PostgreSQL, and OpenTelemetry/Prometheus/Loki/Tempo/Grafana.
 
-Backend domain routes are not yet implemented; the OpenAPI contract is the reconciliation target until FastAPI-generated OpenAPI becomes authoritative.
+Backend domain routes are implemented under `/api/v1` for profiles, imports,
+run history/comparison, the synthetic demo, and mode-gated benchmark
+capabilities. See `backend/app/main.py` and the routers under `backend/app/`;
+the route and behavior tests are under `backend/tests/`.
 
 ## Expected behavior
 
@@ -105,8 +108,9 @@ uv run ruff format --check .
 ## CI quality gates
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. Its
-`backend` and `frontend` jobs are the required quality, test, and API-contract
-checks; both fail the workflow on failure. The backend job uses a health-checked,
+`backend` and `frontend` jobs are blocking quality, test, and API-contract
+checks within each workflow run. Repository branch-protection or ruleset
+requirements are not verified; see follow-up #26. The backend job uses a health-checked,
 ephemeral PostgreSQL service and runs the full test suite, including OpenAPI
 contract tests. The frontend build includes `tsc --noEmit`, and `check:api`
 verifies generated API types have no drift. No optional checks are included.
