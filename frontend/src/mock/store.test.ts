@@ -20,3 +20,16 @@ test("mock store marks missing metrics as null, not zero", async () => {
   const completed = runs.items.find((r) => r.status === "completed");
   expect(completed).toBeTruthy();
 });
+
+test("interim mock has no run-cancel operation or cancelled sample", async () => {
+  const store = resetStore("local");
+  const runs = await store.listRuns({});
+
+  expect("cancelRun" in store).toBe(false);
+  expect(runs.items.map((run) => run.status as string)).not.toContain("cancelled");
+  expect(
+    runs.items.map((run) => run.error_category as string | null)
+  ).not.toContain("CANCELLED");
+  expect(typeof store.startBenchmark).toBe("function");
+  expect(typeof store.retryRun).toBe("function");
+});

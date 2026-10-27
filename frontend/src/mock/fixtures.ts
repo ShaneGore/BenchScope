@@ -200,28 +200,6 @@ export const demoRuns: BenchmarkRun[] = [
       elapsed_ms: 272000,
     },
   }),
-  run({
-    id: 'r_demo_07',
-    status: 'cancelled',
-    profile_snapshot: {
-      profile_id: 'p_demo2',
-      name: 'Mistral 7B Q4',
-      model_name: 'mistral-7b-instruct',
-      quantization: 'Q4_K_M',
-      context_length: 4096,
-      inference_engine: 'llama.cpp',
-    },
-    started_at: iso(-20),
-    ended_at: iso(-19),
-    metrics: {},
-    error_category: 'CANCELLED',
-    error_message_sanitised: 'Run cancelled by user before completion.',
-    process_exit_code: 130,
-    events: [
-      { ts: iso(-20), event: 'run_started' },
-      { ts: iso(-19), event: 'run_cancelled' },
-    ],
-  }),
 ];
 
 export const demoProfiles: ModelProfile[] = [

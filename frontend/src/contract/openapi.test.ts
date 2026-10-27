@@ -1,5 +1,6 @@
 import { expect, expectTypeOf, test } from "vitest";
 import type { components, paths } from "@/types/api.generated";
+import type { ErrorCategory, RunStatus } from "@/types";
 
 type BenchmarkRun = components["schemas"]["BenchmarkRun"];
 type RunMetrics = components["schemas"]["RunMetrics"];
@@ -88,6 +89,11 @@ test("interim runner contract validates IDs and exposes no cancellation mapping"
   expectTypeOf<components["schemas"]["RunStatus"]>().toEqualTypeOf<
     "running" | "completed" | "failed" | "interrupted"
   >();
+  expectTypeOf<RunStatus>().toEqualTypeOf<
+    "running" | "completed" | "failed" | "interrupted"
+  >();
+  expectTypeOf<"cancelled">().not.toMatchTypeOf<RunStatus>();
+  expectTypeOf<"CANCELLED">().not.toMatchTypeOf<ErrorCategory>();
 });
 
 test("profile contract has CRUD operations and excludes unapproved fields", () => {

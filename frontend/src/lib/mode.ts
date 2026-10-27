@@ -20,7 +20,6 @@ export const canImport = APP_MODE !== 'demo';
 export const canEditProfiles = APP_MODE !== 'demo';
 export const canDelete = APP_MODE !== 'demo';
 export const canRetry = APP_MODE === 'local';
-export const canCancel = APP_MODE === 'local';
 export const showEndpointFields = APP_MODE === 'local';
 export const isDemo = APP_MODE === 'demo';
 export const isHosted = APP_MODE === 'hosted';

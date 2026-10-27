@@ -77,20 +77,20 @@ export function usePolling(
   fnRef.current = fn;
   useEffect(() => {
     if (!active) return;
-    let cancelled = false;
+    let stopped = false;
     const tick = async () => {
       try {
         await fnRef.current();
       } catch {
         // swallow polling errors
       }
-      if (!cancelled) {
+      if (!stopped) {
         timer = window.setTimeout(tick, intervalMs);
       }
     };
     let timer = window.setTimeout(tick, intervalMs);
     return () => {
-      cancelled = true;
+      stopped = true;
       window.clearTimeout(timer);
     };
   }, [active, intervalMs]);

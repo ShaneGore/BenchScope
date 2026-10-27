@@ -1,4 +1,4 @@
-import { AlertTriangle, CircleSlash, Clock, Loader2, OctagonAlert, XCircle } from 'lucide-react';
+import { AlertTriangle, CircleSlash, Clock, Loader2, XCircle } from 'lucide-react';
 import type { RunStatus } from '@/types';
 
 interface StatusBadgeProps {
@@ -39,13 +39,6 @@ const config: Record<
     bg: 'bg-status-interrupted-bg',
     border: 'border-status-interrupted-border',
     icon: AlertTriangle,
-  },
-  cancelled: {
-    label: 'Cancelled',
-    fg: 'text-status-cancelled-fg',
-    bg: 'bg-status-cancelled-bg',
-    border: 'border-status-cancelled-border',
-    icon: OctagonAlert,
   },
 };
 

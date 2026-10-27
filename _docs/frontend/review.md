@@ -16,7 +16,8 @@
 - Compare: selection of completed runs; null metrics remain unavailable in charts/tables.
 - Profiles: create/update/delete validation; hosted/demo gating flags.
 - Import: validation errors, duplicate 409 handling, successful import rendering.
-- Benchmark launch/cancel/retry: local-only actions and status polling.
+- Benchmark launch/retry: local-only actions and status polling. Run cancellation
+  is not part of the interim scope; defer it to #25.
 - Demo route: read-only synthetic data.
 
 ## Issues found and disposition

@@ -23,12 +23,7 @@ const STATUS_OPTIONS: { value: RunStatus; label: string }[] = [
   { value: 'running', label: 'Running' },
   { value: 'failed', label: 'Failed' },
   { value: 'interrupted', label: 'Interrupted' },
-  { value: 'cancelled', label: 'Cancelled' },
 ];
-const FILTER_STATUS_OPTIONS =
-  APP_MODE === 'local'
-    ? STATUS_OPTIONS.filter((option) => option.value !== 'cancelled')
-    : STATUS_OPTIONS;
 
 export function RunsPage({ initialStatus }: { initialStatus?: string }) {
   const store = getBenchmarkService(APP_MODE);
@@ -178,7 +173,7 @@ function FilterBar({
             onChange={(e) => set({ status: (e.target.value as RunStatus) || null })}
           >
             <option value="">All statuses</option>
-            {FILTER_STATUS_OPTIONS.map((o) => (
+            {STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </Select>

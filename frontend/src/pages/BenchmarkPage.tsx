@@ -111,18 +111,6 @@ export function BenchmarkPage() {
     }
   };
 
-  const handleCancel = async () => {
-    if (!activeId) return;
-    try {
-      const updated = await store.cancelRun(activeId);
-      setActiveRun(updated);
-      setActiveId(null);
-    } catch (e) {
-      const err = e as ApiError;
-      setError(String(err.detail ?? 'Cancel failed'));
-    }
-  };
-
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       <div>
@@ -210,11 +198,6 @@ export function BenchmarkPage() {
                 )}
               </div>
               <div className="mt-4 flex gap-2">
-                {activeRun.status === 'running' && (
-                  <Button variant="danger" onClick={handleCancel}>
-                    Cancel
-                  </Button>
-                )}
                 {activeRun.status !== 'running' && (
                   <Button variant="ghost" onClick={() => navigate(`/runs/${activeRun.id}`)}>
                     View detail
@@ -228,4 +211,3 @@ export function BenchmarkPage() {
     </div>
   );
 }
-

@@ -2,8 +2,7 @@ export type RunStatus =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'interrupted'
-  | 'cancelled';
+  | 'interrupted';
 
 export type AppMode = 'local' | 'hosted' | 'demo';
 
@@ -12,7 +11,6 @@ export type ErrorCategory =
   | 'TIMEOUT'
   | 'MODEL_ERROR'
   | 'INFER_FRAMEWORK'
-  | 'CANCELLED'
   | 'HOST_RESTART'
   | 'UNKNOWN'
   | 'timeout'

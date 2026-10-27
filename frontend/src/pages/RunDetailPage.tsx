@@ -3,7 +3,7 @@ import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import type { ApiError, BenchmarkRun } from '@/types';
 import { getStore } from '@/mock/store';
 import { getBenchmarkService } from '@/services/benchmark-service';
-import { APP_MODE, canCancel, canDelete, canRetry } from '@/lib/mode';
+import { APP_MODE, canDelete, canRetry } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
 import { usePolling } from '@/lib/hooks';
 import { fmtDate, fmtElapsed } from '@/lib/format';
@@ -99,23 +99,7 @@ export function RunDetailPage({ id }: { id: string }) {
     }
   };
 
-  const handleCancel = async () => {
-    setBusy(true);
-    setActionError(null);
-    try {
-      const updated = await runner.cancelRun(run.id);
-      setRun(updated);
-    } catch (e) {
-      setActionError((e as ApiError).detail?.toString?.() ?? 'Cancel failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const isFailed =
-    run.status === 'failed' ||
-    run.status === 'interrupted' ||
-    run.status === 'cancelled';
+  const isFailed = run.status === 'failed' || run.status === 'interrupted';
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
@@ -245,11 +229,6 @@ export function RunDetailPage({ id }: { id: string }) {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {run.status === 'running' && canCancel && (
-          <Button variant="danger" onClick={handleCancel} loading={busy}>
-            Cancel run
-          </Button>
-        )}
         {isFailed && canRetry && (
           <Button
             variant="primary"

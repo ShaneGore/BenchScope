@@ -87,7 +87,7 @@ Frontend rules:
 
 ### Workflow C - Investigate and recover from a failure
 
-- Failed, interrupted, and cancelled runs are first-class history entries.
+- Failed and interrupted runs are first-class history entries.
 - Previously completed results remain available and unchanged.
 - A new attempt or imported corrected result is recorded separately.
 - The UI never presents a failed/interrupted run as a successful result.
@@ -233,13 +233,13 @@ backend; the UI hides them but does not rely on hiding for security.
 ### 6.7 Launch benchmark (`/benchmark`, local mode only)
 
 - Purpose: start a benchmark run against a selected profile/config.
-- Primary actions: select profile and config, start, cancel, view status.
-- Data: `POST /api/v1/benchmark/runs`, `GET /api/v1/benchmark/runs/{id}`,
-  `POST /api/v1/benchmark/runs/{id}/cancel`.
+- Primary actions: select profile and config, start, view status.
+- Data: `POST /api/v1/benchmark/runs`, `GET /api/v1/benchmark/runs/{id}`.
 - Loading: starting state and disabled submit while request resolves.
 - Empty: no profiles available; prompt to create one.
 - Validation: require profile and config selection; show backend errors.
-- Running: poll status/events; show elapsed time and cancellation action.
+- Running: poll status; show elapsed time. No run-cancellation action is available
+  in this interim scope; defer the decision and behavior to #25.
 - Completed: show result summary and link to detail.
 - Failed: show sanitised diagnostic and retry action.
 - Interrupted: show interruption diagnostic after restart/reconciliation.
@@ -292,7 +292,7 @@ approved (see unresolved items).
 - Use a single shared component set for buttons, forms, tables, cards, alerts,
   and status badges.
 - Status badges use distinct visual treatment for `running`, `completed`,
-  `failed`, `interrupted`, and `cancelled`.
+  `failed`, and `interrupted`.
 - Charts must handle null metrics without rendering zero.
 - Error states use sanitised messages only; no raw benchmark output, prompts, or
   code.
@@ -308,7 +308,6 @@ approved (see unresolved items).
 - Attach Clerk token to requests; refresh handled by Clerk.
 - Show loading, success, and error feedback for all mutations.
 - Clear server-state cache on sign-out to prevent cross-account leakage.
-- Cancel actions are explicit and reversible only before completion.
 
 ## 10. Responsive and accessibility expectations
 
@@ -334,7 +333,6 @@ require product approval (see unresolved items).
 | Create/edit/delete profiles | Yes | Yes (metadata only) | No |
 | Endpoint/credential fields | Yes | Rejected/stripped | No |
 | Launch benchmark | Yes | No | No |
-| Cancel run | Yes | N/A | No |
 | Compare | Yes | Own completed runs | Synthetic completed runs |
 | Sign in/out | Optional bypass | Required for personal data | None |
 
@@ -372,10 +370,9 @@ require product approval (see unresolved items).
 | GET | `/runs/{id}` | Required | Get own run | 200, 404 |
 | DELETE | `/runs/{id}` | Required | Delete own run | 204, 404 |
 | POST | `/runs/import` | Required | Import result JSON | 201 created, 409 duplicate, 422 validation |
-| POST | `/runs/{id}/retry` | Required (local only) | Create linked attempt | 201, 403/404 hosted |
-| POST | `/benchmark/runs` | Required (local only) | Start run | 201, 409 active run, 403/404 hosted |
-| GET | `/benchmark/runs/{id}` | Required (local only) | Status/events | 200, 404 |
-| POST | `/benchmark/runs/{id}/cancel` | Required (local only) | Cancel run | 202/200, 404 |
+| POST | `/runs/{id}/retry` | Required (local only) | Create linked attempt | 202, 404/409/503; absent hosted |
+| POST | `/benchmark/runs` | Required (local only) | Start run | 202, 409 active run, 503 unavailable; absent hosted |
+| GET | `/benchmark/runs/{id}` | Required (local only) | Status/diagnostics | 200, 404; absent hosted |
 | GET | `/demo/runs` | None | Synthetic runs | 200 |
 | GET | `/demo/runs/{id}` | None | Synthetic run | 200, 404 |
 | GET | `/runs/compare?ids=...` | Required | Compare completed runs | 200, 404/422 |
@@ -447,7 +444,7 @@ averages, or comparisons. Affected fields include:
 
 ## 16. Hosted mode restrictions
 
-- No benchmark launching, cancellation, or retry.
+- No benchmark launching or retry.
 - No localhost model endpoint access.
 - No private artifact serving.
 - Profile endpoint fields are metadata-only.

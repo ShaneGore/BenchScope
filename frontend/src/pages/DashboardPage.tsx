@@ -114,7 +114,6 @@ interface Summary {
   completed: number;
   failed: number;
   interrupted: number;
-  cancelled: number;
   running: number;
   total: number;
   bestQuality: number | null;
@@ -136,7 +135,6 @@ function computeSummary(runs: BenchmarkRun[]): Summary {
     completed: by('completed'),
     failed: by('failed'),
     interrupted: by('interrupted'),
-    cancelled: by('cancelled'),
     running: by('running'),
     total: runs.length,
     bestQuality: pick('quality_score', true),

@@ -47,11 +47,6 @@ export default {
             bg: 'rgba(245, 158, 11, 0.12)',
             border: 'rgba(245, 158, 11, 0.32)',
           },
-          cancelled: {
-            fg: '#94a3b8',
-            bg: 'rgba(148, 163, 184, 0.10)',
-            border: 'rgba(148, 163, 184, 0.25)',
-          },
         },
         unavailable: '#64748b',
       },

@@ -298,23 +298,6 @@ class MockStore implements BenchmarkService {
     setTimeout(tick, jitter(1100));
   }
 
-  async cancelRun(id: string): Promise<BenchmarkRun> {
-    await delay(jitter(140));
-    if (this.mode !== 'local') return fail(404, 'Cancel is not available in this mode');
-    const r = this.runs.find((x) => x.id === id);
-    if (!r) return fail(404, 'Run not found');
-    if (r.status !== 'running') return fail(409, 'Run is not running');
-    const end = new Date().toISOString();
-    r.status = 'cancelled';
-    r.ended_at = end;
-    r.error_category = 'CANCELLED';
-    r.error_message_sanitised = 'Run cancelled by user before completion.';
-    r.process_exit_code = 130;
-    r.events = [...(r.events ?? []), { ts: end, event: 'run_cancelled' }];
-    if (this.activeRunId === id) this.activeRunId = null;
-    return clone(r);
-  }
-
   async retryRun(id: string): Promise<BenchmarkRun> {
     await delay(jitter(260));
     if (this.mode !== 'local') return fail(404, 'Retry is not available in this mode');
