@@ -19,6 +19,7 @@ from app.config import Settings, load_settings
 from app.database import create_database_engine
 from app.imports import router as imports_router
 from app.profiles import router as profiles_router
+from app.run_history import router as run_history_router
 
 logger = logging.getLogger("app.request")
 CORRELATION_HEADER = "X-Correlation-ID"
@@ -141,6 +142,7 @@ def create_app(
     )
     app.include_router(profiles_router)
     app.include_router(imports_router)
+    app.include_router(run_history_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

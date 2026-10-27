@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.database import LOCAL_OWNER_ID, get_session
 from app.models import BenchmarkRun
+from app.run_serialization import run_metrics
 
 logger = logging.getLogger("app.imports")
 router = APIRouter()
@@ -304,16 +305,7 @@ def _run_response(run: BenchmarkRun) -> dict[str, Any]:
         "ended_at": run.completed_at,
         "source": "imported",
         "fingerprint": run.import_fingerprint,
-        "metrics": {
-            "quality_score": run.quality_score,
-            "pass_rate": run.pass_rate,
-            "ttft_ms": run.ttft_ms,
-            "prompt_tokens": run.prompt_tokens,
-            "output_tokens": run.output_tokens,
-            "prompt_throughput_tps": run.prompt_throughput_tps,
-            "generation_throughput_tps": run.generation_throughput_tps,
-            "elapsed_ms": run.elapsed_ms,
-        },
+        "metrics": run_metrics(run),
         "hardware_snapshot": run.hardware_snapshot,
     }
 

@@ -301,15 +301,23 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List runs */
+        /**
+         * List own runs
+         * @description Always scopes results to LOCAL_OWNER_ID. Model matches profile_snapshot.model_name exactly. Date-time filters must include a timezone and are normalized to UTC; from is inclusive and to is exclusive. from must precede to. Results are ordered by started_at DESC, then id DESC. A cursor must identify a run in the current owner and filter scope. Limit defaults to 50 and must be 1 through 100.
+         */
         get: {
             parameters: {
                 query?: {
+                    /** @description Exact run status. */
                     status?: components["schemas"]["RunStatus"];
+                    /** @description Exact profile_snapshot.model_name. */
                     model?: string;
+                    /** @description Inclusive timezone-aware instant. */
                     from?: string;
+                    /** @description Exclusive timezone-aware instant. */
                     to?: string;
                     limit?: number;
+                    /** @description UUID of the last returned run in the same owner/filter scope. */
                     cursor?: string;
                 };
                 header?: never;
@@ -332,6 +340,15 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /** @description Invalid filter, range, or cursor */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -379,12 +396,14 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Not found */
+                /** @description Not found or not owned by LOCAL_OWNER_ID */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -416,19 +435,14 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Read-only demo mode */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not found */
+                /** @description Not found or not owned by LOCAL_OWNER_ID */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -586,10 +600,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Compare completed runs */
+        /**
+         * Compare completed runs
+         * @description Requires at least two distinct UUIDs. If any ID is missing or not owned by LOCAL_OWNER_ID, rejects the entire batch with the same generic 404. Returns completed runs only, in input order; if fewer than two remain, returns 422. Metric values are passed through, including null values.
+         */
         get: {
             parameters: {
                 query: {
+                    /** @description At least two distinct run UUIDs, comma-delimited in input order. */
                     ids: string[];
                 };
                 header?: never;
@@ -613,12 +631,23 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description At least two runs required */
+                /** @description At least one ID is missing or not owned by LOCAL_OWNER_ID */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Invalid IDs or fewer than two completed runs */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
             };
         };
@@ -892,7 +921,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        RunStatus: "running" | "completed" | "failed" | "interrupted" | "cancelled";
+        RunStatus: "running" | "completed" | "failed" | "interrupted";
         /** @enum {string} */
         ErrorCategory: "OOM" | "TIMEOUT" | "MODEL_ERROR" | "INFER_FRAMEWORK" | "CANCELLED" | "HOST_RESTART" | "UNKNOWN";
         HardwareSnapshot: {
@@ -1034,6 +1063,7 @@ export interface components {
             } | null;
         };
         BenchmarkRun: {
+            /** Format: uuid */
             id: string;
             owner_id: string;
             status: components["schemas"]["RunStatus"];
@@ -1057,6 +1087,10 @@ export interface components {
         };
         PaginatedRuns: {
             items: components["schemas"]["BenchmarkRun"][];
+            /**
+             * Format: uuid
+             * @description UUID of the last returned run when has_more is true.
+             */
             next_cursor?: string | null;
             has_more: boolean;
         };

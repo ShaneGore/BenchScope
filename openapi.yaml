@@ -27,7 +27,7 @@ components:
                 type: string
     RunStatus:
       type: string
-      enum: [running, completed, failed, interrupted, cancelled]
+      enum: [running, completed, failed, interrupted]
     ErrorCategory:
       type: string
       enum: [OOM, TIMEOUT, MODEL_ERROR, INFER_FRAMEWORK, CANCELLED, HOST_RESTART, UNKNOWN]
@@ -203,7 +203,7 @@ components:
       type: object
       required: [id, owner_id, status, profile_snapshot, benchmark_config, started_at, metrics]
       properties:
-        id: { type: string }
+        id: { type: string, format: uuid }
         owner_id: { type: string }
         status: { $ref: "#/components/schemas/RunStatus" }
         profile_snapshot: { $ref: "#/components/schemas/ProfileSnapshot" }
@@ -225,7 +225,7 @@ components:
       required: [items, has_more]
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/BenchmarkRun" } }
-        next_cursor: { type: [string, "null"] }
+        next_cursor: { type: [string, "null"], format: uuid, description: UUID of the last returned run when has_more is true. }
         has_more: { type: boolean }
     ImportResult:
       type: object
@@ -371,38 +371,54 @@ paths:
               schema: { $ref: "#/components/schemas/ApiError" }
   /runs:
     get:
-      summary: List runs
+      summary: List own runs
+      description: >-
+        Always scopes results to LOCAL_OWNER_ID. Model matches profile_snapshot.model_name
+        exactly. Date-time filters must include a timezone and are normalized to UTC;
+        from is inclusive and to is exclusive. from must precede to. Results are ordered
+        by started_at DESC, then id DESC. A cursor must identify a run in the current
+        owner and filter scope. Limit defaults to 50 and must be 1 through 100.
       parameters:
         - name: status
           in: query
+          description: Exact run status.
           schema: { $ref: "#/components/schemas/RunStatus" }
         - name: model
           in: query
+          description: Exact profile_snapshot.model_name.
           schema: { type: string }
         - name: from
           in: query
+          description: Inclusive timezone-aware instant.
           schema: { type: string, format: date-time }
         - name: to
           in: query
+          description: Exclusive timezone-aware instant.
           schema: { type: string, format: date-time }
         - name: limit
           in: query
-          schema: { type: integer, default: 50 }
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
         - name: cursor
           in: query
-          schema: { type: string }
+          description: UUID of the last returned run in the same owner/filter scope.
+          schema: { type: string, format: uuid }
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PaginatedRuns" }
         "401": { description: Unauthorized }
+        "422":
+          description: Invalid filter, range, or cursor
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /runs/{id}:
     parameters:
       - name: id
         in: path
         required: true
-        schema: { type: string }
+        schema: { type: string, format: uuid }
     get:
       summary: Get run
       responses:
@@ -411,14 +427,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BenchmarkRun" }
         "401": { description: Unauthorized }
-        "404": { description: Not found }
+        "404":
+          description: Not found or not owned by LOCAL_OWNER_ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
     delete:
       summary: Delete run
       responses:
         "204": { description: Deleted }
         "401": { description: Unauthorized }
-        "403": { description: Read-only demo mode }
-        "404": { description: Not found }
+        "404":
+          description: Not found or not owned by LOCAL_OWNER_ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
   /runs/import:
     post:
       summary: Import result JSON
@@ -475,13 +498,21 @@ paths:
   /runs/compare:
     get:
       summary: Compare completed runs
+      description: >-
+        Requires at least two distinct UUIDs. If any ID is missing or not owned by
+        LOCAL_OWNER_ID, rejects the entire batch with the same generic 404. Returns
+        completed runs only, in input order; if fewer than two remain, returns 422.
+        Metric values are passed through, including null values.
       parameters:
         - name: ids
           in: query
           required: true
+          description: At least two distinct run UUIDs, comma-delimited in input order.
           schema:
             type: array
-            items: { type: string }
+            items: { type: string, format: uuid }
+            minItems: 2
+            uniqueItems: true
           style: form
           explode: false
       responses:
@@ -492,7 +523,16 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/BenchmarkRun" }
         "401": { description: Unauthorized }
-        "422": { description: At least two runs required }
+        "404":
+          description: At least one ID is missing or not owned by LOCAL_OWNER_ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "422":
+          description: Invalid IDs or fewer than two completed runs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
 
   /benchmark/runs:
     post:

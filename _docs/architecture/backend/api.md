@@ -6,8 +6,15 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 
 - JSON only. Errors: `{ "detail": string | {field: msg} }`.
 - Auth: `Authorization: Bearer <Clerk JWT>` for personal endpoints. Anonymous demo endpoints require no auth.
-- Pagination: `?limit=&cursor=` (cursor-based) where lists grow; default limit 50.
+- Pagination: `GET /runs?limit=&cursor=`; default limit 50, range 1–100.
+  Run history is ordered by `started_at DESC, id DESC`; `next_cursor` is the UUID
+  of the last returned run when another page exists. A cursor must resolve within
+  the current owner and filter scope or the request returns a generic 422.
 - Filtering: `?status=`, `?model=`, `?from=`, `?to=`.
+  Run model matches `profile_snapshot.model_name` exactly. Status values are
+  `running`, `completed`, `failed`, and `interrupted`. `from` and `to` require
+  timezone-aware instants, normalize to UTC, and apply to `started_at`; `from` is
+  inclusive, `to` is exclusive, and `from` must precede `to`.
 
 ## Endpoints
 
@@ -23,9 +30,10 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 - `DELETE /profiles/{id}` — delete (owner check; cascades? runs keep snapshot).
 
 ### Runs (auth required)
-- `GET /runs` — list/filter own.
-- `GET /runs/{id}` — get (owner check).
-- `DELETE /runs/{id}` — delete own.
+- `GET /runs` — list/filter runs for `LOCAL_OWNER_ID`.
+- `GET /runs/{id}` — get own run; missing and other-owner IDs both return generic 404.
+- `DELETE /runs/{id}` — delete own run; missing and other-owner IDs both return
+  generic 404. Same-owner child runs have `related_run_id` cleared before deletion.
 - `POST /runs/import` — import one strict `benchscope.run.v1` JSON run summary.
   A trusted exporter must normalize completed-run data before upload; private
   per-trial JSONL is not accepted and aggregate metrics are never derived here.
@@ -57,16 +65,23 @@ In hosted mode these routes are not registered (404).
 - `GET /demo/runs/{id}`.
 
 ### Comparison
-- `GET /runs/compare?ids=...` — returns completed runs with metric series for charting (owner-scoped; rejects IDs not owned).
+- `GET /runs/compare?ids=...` — requires at least two distinct comma-delimited UUIDs.
+  The whole batch returns generic 404 if any ID is missing or not owned by
+  `LOCAL_OWNER_ID`. Otherwise it returns only completed runs in input order;
+  failed, interrupted, and running runs are excluded. Fewer than two completed
+  runs returns 422. Null metrics remain null; no aggregation or zero coercion occurs.
 
 ## Ownership rules
 
-- `owner_id` is always taken from the verified JWT, never request body/path.
+- `owner_id` is always taken from `LOCAL_OWNER_ID` for current local endpoints,
+  never request body/path/query.
 - Import v1 uses the fixed `LOCAL_OWNER_ID` until authenticated ownership is
   implemented; owner, source, status, profile FK, fingerprint, event and
   artifact fields are never accepted from the request.
-- Every `{id}` lookup includes `WHERE owner_id = current_owner`; mismatch → 404 (not 403, to avoid enumeration).
-- Batch endpoints (compare) filter the provided IDs by owner; unowned IDs are silently dropped or rejected (decide at implementation; document).
+- Every `{id}` lookup includes `WHERE owner_id = LOCAL_OWNER_ID`; mismatch → 404
+  (not 403, to avoid enumeration).
+- Batch endpoints (compare) reject the complete request with a generic 404 if any
+  ID is missing or not owned; no partial results are returned.
 - Hosted profile endpoint fields are validated/stripped of `endpoint_url` and credentials.
 
 ## Rate limiting
