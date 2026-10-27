@@ -23,7 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database import LOCAL_OWNER_ID, get_session
+from app.auth import current_owner
+from app.database import get_session
 from app.models import BenchmarkRun
 from app.run_serialization import run_metrics
 
@@ -330,6 +331,7 @@ def _duplicate(field: str) -> JSONResponse:
     },
 )
 async def import_run(
+    owner_id: Annotated[str, Depends(current_owner)],
     request: Request,
     session: Annotated[Session, Depends(get_session)],
 ) -> ImportResult:
@@ -361,7 +363,7 @@ async def import_run(
     benchmark_config = imported.benchmark_config.model_dump(exclude_unset=True)
     metrics = imported.metrics
     run = BenchmarkRun(
-        owner_id=LOCAL_OWNER_ID,
+        owner_id=owner_id,
         source="imported",
         status="completed",
         profile_id=None,
@@ -392,7 +394,7 @@ async def import_run(
         session.rollback()
         duplicate = session.scalar(
             select(BenchmarkRun.id).where(
-                BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+                BenchmarkRun.owner_id == owner_id,
                 BenchmarkRun.import_fingerprint == fingerprint,
             )
         )

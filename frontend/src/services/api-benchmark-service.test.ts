@@ -1,7 +1,10 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { components } from '@/types/api.generated';
 import { resetStore } from '@/mock/store';
-import { ApiBenchmarkService } from './api-benchmark-service';
+import {
+  ApiBenchmarkService,
+  setApiSessionTokenProvider,
+} from './api-benchmark-service';
 import { createBenchmarkService } from './benchmark-service';
 
 type ApiRun = components['schemas']['BenchmarkRun'];
@@ -63,6 +66,7 @@ function fetchQueue(...responses: Response[]) {
 
 beforeEach(() => {
   resetStore('hosted');
+  setApiSessionTokenProvider(undefined);
 });
 
 test('maps profile CRUD to the in-scope API contract', async () => {
@@ -213,6 +217,25 @@ test('maps API validation and other HTTP errors to the existing ApiError shape',
   await expect(service.getRun('missing')).rejects.toEqual({
     status: 404,
     detail: 'Run not found',
+  });
+});
+
+test('attaches the current Clerk session token to personal API requests', async () => {
+  const { fetcher, mock } = fetchQueue(
+    jsonResponse([profile]),
+    jsonResponse({ ok: true, run })
+  );
+  setApiSessionTokenProvider(async () => 'session-jwt');
+  const service = new ApiBenchmarkService('', fetcher);
+
+  await service.listProfiles();
+  await service.importRun({ format_version: 'benchscope.run.v1' });
+
+  expect((mock.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+    Authorization: 'Bearer session-jwt',
+  });
+  expect((mock.mock.calls[1]?.[1] as RequestInit).headers).toMatchObject({
+    Authorization: 'Bearer session-jwt',
   });
 });
 

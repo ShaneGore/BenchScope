@@ -13,6 +13,13 @@ def test_contract_declares_bearer_auth() -> None:
     assert "scheme: bearer" in text
 
 
+def test_personal_profile_contract_inherits_bearer_auth_and_documents_401() -> None:
+    text = CONTRACT.read_text(encoding="utf-8")
+    profiles = text.split("  /api/v1/profiles:", 1)[1].split("  /api/v1/runs:", 1)[0]
+    assert "security: []" not in profiles
+    assert '"401":' in profiles
+
+
 def test_contract_declares_nullable_metrics() -> None:
     text = CONTRACT.read_text(encoding="utf-8")
     assert 'quality_score: { type: [number, "null"], minimum: 0 }' in text

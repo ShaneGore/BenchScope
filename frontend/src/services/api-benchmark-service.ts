@@ -18,6 +18,14 @@ type ApiRun = components['schemas']['BenchmarkRun'];
 type ApiImportResult = components['schemas']['ImportResult'];
 
 const API_PREFIX = '/api/v1';
+type SessionTokenProvider = () => Promise<string | null>;
+let sessionTokenProvider: SessionTokenProvider | undefined;
+
+export function setApiSessionTokenProvider(
+  provider: SessionTokenProvider | undefined
+): void {
+  sessionTokenProvider = provider;
+}
 
 function mapProfile(profile: ApiProfile): ModelProfile {
   const config = profile.inference_config ?? {};
@@ -142,11 +150,13 @@ export class ApiBenchmarkService implements BenchmarkService {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const token = await sessionTokenProvider?.();
     const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}${path}`, {
       ...init,
       headers: {
         Accept: 'application/json',
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init?.headers,
       },
     });
@@ -196,9 +206,14 @@ export class ApiBenchmarkService implements BenchmarkService {
   }
 
   async importRun(payload: unknown): Promise<ImportResult> {
+    const token = await sessionTokenProvider?.();
     const response = await this.fetcher(`${this.baseUrl}${API_PREFIX}/runs/import`, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(payload),
     });
     let body: ApiImportResult | null = null;

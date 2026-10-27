@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: BenchScope API
   version: 0.1.0
-  description: Initial contract derived from the frontend service interface. Reconciliation target until FastAPI-generated OpenAPI becomes authoritative in later tasks.
+  description: Personal-data endpoints require a Clerk JWT bearer token. The backend verifies the token through JWKS and derives ownership only from its verified subject. Initial contract derived from the frontend service interface; FastAPI-generated OpenAPI remains authoritative after reconciliation.
 servers:
   - url: /api/v1
     description: API v1
@@ -280,7 +280,6 @@ paths:
   /api/v1/profiles:
     get:
       summary: List own profiles
-      security: []
       responses:
         "200":
           description: Profiles
@@ -289,10 +288,14 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/ModelProfile" }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
     post:
       summary: Create profile
       description: Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
-      security: []
       requestBody:
         required: true
         content:
@@ -304,6 +307,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "422":
           description: Validation error
           content:
@@ -317,12 +325,16 @@ paths:
         schema: { type: string, format: uuid }
     get:
       summary: Get profile
-      security: []
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
           description: Not found
           content:
@@ -336,7 +348,6 @@ paths:
     patch:
       summary: Update profile
       description: Hosted mode rejects endpoint_url, credentials, and non-null inference_config.
-      security: []
       requestBody:
         required: true
         content:
@@ -347,6 +358,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModelProfile" }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
           description: Not found
           content:
@@ -359,9 +375,13 @@ paths:
               schema: { $ref: "#/components/schemas/ApiError" }
     delete:
       summary: Delete profile
-      security: []
       responses:
         "204": { description: Deleted }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404": { description: Not found }
         "422":
           description: Invalid profile id
@@ -372,7 +392,7 @@ paths:
     get:
       summary: List own runs
       description: >-
-        Always scopes results to LOCAL_OWNER_ID. Model matches profile_snapshot.model_name
+        Always scopes results to the authenticated owner. Model matches profile_snapshot.model_name
         exactly. Date-time filters must include a timezone and are normalized to UTC;
         from is inclusive and to is exclusive. from must precede to. Results are ordered
         by started_at DESC, then id DESC. A cursor must identify a run in the current
@@ -406,7 +426,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PaginatedRuns" }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "422":
           description: Invalid filter, range, or cursor
           content:
@@ -425,9 +449,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BenchmarkRun" }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
-          description: Not found or not owned by LOCAL_OWNER_ID
+          description: Not found or not owned by the authenticated user
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
@@ -435,9 +463,13 @@ paths:
       summary: Delete run
       responses:
         "204": { description: Deleted }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
-          description: Not found or not owned by LOCAL_OWNER_ID
+          description: Not found or not owned by the authenticated user
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
@@ -460,7 +492,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ImportResult" }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "409":
           description: Duplicate import for this owner; no row was created
           content:
@@ -490,7 +526,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BenchmarkRun" }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "403": { description: Not available in this mode }
         "404": { description: Not found }
         "409": { description: A benchmark run is already active }
@@ -499,7 +539,7 @@ paths:
       summary: Compare completed runs
       description: >-
         Requires at least two distinct UUIDs. If any ID is missing or not owned by
-        LOCAL_OWNER_ID, rejects the entire batch with the same generic 404. Returns
+        the authenticated owner, rejects the entire batch with the same generic 404. Returns
         completed runs only, in input order; if fewer than two remain, returns 422.
         Metric values are passed through, including null values.
       parameters:
@@ -521,9 +561,13 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/BenchmarkRun" }
-        "401": { description: Unauthorized }
+        "401":
+          description: Missing or invalid authentication token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
         "404":
-          description: At least one ID is missing or not owned by LOCAL_OWNER_ID
+          description: At least one ID is missing or not owned by the authenticated user
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }

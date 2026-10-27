@@ -44,7 +44,11 @@ def postgres_api() -> Iterator[tuple[TestClient, Engine]]:
         )
         app = create_app(
             Settings(
-                database_url=SecretStr(schema_url.render_as_string(hide_password=False))
+                app_env="development",
+                local_auth_bypass=True,
+                database_url=SecretStr(
+                    schema_url.render_as_string(hide_password=False)
+                ),
             )
         )
         app_engine = app.state.engine

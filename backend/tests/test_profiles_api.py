@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.auth import current_owner
 from app.config import Settings
 from app.database import LOCAL_OWNER_ID
 from app.main import create_app
@@ -18,7 +19,13 @@ from app.models import Base, BenchmarkRun, ModelProfile
 @pytest.fixture
 def local_api(tmp_path: Path) -> Iterator[tuple[TestClient, Engine]]:
     database_url = f"sqlite:///{tmp_path / 'profiles.db'}"
-    app = create_app(Settings(database_url=SecretStr(database_url)))
+    app = create_app(
+        Settings(
+            app_env="development",
+            local_auth_bypass=True,
+            database_url=SecretStr(database_url),
+        )
+    )
     Base.metadata.create_all(app.state.engine)
     with TestClient(app) as client:
         yield client, app.state.engine
@@ -28,9 +35,13 @@ def local_api(tmp_path: Path) -> Iterator[tuple[TestClient, Engine]]:
 def hosted_api(tmp_path: Path) -> Iterator[tuple[TestClient, Engine]]:
     database_url = f"sqlite:///{tmp_path / 'hosted-profiles.db'}"
     settings = Settings.model_construct(
-        app_mode="hosted", database_url=SecretStr(database_url)
+        app_mode="hosted",
+        database_url=SecretStr(database_url),
+        cors_origins=["https://dashboard.example"],
+        host="0.0.0.0",
     )
     app = create_app(settings)
+    app.dependency_overrides[current_owner] = lambda: LOCAL_OWNER_ID
     Base.metadata.create_all(app.state.engine)
     with TestClient(app) as client:
         yield client, app.state.engine

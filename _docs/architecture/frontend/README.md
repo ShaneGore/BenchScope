@@ -35,7 +35,7 @@ frontend/
 
 - Base URL from `VITE_API_URL` (env, not hard-coded).
 - Typed client generated from OpenAPI (`openapi-typescript`); regenerated in CI or dev.
-- Clerk token attached to requests; refresh handled by Clerk.
+- In hosted builds, Clerk provides sign-in/out and session tokens; an enabled personal API client attaches the current token as a bearer token. The Task 13 local-only API selection remains unchanged.
 
 ## 5. Auth gating
 
@@ -47,7 +47,7 @@ frontend/
 
 - Missing metrics render "unavailable", never `0`.
 - Failed/interrupted runs visually distinct; excluded from success summaries unless failure view.
-- Owner data never cached in a way that leaks between accounts (clear cache on sign-out).
+- Owner data never cached in a way that leaks between accounts (clear the app store on sign-out and remount the app on identity changes).
 
 ## 7. Observability
 

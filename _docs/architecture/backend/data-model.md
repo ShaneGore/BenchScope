@@ -92,7 +92,8 @@ The v1 result importer stores only the normalized allowlist, optional
 bytes, prompts, generated code, private task identifiers, raw outputs,
 credentials, events, artifacts, or error data.
 
-Before authentication exists, local development and tests use the fixed owner
-`local` (`LOCAL_OWNER_ID`), never an owner supplied by a caller. `endpoint_url`
-is the documented local-only endpoint reference; credentials are not stored
-as separate fields or embedded in its value.
+The verified Clerk `sub` is the production owner key. Local development may use
+the fixed owner `local` (`LOCAL_OWNER_ID`) only under the documented
+development/local/loopback bypass guard; callers never supply ownership.
+`endpoint_url` is the documented local-only endpoint reference; credentials are
+not stored as separate fields or embedded in its value.

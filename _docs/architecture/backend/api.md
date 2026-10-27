@@ -5,6 +5,10 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 ## Conventions
 
 - JSON only. Errors: `{ "detail": string | {field: msg} }`.
+- Personal endpoints require a Clerk JWT verified through JWKS (signature,
+  issuer, audience, and expiry); invalid credentials return a generic 401.
+  Ownership comes only from the verified `sub`, except for the guarded fixed
+  local-development identity.
 - Auth: `Authorization: Bearer <Clerk JWT>` for personal endpoints. Anonymous demo endpoints require no auth.
 - Pagination: `GET /runs?limit=&cursor=`; default limit 50, range 1–100.
   Run history is ordered by `started_at DESC, id DESC`; `next_cursor` is the UUID
@@ -30,7 +34,7 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
 - `DELETE /profiles/{id}` — delete (owner check; cascades? runs keep snapshot).
 
 ### Runs (auth required)
-- `GET /runs` — list/filter runs for `LOCAL_OWNER_ID`.
+- `GET /runs` — list/filter runs for the authenticated owner.
 - `GET /runs/{id}` — get own run; missing and other-owner IDs both return generic 404.
 - `DELETE /runs/{id}` — delete own run; missing and other-owner IDs both return
   generic 404. Same-owner child runs have `related_run_id` cleared before deletion.
@@ -42,7 +46,7 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   `reasoning`, `mtp`, `ctx`, and `seed` are accepted as config settings.
   Canonical metrics may be omitted or null; values are passed through, never
   derived, and missing values remain null. Unknown fields are rejected at every
-  level. The server assigns the fixed local owner, `source=imported`, and
+  level. The server assigns the authenticated owner, `source=imported`, and
   `status=completed`; imports have no profile foreign key, events, or artifacts.
   A provided `source_run_id` is hashed with a versioned namespace; otherwise a
   SHA-256 fingerprint is calculated from canonical JSON for the validated
@@ -67,18 +71,18 @@ In hosted mode these routes are not registered (404).
 ### Comparison
 - `GET /runs/compare?ids=...` — requires at least two distinct comma-delimited UUIDs.
   The whole batch returns generic 404 if any ID is missing or not owned by
-  `LOCAL_OWNER_ID`. Otherwise it returns only completed runs in input order;
+  the authenticated owner. Otherwise it returns only completed runs in input order;
   failed, interrupted, and running runs are excluded. Fewer than two completed
   runs returns 422. Null metrics remain null; no aggregation or zero coercion occurs.
 
 ## Ownership rules
 
-- `owner_id` is always taken from `LOCAL_OWNER_ID` for current local endpoints,
-  never request body/path/query.
-- Import v1 uses the fixed `LOCAL_OWNER_ID` until authenticated ownership is
-  implemented; owner, source, status, profile FK, fingerprint, event and
-  artifact fields are never accepted from the request.
-- Every `{id}` lookup includes `WHERE owner_id = LOCAL_OWNER_ID`; mismatch → 404
+- `owner_id` is derived only from the verified JWT subject, or the fixed
+  `LOCAL_OWNER_ID` under the guarded local development bypass; never from
+  request body/path/query.
+- Import v1 assigns the authenticated owner; owner, source, status, profile FK,
+  fingerprint, event and artifact fields are never accepted from the request.
+- Every `{id}` lookup includes `WHERE owner_id = authenticated owner`; mismatch → 404
   (not 403, to avoid enumeration).
 - Batch endpoints (compare) reject the complete request with a generic 404 if any
   ID is missing or not owned; no partial results are returned.

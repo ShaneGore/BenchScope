@@ -28,6 +28,13 @@ def test_default_app_exposes_liveness_and_correlated_logs(
     assert correlation_id in caplog.text
 
 
+def test_personal_endpoint_authenticates_before_database_access() -> None:
+    response = TestClient(default_app).get("/api/v1/profiles")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+
+
 def test_invalid_hosted_settings_fail_without_exposing_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -53,6 +60,9 @@ def test_hosted_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) 
     )
     monkeypatch.setenv("CORS_ORIGINS", '["https://dashboard.example"]')
     monkeypatch.setenv("HOST", "0.0.0.0")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example/.well-known/jwks.json")
+    monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example")
+    monkeypatch.setenv("CLERK_AUDIENCE", "benchscope")
 
     settings = load_settings()
 
@@ -68,6 +78,9 @@ def test_hosted_configuration_rejects_wildcard_origins() -> None:
             database_url=SecretStr("postgresql://localhost/benchscope"),
             cors_origins=["https://*.example.com"],
             host="0.0.0.0",
+            clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
+            clerk_issuer="https://clerk.example",
+            clerk_audience="benchscope",
         )
 
 

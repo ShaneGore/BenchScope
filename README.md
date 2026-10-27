@@ -104,6 +104,8 @@ uv run ruff format .
 ## API contract
 
 - Initial committed artifact: repository-root `openapi.yaml`.
+- Hosted personal endpoints require a Clerk session JWT. Configure the backend with `CLERK_JWKS_URL`, `CLERK_ISSUER`, and `CLERK_AUDIENCE`; configure hosted frontend builds with `VITE_APP_MODE=hosted` and its Clerk publishable key through `VITE_CLERK_PUBLISHABLE_KEY`.
+- `LOCAL_AUTH_BYPASS` defaults to `false`. To explicitly enable offline local auth, set `APP_ENV=development`, `APP_MODE=local`, and `LOCAL_AUTH_BYPASS=true`; `HOST` must resolve only to loopback. `APP_ENV` defaults to `production`, and any invalid bypass combination fails startup.
 - Regenerate frontend types: `cd frontend && pnpm gen:api`.
 - Check generated types for drift: `cd frontend && pnpm check:api`.
 - FastAPI-generated OpenAPI becomes authoritative after backend feature work; reconcile `openapi.yaml` before integrating the real API client.
@@ -121,6 +123,10 @@ Compose builds the backend from `backend/` and runs PostgreSQL in a private Comp
    ```
 
    Compose requires `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `API_PORT`. `POSTGRES_PORT` defaults to 5432.
+   The auth bypass is intentionally disabled by default; for offline local API
+   work, explicitly set `LOCAL_AUTH_BYPASS=true` in `.env`. Compose passes
+   `APP_ENV` and the bypass flag to the backend, which rejects any non-development,
+   non-local, or non-loopback combination.
 
 2. Build and start services:
 

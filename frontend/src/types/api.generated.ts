@@ -109,6 +109,15 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"][];
                     };
                 };
+                /** @description Missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
             };
         };
         put?: never;
@@ -136,6 +145,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ModelProfile"];
+                    };
+                };
+                /** @description Missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
                 /** @description Validation error */
@@ -184,6 +202,15 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"];
                     };
                 };
+                /** @description Missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description Not found */
                 404: {
                     headers: {
@@ -224,6 +251,15 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /** @description Missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
                 /** @description Not found */
                 404: {
@@ -272,6 +308,15 @@ export interface paths {
                         "application/json": components["schemas"]["ModelProfile"];
                     };
                 };
+                /** @description Missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
                 /** @description Not found */
                 404: {
                     headers: {
@@ -303,7 +348,7 @@ export interface paths {
         };
         /**
          * List own runs
-         * @description Always scopes results to LOCAL_OWNER_ID. Model matches profile_snapshot.model_name exactly. Date-time filters must include a timezone and are normalized to UTC; from is inclusive and to is exclusive. from must precede to. Results are ordered by started_at DESC, then id DESC. A cursor must identify a run in the current owner and filter scope. Limit defaults to 50 and must be 1 through 100.
+         * @description Always scopes results to the authenticated owner. Model matches profile_snapshot.model_name exactly. Date-time filters must include a timezone and are normalized to UTC; from is inclusive and to is exclusive. from must precede to. Results are ordered by started_at DESC, then id DESC. A cursor must identify a run in the current owner and filter scope. Limit defaults to 50 and must be 1 through 100.
          */
         get: {
             parameters: {
@@ -334,12 +379,14 @@ export interface paths {
                         "application/json": components["schemas"]["PaginatedRuns"];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
                 /** @description Invalid filter, range, or cursor */
                 422: {
@@ -389,14 +436,16 @@ export interface paths {
                         "application/json": components["schemas"]["BenchmarkRun"];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
-                /** @description Not found or not owned by LOCAL_OWNER_ID */
+                /** @description Not found or not owned by the authenticated user */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -428,14 +477,16 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
-                /** @description Not found or not owned by LOCAL_OWNER_ID */
+                /** @description Not found or not owned by the authenticated user */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -486,12 +537,14 @@ export interface paths {
                         "application/json": components["schemas"]["ImportResult"];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
                 /** @description Duplicate import for this owner; no row was created */
                 409: {
@@ -557,12 +610,14 @@ export interface paths {
                         "application/json": components["schemas"]["BenchmarkRun"];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
                 /** @description Not available in this mode */
                 403: {
@@ -602,7 +657,7 @@ export interface paths {
         };
         /**
          * Compare completed runs
-         * @description Requires at least two distinct UUIDs. If any ID is missing or not owned by LOCAL_OWNER_ID, rejects the entire batch with the same generic 404. Returns completed runs only, in input order; if fewer than two remain, returns 422. Metric values are passed through, including null values.
+         * @description Requires at least two distinct UUIDs. If any ID is missing or not owned by the authenticated owner, rejects the entire batch with the same generic 404. Returns completed runs only, in input order; if fewer than two remain, returns 422. Metric values are passed through, including null values.
          */
         get: {
             parameters: {
@@ -624,14 +679,16 @@ export interface paths {
                         "application/json": components["schemas"]["BenchmarkRun"][];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description Missing or invalid authentication token */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
                 };
-                /** @description At least one ID is missing or not owned by LOCAL_OWNER_ID */
+                /** @description At least one ID is missing or not owned by the authenticated user */
                 404: {
                     headers: {
                         [name: string]: unknown;

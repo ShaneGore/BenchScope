@@ -10,8 +10,12 @@ import { ComparePage } from '@/pages/ComparePage';
 import { ProfilesPage } from '@/pages/ProfilesPage';
 import { ImportPage } from '@/pages/ImportPage';
 import { BenchmarkPage } from '@/pages/BenchmarkPage';
+import { SignIn, SignUp } from '@clerk/react';
 
 function SignInPage() {
+  if (APP_MODE === 'hosted') {
+    return <SignIn routing="hash" signUpUrl="/sign-up" />;
+  }
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       <h1 className="text-xl font-semibold text-text-primary tracking-tight">Sign in</h1>
@@ -24,6 +28,9 @@ function SignInPage() {
 }
 
 function SignUpPage() {
+  if (APP_MODE === 'hosted') {
+    return <SignUp routing="hash" signInUrl="/sign-in" />;
+  }
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       <h1 className="text-xl font-semibold text-text-primary tracking-tight">Sign up</h1>
@@ -105,4 +112,3 @@ export default function App() {
     </AppShell>
   );
 }
-

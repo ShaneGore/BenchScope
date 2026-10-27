@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { APP_MODE, canLaunch, isDemo, modeLabel } from '@/lib/mode';
 import { linkProps, navigate, useScrollTopOnRoute } from '@/lib/router';
+import { HostedAuthControls } from '@/auth/AuthBoundary';
 
 interface NavItem {
   to: string;
@@ -105,6 +106,7 @@ function Header({ currentPath }: { currentPath: string }) {
               View Demo
             </button>
           )}
+          {APP_MODE === 'hosted' && <HostedAuthControls />}
         </div>
       </div>
     </header>

@@ -12,6 +12,7 @@
     "check:api": "corepack pnpm gen:api && git diff --exit-code -- src/types/api.generated.ts"
   },
   "dependencies": {
+    "@clerk/react": "^6.18.2",
     "lucide-react": "^0.446.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

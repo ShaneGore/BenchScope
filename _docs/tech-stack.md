@@ -60,7 +60,7 @@ Required by preference. `uv` is fast, reproducible, and already in use. The comm
   - **Development friction:** Clerk ships a first-class React SDK and straightforward JWT verification in Python (JWKS), so sign-in/out/session protection are mostly configuration, not code. This directly satisfies "prefer a maintained provider over custom auth logic."
   - **Secure ownership enforcement:** Clerk provides a stable, opaque user ID (`sub`) used as the owner key on every profile/run record; a backend dependency resolves the current user from the verified JWT and injects it into route handlers. No passwords, sessions, or tokens are stored by us.
   - **Cost:** Hobby tier is $0 with no credit card required: up to 50,000 MRU (monthly retained users) per application, unlimited applications, 3 dashboard seats, 5 user impersonations/month, prebuilt UI for sign-up/sign-in/profile, custom domain, fixed 7-day session, 1-day application logs. Pro features (MFA, satellite domains, custom session lifetime, SMS auth) require payment — the MVP does not require them; if MFA becomes required at $0, fall back to Supabase Auth or Firebase Auth.
-  - **Local + hosted parity:** The same Clerk instance (or a separate dev instance) works in both modes, so there is one code path. A dev-only, env-gated bypass (`LOCAL_AUTH_BYPASS=true`, only honoured when bound to loopback) allows fully offline local development without weakening hosted security.
+  - **Local + hosted parity:** The same Clerk instance (or a separate dev instance) works in both modes, so there is one code path. The default-disabled offline bypass (`LOCAL_AUTH_BYPASS=true`) is accepted only with `APP_ENV=development`, `APP_MODE=local`, and a loopback-only effective bind host; `APP_ENV` defaults to `production`, and all invalid combinations fail startup.
   - **Why not the others:** Auth0 is mature but heavier to configure and pricier at scale; Supabase Auth couples identity to a Supabase project/Postgres and tempts RLS-based access control (the plan requires server-side enforcement in app code, not DB policies); FastAPI Users / Django auth would mean owning password flows, recovery, and session security — exactly what the plan says to avoid. Django auth would also force a Django backend, losing the FastAPI/React/OTel alignment.
 - **Trade-off accepted:** External SaaS dependency for identity and small vendor lock-in on user IDs (mitigated by storing only the opaque `sub`, which is portable). Free tier limits (50k MRU) are ample for an MVP/demo; exceeding them requires a paid plan.
 
@@ -98,7 +98,7 @@ Required by preference. `uv` is fast, reproducible, and already in use. The comm
 - Single codebase; mode selected by `APP_MODE=local|hosted` (plus `BIND_HOST`).
 - Full application and database run locally (Docker Compose: app + Postgres + full Grafana stack).
 - The private benchmark runner can execute against a locally configured model endpoint.
-- Local development may use a clearly gated development identity bypass (`LOCAL_AUTH_BYPASS=true`), which must be impossible to enable in production (only honoured when bound to loopback).
+- Local development may use `LOCAL_AUTH_BYPASS=true` only when `APP_ENV=development`, `APP_MODE=local`, and the effective bind host resolves exclusively to loopback; the setting defaults to false and `APP_ENV` defaults to production.
 - Private benchmark paths and endpoint credentials come from env/`.env.local` (gitignored) and never leave the machine.
 
 ### 3.3 Hosted demonstration mode
@@ -210,6 +210,6 @@ Distinguish: deploying the static frontend to GitHub Pages does **not** deploy t
 4. Whether hosted DB should be Neon Free or an alternative (Supabase Free) for cost/simplicity.
 5. Final repository name and GitHub Pages base path (drives Vite `base`).
 6. Whether frontend TS types are generated in CI via `openapi-typescript` or hand-maintained.
-7. Naming/convention for the local auth bypass and how it is guarded in production builds.
+7. ~~Naming/convention for the local auth bypass and how it is guarded in production builds.~~ Resolved by issue #14: `LOCAL_AUTH_BYPASS=false` by default; enabling it requires `APP_ENV=development`, `APP_MODE=local`, and loopback bind.
 8. Whether the anonymous demo dataset is seeded at deploy time or shipped as a fixture.
 9. Whether hosted telemetry via Grafana Cloud Free is worth the added configuration.

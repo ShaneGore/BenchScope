@@ -1,3 +1,5 @@
+import ipaddress
+import socket
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -13,11 +15,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
     app_mode: Literal["local", "hosted"] = "local"
+    app_env: str = "production"
+    local_auth_bypass: bool = False
     database_url: SecretStr | None = None
     cors_origins: list[str] | None = None
     host: str | None = None
     port: int = Field(default=8000, gt=0, le=65535)
     max_upload_bytes: int = Field(default=1024 * 1024, gt=0)
+    clerk_jwks_url: str | None = None
+    clerk_issuer: str | None = None
+    clerk_audience: str | None = None
 
     @field_validator("cors_origins")
     @classmethod
@@ -30,11 +37,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_hosted_settings(self) -> "Settings":
-        if (
-            self.app_mode == "local"
-            and self.host
-            and self.host.lower() not in {"127.0.0.1", "::1", "localhost"}
+        if self.local_auth_bypass and (
+            self.app_env != "development"
+            or self.app_mode != "local"
+            or not self.bind_host_is_loopback
         ):
+            raise ValueError(
+                "LOCAL_AUTH_BYPASS requires APP_ENV=development, APP_MODE=local, "
+                "and a loopback HOST"
+            )
+        if self.app_mode == "local" and self.host and not self.bind_host_is_loopback:
             raise ValueError("Non-loopback HOST requires APP_MODE=hosted")
         if self.app_mode == "hosted":
             missing = []
@@ -47,6 +59,13 @@ class Settings(BaseSettings):
                 missing.append("CORS_ORIGINS")
             if not self.host or not self.host.strip():
                 missing.append("HOST")
+            for name, value in (
+                ("CLERK_JWKS_URL", self.clerk_jwks_url),
+                ("CLERK_ISSUER", self.clerk_issuer),
+                ("CLERK_AUDIENCE", self.clerk_audience),
+            ):
+                if not value or not value.strip():
+                    missing.append(name)
             if missing:
                 raise ValueError(f"Required in hosted mode: {', '.join(missing)}")
             database_url = self.database_url.get_secret_value()
@@ -66,6 +85,25 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "CORS_ORIGINS must not contain a wildcard in hosted mode"
                 )
+        if self.clerk_jwks_url:
+            try:
+                jwks = urlsplit(self.clerk_jwks_url)
+            except ValueError:
+                jwks = None
+            if (
+                jwks is None
+                or jwks.scheme != "https"
+                or not jwks.hostname
+                or jwks.username
+                or jwks.password
+            ):
+                raise ValueError("CLERK_JWKS_URL must be an HTTPS URL")
+        if any(
+            (self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)
+        ) and not all((self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)):
+            raise ValueError(
+                "Clerk issuer, audience, and JWKS URL must be configured together"
+            )
         return self
 
     @property
@@ -77,6 +115,19 @@ class Settings(BaseSettings):
     @property
     def bind_host(self) -> str:
         return self.host or "127.0.0.1"
+
+    @property
+    def bind_host_is_loopback(self) -> bool:
+        try:
+            addresses = {
+                ipaddress.ip_address(result[4][0])
+                for result in socket.getaddrinfo(
+                    self.bind_host, None, type=socket.SOCK_STREAM
+                )
+            }
+        except (OSError, ValueError):
+            return False
+        return bool(addresses) and all(address.is_loopback for address in addresses)
 
 
 def load_settings() -> Settings:

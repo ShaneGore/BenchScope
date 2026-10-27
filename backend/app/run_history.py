@@ -7,7 +7,8 @@ from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.database import LOCAL_OWNER_ID, get_session
+from app.auth import current_owner
+from app.database import get_session
 from app.models import BenchmarkRun
 from app.run_serialization import run_history_response
 
@@ -61,12 +62,13 @@ def _invalid_cursor() -> HTTPException:
 
 
 def _filters(
+    owner_id: str,
     model: str | None,
     run_status: RunStatus | None,
     date_from: datetime | None,
     date_to: datetime | None,
 ) -> list[Any]:
-    filters: list[Any] = [BenchmarkRun.owner_id == LOCAL_OWNER_ID]
+    filters: list[Any] = [BenchmarkRun.owner_id == owner_id]
     if model is not None:
         filters.append(BenchmarkRun.profile_snapshot["model_name"].as_string() == model)
     if run_status is not None:
@@ -80,6 +82,7 @@ def _filters(
 
 @router.get("/runs", response_model=PaginatedRunsResponse)
 def list_runs(
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
     model: str | None = None,
     status: RunStatus | None = None,
@@ -91,7 +94,7 @@ def list_runs(
     if date_from is not None and date_to is not None and date_from >= date_to:
         raise HTTPException(status_code=422, detail="Invalid date range")
 
-    filters = _filters(model, status, date_from, date_to)
+    filters = _filters(owner_id, model, status, date_from, date_to)
     cursor_run: BenchmarkRun | None = None
     if cursor is not None:
         try:
@@ -135,6 +138,7 @@ def list_runs(
 
 @router.get("/runs/compare", response_model=list[BenchmarkRunResponse])
 def compare_runs(
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
     ids: str = Query(
         description="At least two distinct run UUIDs, comma-delimited in input order."
@@ -150,7 +154,7 @@ def compare_runs(
     runs = list(
         session.scalars(
             select(BenchmarkRun).where(
-                BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+                BenchmarkRun.owner_id == owner_id,
                 BenchmarkRun.id.in_(run_ids),
             )
         )
@@ -173,12 +177,13 @@ def compare_runs(
 @router.get("/runs/{id}", response_model=BenchmarkRunResponse)
 def get_run(
     id: UUID,
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, Any]:
     run = session.scalar(
         select(BenchmarkRun).where(
             BenchmarkRun.id == id,
-            BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+            BenchmarkRun.owner_id == owner_id,
         )
     )
     if run is None:
@@ -189,12 +194,13 @@ def get_run(
 @router.delete("/runs/{id}", status_code=204)
 def delete_run(
     id: UUID,
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
 ) -> Response:
     run = session.scalar(
         select(BenchmarkRun).where(
             BenchmarkRun.id == id,
-            BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+            BenchmarkRun.owner_id == owner_id,
         )
     )
     if run is None:
@@ -202,7 +208,7 @@ def delete_run(
     session.execute(
         update(BenchmarkRun)
         .where(
-            BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+            BenchmarkRun.owner_id == owner_id,
             BenchmarkRun.related_run_id == run.id,
         )
         .values(related_run_id=None)

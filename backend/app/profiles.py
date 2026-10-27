@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.database import LOCAL_OWNER_ID, get_session
+from app.auth import current_owner
+from app.database import get_session
 from app.models import BenchmarkRun, ModelProfile
 
 router = APIRouter()
@@ -131,12 +132,13 @@ def _validate_mode_fields(
 
 @router.get("/profiles", response_model=list[ProfileResponse])
 def list_profiles(
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
 ) -> list[ModelProfile]:
     return list(
         session.scalars(
             select(ModelProfile)
-            .where(ModelProfile.owner_id == LOCAL_OWNER_ID)
+            .where(ModelProfile.owner_id == owner_id)
             .order_by(ModelProfile.created_at, ModelProfile.id)
         )
     )
@@ -148,6 +150,7 @@ def list_profiles(
     status_code=status.HTTP_201_CREATED,
 )
 def create_profile(
+    owner_id: Annotated[str, Depends(current_owner)],
     profile: ProfileCreate,
     session: Annotated[Session, Depends(get_session)],
     request: Request,
@@ -156,18 +159,18 @@ def create_profile(
     _validate_mode_fields(
         profile, payload, request.app.state.settings.app_mode == "hosted"
     )
-    model_profile = ModelProfile(owner_id=LOCAL_OWNER_ID, **payload)
+    model_profile = ModelProfile(owner_id=owner_id, **payload)
     session.add(model_profile)
     session.commit()
     session.refresh(model_profile)
     return model_profile
 
 
-def _get_profile(session: Session, profile_id: UUID) -> ModelProfile:
+def _get_profile(session: Session, profile_id: UUID, owner_id: str) -> ModelProfile:
     profile = session.scalar(
         select(ModelProfile).where(
             ModelProfile.id == profile_id,
-            ModelProfile.owner_id == LOCAL_OWNER_ID,
+            ModelProfile.owner_id == owner_id,
         )
     )
     if profile is None:
@@ -178,13 +181,15 @@ def _get_profile(session: Session, profile_id: UUID) -> ModelProfile:
 @router.get("/profiles/{id}", response_model=ProfileResponse)
 def get_profile(
     id: UUID,
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
 ) -> ModelProfile:
-    return _get_profile(session, id)
+    return _get_profile(session, id, owner_id)
 
 
 @router.patch("/profiles/{id}", response_model=ProfileResponse)
 def update_profile(
+    owner_id: Annotated[str, Depends(current_owner)],
     id: UUID,
     profile: ProfileUpdate,
     session: Annotated[Session, Depends(get_session)],
@@ -196,7 +201,7 @@ def update_profile(
     _validate_mode_fields(
         profile, payload, request.app.state.settings.app_mode == "hosted"
     )
-    model_profile = _get_profile(session, id)
+    model_profile = _get_profile(session, id, owner_id)
     for field, value in payload.items():
         setattr(model_profile, field, value)
     session.commit()
@@ -207,13 +212,14 @@ def update_profile(
 @router.delete("/profiles/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_profile(
     id: UUID,
+    owner_id: Annotated[str, Depends(current_owner)],
     session: Annotated[Session, Depends(get_session)],
 ) -> Response:
-    model_profile = _get_profile(session, id)
+    model_profile = _get_profile(session, id, owner_id)
     session.execute(
         update(BenchmarkRun)
         .where(
-            BenchmarkRun.owner_id == LOCAL_OWNER_ID,
+            BenchmarkRun.owner_id == owner_id,
             BenchmarkRun.profile_id == model_profile.id,
         )
         .values(profile_id=None)

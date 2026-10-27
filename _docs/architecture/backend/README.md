@@ -40,8 +40,8 @@ Frontend and backend are separate top-level folders (per request): `frontend/`, 
 
 ## 4. Auth
 
-- Hosted: Clerk JWT in `Authorization: Bearer`. Verify signature via JWKS (cached), validate `iss`/`aud`/exp. Extract `sub` → `owner_id`. No custom password scheme.
-- Local dev: optional bypass (`LOCAL_AUTH_BYPASS=true`) resolves a fixed local user id; must be impossible to enable in production builds (config guard + documented).
+- Hosted: Clerk JWT in `Authorization: Bearer`. Verify the RS256 signature via cached JWKS, require and validate `iss`, `aud`, `exp`, and `sub`; derive `owner_id` only from verified `sub`. Configure `CLERK_JWKS_URL`, `CLERK_ISSUER`, and `CLERK_AUDIENCE` server-side. No custom password scheme.
+- Local dev: `LOCAL_AUTH_BYPASS` defaults to `false`; it resolves only to fixed `LOCAL_OWNER_ID` when all three guards pass: `APP_ENV=development`, `APP_MODE=local`, and the effective `HOST` resolves exclusively to loopback addresses. `APP_ENV` defaults to `production`. Enabling bypass under any other combination fails settings validation/startup. Hosted and production requests always require JWT verification.
 - Anonymous demo: separate read-only endpoints with no owner context; no writes.
 
 ## 5. Runner (local only)
@@ -69,4 +69,4 @@ See `runner.md`. In-process, single-flight (`asyncio` + `asyncio.create_subproce
 
 ## 9. Configuration (env)
 
-Key settings: `APP_MODE`, `DATABASE_URL`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUDIENCE`, `CORS_ORIGINS`, `BENCHMARK_ENABLED`, `BENCHMARK_ADAPTER`, `LOCAL_AUTH_BYPASS`, `MAX_UPLOAD_BYTES`, `OTEL_EXPORTER_OTLP_ENDPOINT`. All via pydantic-settings; no secrets in code.
+Key settings: `APP_MODE`, `APP_ENV`, `DATABASE_URL`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUDIENCE`, `CORS_ORIGINS`, `BENCHMARK_ENABLED`, `BENCHMARK_ADAPTER`, `LOCAL_AUTH_BYPASS`, `MAX_UPLOAD_BYTES`, `OTEL_EXPORTER_OTLP_ENDPOINT`. All via pydantic-settings; no secrets in code.
