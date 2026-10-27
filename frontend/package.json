@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "test:journey": "playwright test --config playwright.config.ts",
+    "test:journey": "playwright test --config playwright.config.ts && playwright test --config playwright.demo.config.ts && playwright test --config playwright.base.config.ts",
     "build": "tsc --noEmit && vite build",
     "gen:api": "npx --yes openapi-typescript@7.4.4 ../openapi.yaml -o src/types/api.generated.ts",
     "check:api": "corepack pnpm gen:api && git diff --exit-code -- src/types/api.generated.ts"

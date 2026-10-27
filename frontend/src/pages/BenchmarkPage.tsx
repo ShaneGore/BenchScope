@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
 import { FlaskConical, Loader2 } from 'lucide-react';
-import type { ApiError, BenchmarkConfig, BenchmarkRun, ModelProfile } from '@/types';
+import type {
+  ApiError,
+  BenchmarkConfig,
+  BenchmarkRun,
+  ModelProfile,
+} from '@/types';
 import { getStore } from '@/mock/store';
-import { APP_MODE, canLaunch } from '@/lib/mode';
+import { getBenchmarkService } from '@/services/benchmark-service';
+import { LocalRunnerService, type RunnerStatus } from '@/services/runner-service';
+import { APP_MODE } from '@/lib/mode';
 import { navigate } from '@/lib/router';
 import { useAsync, usePolling } from '@/lib/hooks';
 import { fmtDate, fmtElapsed } from '@/lib/format';
@@ -13,76 +20,65 @@ import { Field, Select } from '@/components/ui/Field';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
 
-export function BenchmarkPage() {
-  const store = getStore(APP_MODE);
-  const { data: profiles, loading: profilesLoading, error: profilesError, refetch } = useAsync(
-    () => store.listProfiles(),
+export function BenchmarkPage({ runnerEnabled = false }: { runnerEnabled?: boolean }) {
+  if (APP_MODE !== 'local' || !runnerEnabled) return null;
+  return <EnabledBenchmarkPage />;
+}
+
+function EnabledBenchmarkPage() {
+  const service = getBenchmarkService('local');
+  const runner = new LocalRunnerService();
+  const configs = getStore('local').listConfigs();
+  const { data: profiles, loading, error: profilesError, refetch } = useAsync(
+    () => service.listProfiles(),
     []
   );
-  const configs = store.listConfigs();
   const [profileId, setProfileId] = useState('');
   const [configName, setConfigName] = useState(configs[0]?.name ?? '');
-  const [activeId, setActiveId] = useState<string | null>(store.getActiveRunId());
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [activeRun, setActiveRun] = useState<BenchmarkRun | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (profiles && profiles.length > 0 && !profileId) {
-      setProfileId(profiles[0].id);
-    }
+    if (profiles?.length && !profileId) setProfileId(profiles[0].id);
   }, [profiles, profileId]);
 
-  useEffect(() => {
-    if (!activeId) {
-      setActiveRun(null);
-      return;
+  const selectedProfile = profiles?.find((profile) => profile.id === profileId);
+  const selectedConfig = configs.find((config) => config.name === configName) ?? configs[0];
+
+  const refreshStatus = async (id: string) => {
+    try {
+      const status = await runner.status(id);
+      const profile = selectedProfile ?? profiles?.[0];
+      if (profile) setActiveRun(mapRunnerStatus(status, profile, selectedConfig));
+      if (status.status !== 'running') setActiveId(null);
+    } catch (e) {
+      setError(String((e as ApiError).detail ?? 'Could not load benchmark status.'));
+      setActiveId(null);
     }
-    store
-      .getRun(activeId)
-      .then(setActiveRun)
-      .catch(() => setActiveId(null));
-  }, [activeId, store]);
+  };
+
+  useEffect(() => {
+    if (activeId) void refreshStatus(activeId);
+  }, [activeId]);
 
   usePolling(
     !!activeId && activeRun?.status === 'running',
     async () => {
-      if (!activeId) return;
-      try {
-        const r = await store.getRun(activeId);
-        setActiveRun(r);
-        if (r.status !== 'running') {
-          setActiveId(null);
-        }
-      } catch {
-        // ignore
-      }
+      if (activeId) await refreshStatus(activeId);
     },
     1000
   );
-  if (!canLaunch) {
+
+  if (loading) {
     return (
       <div className="flex flex-col gap-6 animate-fadeIn">
         <h1 className="text-xl font-semibold text-text-primary tracking-tight">Launch benchmark</h1>
-        <EmptyState
-          title="Benchmark launch unavailable"
-          description="Benchmarks can only be launched in local mode."
-        />
+        <Card><SkeletonText lines={4} /></Card>
       </div>
     );
   }
-
-  if (profilesLoading) {
-    return (
-      <div className="flex flex-col gap-6 animate-fadeIn">
-        <h1 className="text-xl font-semibold text-text-primary tracking-tight">Launch benchmark</h1>
-        <Card>
-          <SkeletonText lines={4} />
-        </Card>
-      </div>
-    );
-  }
-
   if (profilesError) {
     return (
       <div className="flex flex-col gap-6 animate-fadeIn">
@@ -93,19 +89,35 @@ export function BenchmarkPage() {
   }
 
   const availableProfiles = profiles ?? [];
-  const selectedConfig = configs.find((c) => c.name === configName) ?? configs[0];
-
   const handleStart = async () => {
-    if (!profileId || !selectedConfig) return;
+    if (!selectedProfile || !selectedConfig) return;
     setStarting(true);
     setError(null);
     try {
-      const run = await store.startBenchmark(profileId, selectedConfig);
+      const run = await runner.start(
+        selectedProfile.id,
+        globalThis.crypto?.randomUUID?.() ?? '00000000-0000-4000-8000-000000000001'
+      );
       setActiveId(run.id);
-      setActiveRun(run);
+      setActiveRun({
+        id: run.id,
+        owner_id: selectedProfile.owner_id,
+        status: 'running',
+        profile_snapshot: {
+          profile_id: selectedProfile.id,
+          name: selectedProfile.name,
+          model_name: selectedProfile.model_name,
+          quantization: selectedProfile.quantization,
+          context_length: selectedProfile.context_length,
+          inference_engine: selectedProfile.inference_engine,
+        },
+        benchmark_config: selectedConfig,
+        started_at: new Date().toISOString(),
+        metrics: {},
+        source: 'launched',
+      });
     } catch (e) {
-      const err = e as ApiError;
-      setError(String(err.detail ?? 'Failed to start benchmark'));
+      setError(String((e as ApiError).detail ?? 'Failed to start benchmark'));
     } finally {
       setStarting(false);
     }
@@ -119,13 +131,11 @@ export function BenchmarkPage() {
           Start a local benchmark run against a selected profile and config.
         </p>
       </div>
-
       {error && (
         <div className="rounded-md border border-status-failed-border bg-status-failed-bg px-4 py-2 text-sm text-status-failed-fg">
           {error}
         </div>
       )}
-
       {availableProfiles.length === 0 ? (
         <EmptyState
           title="No profiles available"
@@ -143,19 +153,17 @@ export function BenchmarkPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Profile" required>
                 <Select value={profileId} onChange={(e) => setProfileId(e.target.value)}>
-                  {availableProfiles.map((p: ModelProfile) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.model_name})
+                  {availableProfiles.map((profile: ModelProfile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} ({profile.model_name})
                     </option>
                   ))}
                 </Select>
               </Field>
               <Field label="Benchmark config" required>
                 <Select value={configName} onChange={(e) => setConfigName(e.target.value)}>
-                  {configs.map((c: BenchmarkConfig) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name}
-                    </option>
+                  {configs.map((config: BenchmarkConfig) => (
+                    <option key={config.name} value={config.name}>{config.name}</option>
                   ))}
                 </Select>
               </Field>
@@ -172,7 +180,6 @@ export function BenchmarkPage() {
               </Button>
             </div>
           </Card>
-
           {activeRun && (
             <Card>
               <CardHeader
@@ -186,28 +193,45 @@ export function BenchmarkPage() {
                 <p className="text-xs text-text-muted">
                   Started {fmtDate(activeRun.started_at)} · {fmtElapsed(activeRun.started_at, activeRun.ended_at)}
                 </p>
-                {activeRun.events && activeRun.events.length > 0 && (
-                  <ul className="mt-2 flex flex-col gap-1 text-xs text-text-secondary">
-                    {activeRun.events.map((e, i) => (
-                      <li key={i}>
-                        {e.event}
-                        {e.detail ? ` — ${e.detail}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
-              <div className="mt-4 flex gap-2">
-                {activeRun.status !== 'running' && (
+              {activeRun.status !== 'running' && (
+                <div className="mt-4">
                   <Button variant="ghost" onClick={() => navigate(`/runs/${activeRun.id}`)}>
                     View detail
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </Card>
           )}
         </>
       )}
     </div>
   );
+}
+
+function mapRunnerStatus(
+  status: RunnerStatus,
+  profile: ModelProfile,
+  config: BenchmarkConfig
+): BenchmarkRun {
+  return {
+    id: status.id,
+    owner_id: profile.owner_id,
+    status: status.status,
+    profile_snapshot: {
+      profile_id: profile.id,
+      name: profile.name,
+      model_name: profile.model_name,
+      quantization: profile.quantization,
+      context_length: profile.context_length,
+      inference_engine: profile.inference_engine,
+    },
+    benchmark_config: config,
+    started_at: status.started_at,
+    ended_at: status.completed_at,
+    metrics: status.metrics,
+    error_category: status.error_category as BenchmarkRun['error_category'],
+    error_message_sanitised: status.error_message_sanitised,
+    source: 'launched',
+  };
 }

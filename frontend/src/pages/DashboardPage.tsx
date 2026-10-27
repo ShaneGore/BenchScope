@@ -8,7 +8,7 @@ import {
 import type { AppMode, BenchmarkRun } from '@/types';
 import { getBenchmarkService } from '@/services/benchmark-service';
 import { useAsync } from '@/lib/hooks';
-import { APP_MODE, canImport, canLaunch, isDemo } from '@/lib/mode';
+import { APP_MODE } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
 import { fmtDate, fmtElapsed, fmtMs, fmtNum, fmtRate } from '@/lib/format';
 import { metricAvailable, runProfileLabel } from '@/lib/metrics';
@@ -17,7 +17,16 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
-export function DashboardPage({ serviceMode = APP_MODE }: { serviceMode?: AppMode } = {}) {
+export function DashboardPage({
+  serviceMode = APP_MODE,
+  benchmarkEnabled = false,
+}: {
+  serviceMode?: AppMode;
+  benchmarkEnabled?: boolean;
+} = {}) {
+  const isDemo = serviceMode === 'demo';
+  const canLaunch = serviceMode === 'local' && benchmarkEnabled;
+  const canImport = !isDemo;
   const store = getBenchmarkService(serviceMode);
   const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), []);
 
@@ -32,7 +41,7 @@ export function DashboardPage({ serviceMode = APP_MODE }: { serviceMode?: AppMod
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
-      <PageHeading />
+      <PageHeading canLaunch={canLaunch} canImport={canImport} isDemo={isDemo} />
 
       {activeRun && <ActiveRunBanner run={activeRun} />}
 
@@ -44,7 +53,7 @@ export function DashboardPage({ serviceMode = APP_MODE }: { serviceMode?: AppMod
           subtitle="Latest benchmark runs"
           icon={<ListTree className="h-4 w-4" />}
           action={
-            <Button size="sm" variant="ghost" rightIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => navigate('/runs')}>
+          <Button size="sm" variant="ghost" rightIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => navigate(isDemo ? '/demo/runs' : '/runs')}>
               View all
             </Button>
           }
@@ -73,16 +82,26 @@ export function DashboardPage({ serviceMode = APP_MODE }: { serviceMode?: AppMod
             }
           />
         ) : (
-          <RecentList runs={recent} />
+          <RecentList runs={recent} serviceMode={serviceMode} />
         )}
       </Card>
 
-      {!isDemo && runs.length === 0 && <ZeroActions />}
+      {!isDemo && runs.length === 0 && (
+        <ZeroActions canLaunch={canLaunch} canImport={canImport} />
+      )}
     </div>
   );
 }
 
-function PageHeading() {
+function PageHeading({
+  canLaunch,
+  canImport,
+  isDemo,
+}: {
+  canLaunch: boolean;
+  canImport: boolean;
+  isDemo: boolean;
+}) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
       <div>
@@ -102,9 +121,11 @@ function PageHeading() {
             Import
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={() => navigate('/compare')}>
-          Compare
-        </Button>
+        {!isDemo && (
+          <Button size="sm" variant="outline" onClick={() => navigate('/compare')}>
+            Compare
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -206,13 +227,25 @@ function ActiveRunBanner({ run }: { run: BenchmarkRun }) {
   );
 }
 
-function RecentList({ runs }: { runs: BenchmarkRun[] }) {
+function RecentList({
+  runs,
+  serviceMode,
+}: {
+  runs: BenchmarkRun[];
+  serviceMode: AppMode;
+}) {
   return (
     <ul className="divide-y divide-border-subtle">
       {runs.map((r) => (
         <li key={r.id}>
           <button
-            onClick={() => navigate(`/runs/${r.id}`)}
+            onClick={() =>
+              navigate(
+                serviceMode === 'demo'
+                  ? `/demo/runs/${r.id}`
+                  : `/runs/${r.id}`
+              )
+            }
             className="flex items-center gap-3 w-full py-3 text-left hover:bg-surface-raised/40 -mx-2 px-2 rounded-md transition-colors"
           >
             <StatusBadge status={r.status} size="sm" showDot />
@@ -244,7 +277,13 @@ function RecentMetric({ label, value }: { label: string; value: string | null })
   );
 }
 
-function ZeroActions() {
+function ZeroActions({
+  canLaunch,
+  canImport,
+}: {
+  canLaunch: boolean;
+  canImport: boolean;
+}) {
   return (
     <div className="grid sm:grid-cols-2 gap-3">
       {canLaunch && (

@@ -640,6 +640,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
 
+  /benchmark/capabilities:
+    get:
+      summary: Read benchmark runner capability
+      description: Returns only whether local benchmark execution is enabled. This is presentation metadata, not authorization.
+      security: []
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enabled]
+                properties:
+                  enabled: { type: boolean }
   /benchmark/runs:
     post:
       summary: Start benchmark run (local mode only; interim adapter seam)

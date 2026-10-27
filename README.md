@@ -41,11 +41,11 @@ Developers running local language models often produce one-off benchmark results
 This repository currently contains:
 
 - A React/Vite/TypeScript frontend with pages for Dashboard, Runs, Run Detail, Compare, Import, Profiles, and Benchmark.
-- A FastAPI backend with local profile, import, and run-history API routes plus `/health` and `/ready`.
+- A FastAPI backend with local profile, import, run-history, demo, and benchmark-capability API routes plus `/health` and `/ready`.
 - A hand-authored OpenAPI contract at `openapi.yaml`, derived from the frontend service interface.
 - Generated typed frontend contract artifacts at `frontend/src/types/api.generated.ts`.
 - Contract tests in `frontend/src/contract/` and `backend/tests/test_contract.py`.
-- A backend-independent mock frontend service for hosted/demo mode and benchmark runner workflows.
+- Environment-selected API services for local/hosted personal data, an anonymous read-only demo service, and mock fixtures for tests.
 - Docker Compose support for local backend, PostgreSQL, and OpenTelemetry/Prometheus/Loki/Tempo/Grafana.
 
 Backend domain routes are not yet implemented; the OpenAPI contract is the reconciliation target until FastAPI-generated OpenAPI becomes authoritative.

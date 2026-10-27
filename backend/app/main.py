@@ -161,6 +161,11 @@ def create_app(
         if engine is not None
         else None
     )
+
+    @app.get(f"{API_PREFIX}/benchmark/capabilities")
+    def benchmark_capabilities() -> dict[str, bool]:
+        return {"enabled": runner_enabled}
+
     if runner_enabled:
         from app.runner import router as runner_router
 

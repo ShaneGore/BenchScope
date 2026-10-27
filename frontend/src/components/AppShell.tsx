@@ -22,6 +22,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/demo', label: 'Demo', icon: LayoutDashboard },
   { to: '/runs', label: 'History', icon: ListTree },
   { to: '/compare', label: 'Compare', icon: BarChart3 },
   { to: '/profiles', label: 'Profiles', icon: UserCog },
@@ -38,19 +39,29 @@ const modeBadge: Record<string, { label: string; cls: string }> = {
 export function AppShell({
   currentPath,
   children,
+  launchEnabled = canLaunch,
+  publicOnly = false,
 }: {
   currentPath: string;
   children: ReactNode;
+  launchEnabled?: boolean;
+  publicOnly?: boolean;
 }) {
   useScrollTopOnRoute(currentPath);
-  const items = navItems.filter((n) => !n.localOnly || canLaunch);
+  const items = navItems.filter(
+    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo')
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
       <Header currentPath={currentPath} />
-      <MobileNav currentPath={currentPath} />
+      <MobileNav
+        currentPath={currentPath}
+        launchEnabled={launchEnabled}
+        publicOnly={publicOnly}
+      />
       <div className="flex flex-1 min-h-0">
-        <Sidebar items={items} currentPath={currentPath} />
+        <Sidebar items={items} currentPath={currentPath} launchEnabled={launchEnabled} />
         <main className="flex-1 min-w-0 overflow-x-hidden">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
             {children}
@@ -116,12 +127,15 @@ function Header({ currentPath }: { currentPath: string }) {
 function Sidebar({
   items,
   currentPath,
+  launchEnabled,
 }: {
   items: NavItem[];
   currentPath: string;
+  launchEnabled: boolean;
 }) {
   const isActive = (to: string) =>
     to === '/' ? currentPath === '/' : currentPath.startsWith(to);
+  const demo = isDemo || currentPath.startsWith('/demo');
 
   return (
     <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-border bg-surface/40 py-4 px-3 gap-0.5 sticky top-14 self-start h-[calc(100vh-3.5rem)] overflow-y-auto">
@@ -156,9 +170,9 @@ function Sidebar({
             <span className="text-[11px] font-medium">Mode: {modeLabel[APP_MODE]}</span>
           </div>
           <p className="mt-1.5 text-[10px] text-text-disabled leading-snug">
-            {isDemo
+            {demo
               ? 'Read-only synthetic dataset.'
-              : canLaunch
+              : launchEnabled
                 ? 'Full local workflow enabled.'
                 : 'Import & compare only.'}
           </p>
@@ -168,8 +182,18 @@ function Sidebar({
   );
 }
 
-export function MobileNav({ currentPath }: { currentPath: string }) {
-  const items = navItems.filter((n) => !n.localOnly || canLaunch);
+export function MobileNav({
+  currentPath,
+  launchEnabled = canLaunch,
+  publicOnly = false,
+}: {
+  currentPath: string;
+  launchEnabled?: boolean;
+  publicOnly?: boolean;
+}) {
+  const items = navItems.filter(
+    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo')
+  );
   const isActive = (to: string) =>
     to === '/' ? currentPath === '/' : currentPath.startsWith(to);
 

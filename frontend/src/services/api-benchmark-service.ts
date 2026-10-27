@@ -28,10 +28,6 @@ export function setApiSessionTokenProvider(
   sessionTokenProvider = provider;
 }
 
-export function hasApiSessionTokenProvider(): boolean {
-  return sessionTokenProvider !== undefined;
-}
-
 function mapProfile(profile: ApiProfile): ModelProfile {
   const config = profile.inference_config ?? {};
   return {

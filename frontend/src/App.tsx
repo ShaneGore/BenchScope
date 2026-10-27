@@ -1,7 +1,7 @@
+import { useEffect, useState } from 'react';
+import { useAuth } from '@clerk/react';
 import { AppShell } from '@/components/AppShell';
-import { MobileNav } from '@/components/AppShell';
-import { useHashRoute } from '@/lib/router';
-import { parseRoute } from '@/lib/router';
+import { useHashRoute, parseRoute, navigate } from '@/lib/router';
 import { APP_MODE } from '@/lib/mode';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { RunsPage } from '@/pages/RunsPage';
@@ -11,6 +11,7 @@ import { ProfilesPage } from '@/pages/ProfilesPage';
 import { ImportPage } from '@/pages/ImportPage';
 import { BenchmarkPage } from '@/pages/BenchmarkPage';
 import { SignIn, SignUp } from '@clerk/react';
+import { getBenchmarkCapability } from '@/services/runner-service';
 
 function SignInPage() {
   if (APP_MODE === 'hosted') {
@@ -63,23 +64,95 @@ function getQuery(path: string): Record<string, string> {
 }
 
 export default function App() {
+  return APP_MODE === 'hosted' ? <HostedApp /> : <ModeApp />;
+}
+
+function ModeApp() {
   const path = useHashRoute();
+  const [capability, setCapability] = useState<boolean | null>(
+    APP_MODE === 'local' ? null : false
+  );
+
+  useEffect(() => {
+    if (APP_MODE === 'local') {
+      void getBenchmarkCapability().then(setCapability);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (path === '/benchmark' && APP_MODE === 'local' && capability === false) {
+      navigate('/');
+    }
+  }, [path, capability]);
+
+  return (
+    <AppRoutes
+      path={path}
+      runnerEnabled={capability === true}
+      publicOnly={APP_MODE === 'demo' || path.startsWith('/demo')}
+    />
+  );
+}
+
+function HostedApp() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const path = useHashRoute();
+  const route = parseRoute(path);
+  const protectedRoute = [
+    'dashboard',
+    'runs',
+    'run-detail',
+    'compare',
+    'profiles',
+    'import',
+  ].includes(route.name);
+  const redirect =
+    route.name === 'benchmark'
+      ? isSignedIn
+        ? '/'
+        : '/demo'
+      : !isSignedIn && route.name === 'dashboard'
+        ? '/demo'
+        : !isSignedIn && protectedRoute
+          ? '/sign-in'
+          : null;
+
+  useEffect(() => {
+    if (isLoaded && redirect) navigate(redirect);
+  }, [isLoaded, redirect]);
+
+  if (!isLoaded || redirect) return null;
+  return <AppRoutes path={path} runnerEnabled={false} publicOnly={!isSignedIn} />;
+}
+
+function AppRoutes({
+  path,
+  runnerEnabled,
+  publicOnly,
+}: {
+  path: string;
+  runnerEnabled: boolean;
+  publicOnly: boolean;
+}) {
   const route = parseRoute(path);
   const query = getQuery(path);
 
   let page: React.ReactNode = null;
   switch (route.name) {
     case 'dashboard':
-      page = <DashboardPage />;
+      page = <DashboardPage benchmarkEnabled={runnerEnabled} />;
       break;
     case 'demo':
       page = <DashboardPage serviceMode="demo" />;
+      break;
+    case 'demo-run-detail':
+      page = <RunDetailPage id={route.params.id} serviceMode="demo" />;
       break;
     case 'runs':
       page = <RunsPage initialStatus={query.status} />;
       break;
     case 'run-detail':
-      page = <RunDetailPage id={route.params.id} />;
+      page = <RunDetailPage id={route.params.id} runnerEnabled={runnerEnabled} />;
       break;
     case 'compare': {
       const ids = (query.ids ?? '').split(',').filter(Boolean);
@@ -93,7 +166,7 @@ export default function App() {
       page = <ImportPage />;
       break;
     case 'benchmark':
-      page = <BenchmarkPage />;
+      page = runnerEnabled ? <BenchmarkPage runnerEnabled /> : null;
       break;
     case 'sign-in':
       page = <SignInPage />;
@@ -106,8 +179,11 @@ export default function App() {
   }
 
   return (
-    <AppShell currentPath={path}>
-      <MobileNav currentPath={path} />
+    <AppShell
+      currentPath={path}
+      launchEnabled={APP_MODE === 'local' && runnerEnabled}
+      publicOnly={publicOnly || APP_MODE === 'demo' || path.startsWith('/demo')}
+    >
       {page}
     </AppShell>
   );

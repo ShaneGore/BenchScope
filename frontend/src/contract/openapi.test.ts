@@ -77,6 +77,7 @@ test("contract exposes required endpoints", () => {
   expectTypeOf<paths>().toHaveProperty("/api/v1/runs/compare");
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs");
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs/{id}");
+  expectTypeOf<paths>().toHaveProperty("/benchmark/capabilities");
   expectTypeOf<paths>().toHaveProperty("/runs/{id}/retry");
   expectTypeOf<paths>().not.toHaveProperty("/benchmark/runs/{id}/cancel");
   expectTypeOf<paths>().toHaveProperty("/api/v1/demo/runs");

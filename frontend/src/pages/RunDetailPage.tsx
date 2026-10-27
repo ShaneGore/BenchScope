@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import type { ApiError, BenchmarkRun } from '@/types';
-import { getStore } from '@/mock/store';
 import { getBenchmarkService } from '@/services/benchmark-service';
-import { APP_MODE, canDelete, canRetry } from '@/lib/mode';
+import { LocalRunnerService } from '@/services/runner-service';
+import { APP_MODE, canDelete } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
 import { usePolling } from '@/lib/hooks';
 import { fmtDate, fmtElapsed } from '@/lib/format';
@@ -14,9 +14,18 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
-export function RunDetailPage({ id }: { id: string }) {
-  const store = getBenchmarkService(APP_MODE);
-  const runner = getStore(APP_MODE);
+export function RunDetailPage({
+  id,
+  serviceMode = APP_MODE,
+  runnerEnabled = false,
+}: {
+  id: string;
+  serviceMode?: typeof APP_MODE | 'demo';
+  runnerEnabled?: boolean;
+}) {
+  const store = getBenchmarkService(serviceMode);
+  const canDeleteRun = serviceMode !== 'demo' && canDelete;
+  const canRetryRun = serviceMode === 'local' && runnerEnabled;
   const [run, setRun] = useState<BenchmarkRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -62,8 +71,8 @@ export function RunDetailPage({ id }: { id: string }) {
           title="Run not found"
           description={`No run exists with id ${id}.`}
           action={
-            <Button size="sm" variant="ghost" onClick={() => navigate('/runs')}>
-              Back to history
+            <Button size="sm" variant="ghost" onClick={() => navigate(serviceMode === 'demo' ? '/demo' : '/runs')}>
+              {serviceMode === 'demo' ? 'Back to demo' : 'Back to history'}
             </Button>
           }
         />
@@ -90,7 +99,7 @@ export function RunDetailPage({ id }: { id: string }) {
     setBusy(true);
     setActionError(null);
     try {
-      const next = await runner.retryRun(run.id);
+      const next = await new LocalRunnerService().retry(run.id);
       navigate(`/runs/${next.id}`);
     } catch (e) {
       setActionError((e as ApiError).detail?.toString?.() ?? 'Retry failed');
@@ -105,7 +114,7 @@ export function RunDetailPage({ id }: { id: string }) {
     <div className="flex flex-col gap-6 animate-fadeIn">
       <div className="flex items-center gap-3">
         <button
-          {...linkProps('/runs')}
+          {...linkProps(serviceMode === 'demo' ? '/demo' : '/runs')}
           className="text-text-muted hover:text-text-primary transition-colors"
           aria-label="Back to history"
         >
@@ -229,7 +238,7 @@ export function RunDetailPage({ id }: { id: string }) {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {isFailed && canRetry && (
+        {isFailed && canRetryRun && (
           <Button
             variant="primary"
             leftIcon={<RefreshCw className="h-4 w-4" />}
@@ -239,14 +248,16 @@ export function RunDetailPage({ id }: { id: string }) {
             Retry run
           </Button>
         )}
-        {canDelete && (
+        {canDeleteRun && (
           <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleteOpen(true)}>
             Delete
           </Button>
         )}
-        <Button variant="ghost" onClick={() => navigate(`/compare?ids=${run.id}`)}>
-          Compare
-        </Button>
+        {serviceMode !== 'demo' && (
+          <Button variant="ghost" onClick={() => navigate(`/compare?ids=${run.id}`)}>
+            Compare
+          </Button>
+        )}
       </div>
 
       {deleteOpen && (

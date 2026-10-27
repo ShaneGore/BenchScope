@@ -28,8 +28,9 @@ function ClerkSession({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     if (!isLoaded) return;
-    setApiSessionTokenProvider(isSignedIn ? () => getToken() : undefined);
+    setApiSessionTokenProvider(undefined);
     resetStore('hosted');
+    if (isSignedIn) setApiSessionTokenProvider(() => getToken());
     setActiveUserId(userId ?? null);
     return () => {
       setApiSessionTokenProvider(undefined);

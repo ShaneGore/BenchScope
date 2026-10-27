@@ -251,7 +251,7 @@ test('local mode still selects the API service', async () => {
   expect(localMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:8000/api/v1/runs');
 });
 
-test('running hosted service sends a session token and never fetches while signed out or in demo', async () => {
+test('hosted service requires the current token and demo never selects personal APIs', async () => {
   const fetcher = vi.fn(
     async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse([profile])
   );
@@ -266,9 +266,14 @@ test('running hosted service sends a session token and never fetches while signe
     });
 
     setApiSessionTokenProvider(undefined);
-    expect((await getBenchmarkService('hosted').listProfiles()).length).toBeGreaterThan(0);
-    setApiSessionTokenProvider(async () => 'hosted-session-jwt');
-    expect((await getBenchmarkService('demo').listProfiles()).length).toBeGreaterThan(0);
+    await expect(getBenchmarkService('hosted').listProfiles()).rejects.toEqual({
+      status: 401,
+      detail: 'Not authenticated',
+    });
+    await expect(getBenchmarkService('demo').listProfiles()).rejects.toEqual({
+      status: 403,
+      detail: 'Demo is read-only',
+    });
     expect(fetcher).toHaveBeenCalledOnce();
 
     setApiSessionTokenProvider(async () => null);

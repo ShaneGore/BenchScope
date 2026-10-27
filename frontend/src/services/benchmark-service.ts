@@ -9,8 +9,8 @@ import type {
 import { getStore } from '@/mock/store';
 import {
   ApiBenchmarkService,
-  hasApiSessionTokenProvider,
 } from './api-benchmark-service';
+import { DemoBenchmarkService } from './demo-benchmark-service';
 
 export interface BenchmarkService {
   listProfiles(): Promise<ModelProfile[]>;
@@ -30,16 +30,17 @@ export interface BenchmarkService {
 export function createBenchmarkService(
   mode: AppMode,
   apiUrl: string | undefined,
-  fetcher: typeof fetch = fetch
+  fetcher?: typeof fetch
 ): BenchmarkService {
-  if (mode === 'local') return new ApiBenchmarkService(apiUrl ?? '', fetcher);
-  if (mode === 'hosted' && hasApiSessionTokenProvider()) {
-    return new ApiBenchmarkService(apiUrl ?? '', fetcher, true);
-  }
+  if (mode === 'local') return new ApiBenchmarkService(apiUrl ?? '', fetcher ?? fetch);
+  if (mode === 'demo') return new DemoBenchmarkService(apiUrl ?? '', fetcher);
+  if (mode === 'hosted') return new ApiBenchmarkService(apiUrl ?? '', fetcher ?? fetch, true);
   return getStore(mode);
 }
 
 let localService: BenchmarkService | null = null;
+let hostedService: BenchmarkService | null = null;
+let demoService: BenchmarkService | null = null;
 
 export function getBenchmarkService(mode: AppMode): BenchmarkService {
   if (mode === 'local') {
@@ -48,5 +49,14 @@ export function getBenchmarkService(mode: AppMode): BenchmarkService {
     }
     return localService;
   }
-  return createBenchmarkService(mode, import.meta.env.VITE_API_URL);
+  if (mode === 'demo') {
+    if (!demoService) {
+      demoService = createBenchmarkService(mode, import.meta.env.VITE_API_URL);
+    }
+    return demoService;
+  }
+  if (!hostedService) {
+    hostedService = createBenchmarkService(mode, import.meta.env.VITE_API_URL);
+  }
+  return hostedService;
 }

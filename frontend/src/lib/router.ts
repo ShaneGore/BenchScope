@@ -35,6 +35,10 @@ export function parseRoute(path: string): { name: string; params: Record<string,
   const segments = path.split('?')[0].split('/').filter(Boolean);
   if (segments.length === 0) return { name: 'dashboard', params: {} };
   const [first, second] = segments;
+  if (first === 'demo' && second === 'runs' && segments[2]) {
+    return { name: 'demo-run-detail', params: { id: segments[2] } };
+  }
+  if (first === 'demo' && second === 'runs') return { name: 'demo', params: {} };
   if (first === 'runs' && second) return { name: 'run-detail', params: { id: second } };
   if (first === 'runs') return { name: 'runs', params: {} };
   const known = [

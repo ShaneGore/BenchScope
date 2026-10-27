@@ -20,6 +20,11 @@
   - `/demo` — anonymous read-only synthetic dataset
   - `/sign-in`, `/sign-up` — Clerk
 
+  The local frontend queries `GET /api/v1/benchmark/capabilities` before exposing
+  benchmark launch controls. A false or failed check hides the controls; backend
+  route mounting remains authoritative. Hosted mode never queries capability or
+  runner endpoints. The demo uses only the anonymous read-only demo run endpoints.
+
 ## 3. Auth gating
 
 - Protected routes check Clerk auth state; unauthenticated users redirect to sign-in (except `/demo`).
