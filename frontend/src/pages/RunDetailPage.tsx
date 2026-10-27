@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import type { ApiError, BenchmarkRun } from '@/types';
 import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { APP_MODE, canCancel, canDelete, canRetry } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
 import { usePolling } from '@/lib/hooks';
@@ -14,7 +15,8 @@ import { Modal } from '@/components/ui/Modal';
 import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function RunDetailPage({ id }: { id: string }) {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
+  const runner = getStore(APP_MODE);
   const [run, setRun] = useState<BenchmarkRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -88,7 +90,7 @@ export function RunDetailPage({ id }: { id: string }) {
     setBusy(true);
     setActionError(null);
     try {
-      const next = await store.retryRun(run.id);
+      const next = await runner.retryRun(run.id);
       navigate(`/runs/${next.id}`);
     } catch (e) {
       setActionError((e as ApiError).detail?.toString?.() ?? 'Retry failed');
@@ -101,7 +103,7 @@ export function RunDetailPage({ id }: { id: string }) {
     setBusy(true);
     setActionError(null);
     try {
-      const updated = await store.cancelRun(run.id);
+      const updated = await runner.cancelRun(run.id);
       setRun(updated);
     } catch (e) {
       setActionError((e as ApiError).detail?.toString?.() ?? 'Cancel failed');
@@ -318,4 +320,3 @@ function RunDetailSkeleton() {
     </div>
   );
 }
-

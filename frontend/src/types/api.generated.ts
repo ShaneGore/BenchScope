@@ -83,7 +83,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/profiles": {
+    "/api/v1/profiles": {
         parameters: {
             query?: never;
             header?: never;
@@ -155,7 +155,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/profiles/{id}": {
+    "/api/v1/profiles/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -294,7 +294,7 @@ export interface paths {
         };
         trace?: never;
     };
-    "/runs": {
+    "/api/v1/runs": {
         parameters: {
             query?: never;
             header?: never;
@@ -360,7 +360,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/{id}": {
+    "/api/v1/runs/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -451,7 +451,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/import": {
+    "/api/v1/runs/import": {
         parameters: {
             query?: never;
             header?: never;
@@ -593,7 +593,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/runs/compare": {
+    "/api/v1/runs/compare": {
         parameters: {
             query?: never;
             header?: never;
@@ -1103,10 +1103,9 @@ export interface components {
             ok: false;
             status: number;
             errors: {
-                field?: string;
+                field: string;
                 message: string;
             }[];
-            existingRun?: components["schemas"]["BenchmarkRun"];
         };
         BenchmarkStartRequest: {
             profile_id: string;

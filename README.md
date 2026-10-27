@@ -41,11 +41,11 @@ Developers running local language models often produce one-off benchmark results
 This repository currently contains:
 
 - A React/Vite/TypeScript frontend with pages for Dashboard, Runs, Run Detail, Compare, Import, Profiles, and Benchmark.
-- A FastAPI backend shell with `/health` and `/ready` endpoints.
+- A FastAPI backend with local profile, import, and run-history API routes plus `/health` and `/ready`.
 - A hand-authored OpenAPI contract at `openapi.yaml`, derived from the frontend service interface.
 - Generated typed frontend contract artifacts at `frontend/src/types/api.generated.ts`.
 - Contract tests in `frontend/src/contract/` and `backend/tests/test_contract.py`.
-- A mock frontend service backed by browser storage for development and tests.
+- A backend-independent mock frontend service for hosted/demo mode and benchmark runner workflows.
 - Docker Compose support for local backend plus PostgreSQL.
 
 Backend domain routes are not yet implemented; the OpenAPI contract is the reconciliation target until FastAPI-generated OpenAPI becomes authoritative.
@@ -132,8 +132,8 @@ Compose builds the backend from `backend/` and runs PostgreSQL in a private Comp
 
    ```sh
    docker compose ps
-   curl http://127.0.0.1:8000/health
-   curl http://127.0.0.1:8000/ready
+   curl http://127.0.0.1:8001/health
+   curl http://127.0.0.1:8001/ready
    ```
 
 4. Stop while retaining data:
@@ -163,6 +163,47 @@ $env:TEST_DATABASE_URL = $env:DATABASE_URL
 uv run pytest tests/test_postgres_storage.py
 Remove-Item Env:DATABASE_URL, Env:TEST_DATABASE_URL
 ```
+
+### Local frontend/API browser smoke
+
+The local-mode frontend uses `VITE_API_URL` for the FastAPI origin. Hosted/demo
+mode and benchmark runner operations continue to use the mock. In PowerShell,
+start the existing Compose database/API services and apply the database
+migrations from the host (the API image does not run migrations):
+
+```powershell
+$env:POSTGRES_DB = "benchscope"
+$env:POSTGRES_USER = "benchscope"
+$env:POSTGRES_PASSWORD = "choose-a-local-url-safe-password"
+$env:API_PORT = "8001"
+$env:POSTGRES_PORT = "5433"
+docker compose up --build --wait --detach
+
+$env:DATABASE_URL = "postgresql+psycopg://$($env:POSTGRES_USER):$($env:POSTGRES_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/$($env:POSTGRES_DB)"
+Push-Location backend
+uv run alembic upgrade head
+Pop-Location
+Invoke-RestMethod http://127.0.0.1:8001/health
+Invoke-RestMethod http://127.0.0.1:8001/ready
+```
+
+In a second terminal, start Vite with the local API origin:
+
+```powershell
+$env:VITE_APP_MODE = "local"
+$env:VITE_API_URL = "http://127.0.0.1:8001"
+Push-Location frontend
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev -- --host 127.0.0.1
+```
+
+Open the printed Vite URL and manually verify: create, edit, list, and delete a
+profile; import two normalized `benchscope.run.v1` JSON files with distinct
+`source_run_id` values; filter by status, model, and dates; open a run detail;
+select the two imported runs for comparison; then delete one from its detail or
+history. Confirm an unmatched filter shows the empty history state and null
+metrics display as unavailable. This is a browser smoke procedure, not an
+automated Playwright test (Playwright is not a project dependency).
 
 Pre-auth local storage fixtures use the fixed owner id `local`; owner ids are
 not accepted from callers.

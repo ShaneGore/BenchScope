@@ -69,21 +69,21 @@ test("generated contract types compile for representative payloads", () => {
 
 test("contract exposes required endpoints", () => {
   expectTypeOf<paths>().toHaveProperty("/health");
-  expectTypeOf<paths>().toHaveProperty("/profiles");
-  expectTypeOf<paths>().toHaveProperty("/profiles/{id}");
-  expectTypeOf<paths>().toHaveProperty("/runs");
-  expectTypeOf<paths>().toHaveProperty("/runs/import");
-  expectTypeOf<paths>().toHaveProperty("/runs/compare");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/profiles");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/profiles/{id}");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/runs");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/runs/import");
+  expectTypeOf<paths>().toHaveProperty("/api/v1/runs/compare");
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs");
   expectTypeOf<paths>().toHaveProperty("/demo/runs");
 });
 
 test("profile contract has CRUD operations and excludes unapproved fields", () => {
-  expectTypeOf<paths["/profiles"]["get"]>().not.toBeNever();
-  expectTypeOf<paths["/profiles"]["post"]>().not.toBeNever();
-  expectTypeOf<paths["/profiles/{id}"]["get"]>().not.toBeNever();
-  expectTypeOf<paths["/profiles/{id}"]["patch"]>().not.toBeNever();
-  expectTypeOf<paths["/profiles/{id}"]["delete"]>().not.toBeNever();
+  expectTypeOf<paths["/api/v1/profiles"]["get"]>().not.toBeNever();
+  expectTypeOf<paths["/api/v1/profiles"]["post"]>().not.toBeNever();
+  expectTypeOf<paths["/api/v1/profiles/{id}"]["get"]>().not.toBeNever();
+  expectTypeOf<paths["/api/v1/profiles/{id}"]["patch"]>().not.toBeNever();
+  expectTypeOf<paths["/api/v1/profiles/{id}"]["delete"]>().not.toBeNever();
   expectTypeOf<ModelProfile>().not.toHaveProperty("api_key_ref");
   expectTypeOf<ProfileCreate>().not.toHaveProperty("owner_id");
 });

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Filter, ListTree, X } from 'lucide-react';
 import type { RunFilters, RunStatus } from '@/types';
-import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { useAsync } from '@/lib/hooks';
 import { APP_MODE, canDelete } from '@/lib/mode';
 import { navigate } from '@/lib/router';
@@ -25,9 +25,13 @@ const STATUS_OPTIONS: { value: RunStatus; label: string }[] = [
   { value: 'interrupted', label: 'Interrupted' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
+const FILTER_STATUS_OPTIONS =
+  APP_MODE === 'local'
+    ? STATUS_OPTIONS.filter((option) => option.value !== 'cancelled')
+    : STATUS_OPTIONS;
 
 export function RunsPage({ initialStatus }: { initialStatus?: string }) {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
   const [filters, setFilters] = useState<RunFilters>({
     status: (initialStatus as RunStatus) || null,
     model: null,
@@ -37,6 +41,7 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const queryKey = JSON.stringify(filters);
   const { data, loading, error, refetch } = useAsync(
@@ -45,12 +50,6 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
   );
 
   const runs = data?.items ?? [];
-  const models = useMemo(() => {
-    const set = new Set<string>();
-    demoModelOptions.forEach((m) => set.add(m));
-    return Array.from(set);
-  }, []);
-
   const completedSelected = selected.size >= 2;
   const toggleSelect = (id: string, status: RunStatus) => {
     if (status !== 'completed') return;
@@ -83,7 +82,6 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
       <FilterBar
         filters={filters}
         onChange={setFilters}
-        models={models}
         onClear={() => {
           setFilters({ status: null, model: null, from: null, to: null, limit: 50 });
           setSelected(new Set());
@@ -125,16 +123,25 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
       {deleteId && (
         <DeleteConfirm
           runId={deleteId}
-          onClose={() => setDeleteId(null)}
-          onConfirm={async () => {
-            await store.deleteRun(deleteId);
-            setSelected((p) => {
-              const n = new Set(p);
-              n.delete(deleteId);
-              return n;
-            });
+          error={deleteError}
+          onClose={() => {
             setDeleteId(null);
-            refetch();
+            setDeleteError(null);
+          }}
+          onConfirm={async () => {
+            try {
+              await store.deleteRun(deleteId);
+              setSelected((p) => {
+                const n = new Set(p);
+                n.delete(deleteId);
+                return n;
+              });
+              setDeleteId(null);
+              setDeleteError(null);
+              refetch();
+            } catch (e) {
+              setDeleteError(String((e as import('@/types').ApiError).detail ?? 'Delete failed'));
+            }
           }}
         />
       )}
@@ -142,23 +149,13 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
   );
 }
 
-const demoModelOptions = [
-  'llama-3.1-8b-instruct',
-  'mistral-7b-instruct',
-  'phi-3-mini-4k-instruct',
-  'llama-3.1-70b-instruct',
-  'qwen2.5-14b-instruct',
-];
-
 function FilterBar({
   filters,
   onChange,
-  models,
   onClear,
 }: {
   filters: RunFilters;
   onChange: (f: RunFilters) => void;
-  models: string[];
   onClear: () => void;
 }) {
   const set = (patch: Partial<RunFilters>) => onChange({ ...filters, ...patch });
@@ -181,21 +178,17 @@ function FilterBar({
             onChange={(e) => set({ status: (e.target.value as RunStatus) || null })}
           >
             <option value="">All statuses</option>
-            {STATUS_OPTIONS.map((o) => (
+            {FILTER_STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </Select>
         </Field>
         <Field label="Model">
-          <Select
+          <TextInput
             value={filters.model ?? ''}
+            placeholder="Exact model name"
             onChange={(e) => set({ model: e.target.value || null })}
-          >
-            <option value="">All models</option>
-            {models.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </Select>
+          />
         </Field>
         <Field label="From date">
           <TextInput
@@ -341,10 +334,12 @@ function RunsSkeleton() {
 
 function DeleteConfirm({
   runId,
+  error,
   onClose,
   onConfirm,
 }: {
   runId: string;
+  error: string | null;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -363,8 +358,11 @@ function DeleteConfirm({
             loading={busy}
             onClick={async () => {
               setBusy(true);
-              await onConfirm();
-              setBusy(false);
+              try {
+                await onConfirm();
+              } finally {
+                setBusy(false);
+              }
             }}
           >
             Delete
@@ -373,8 +371,7 @@ function DeleteConfirm({
       }
     >
       <p>This will permanently remove run <span className="font-mono text-text-primary">{runId}</span> from your history. This action cannot be undone.</p>
+      {error && <p className="mt-3 text-sm text-status-failed-fg">{error}</p>}
     </Modal>
   );
 }
-
-

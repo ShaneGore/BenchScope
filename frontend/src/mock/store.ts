@@ -16,6 +16,7 @@ import {
   demoRuns,
   newId,
 } from './fixtures';
+import type { BenchmarkService } from '@/services/benchmark-service';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const jitter = (base: number) => base + Math.floor(Math.random() * base * 0.4);
@@ -39,7 +40,7 @@ function matchesFilters(r: BenchmarkRun, f: RunFilters): boolean {
   return true;
 }
 
-class MockStore {
+class MockStore implements BenchmarkService {
   private runs: BenchmarkRun[] = clone(demoRuns);
   private profiles: ModelProfile[] = clone(demoProfiles);
   private activeRunId: string | null = null;
@@ -56,6 +57,13 @@ class MockStore {
     await delay(jitter(120));
     if (this.mode === 'demo') return this.stripEndpointFields(this.profiles);
     return clone(this.profiles);
+  }
+
+  async getProfile(id: string): Promise<ModelProfile> {
+    await delay(jitter(100));
+    const profile = this.profiles.find((item) => item.id === id);
+    if (!profile) return fail(404, 'Profile not found');
+    return clone(profile);
   }
 
   private stripEndpointFields(ps: ModelProfile[]): ModelProfile[] {

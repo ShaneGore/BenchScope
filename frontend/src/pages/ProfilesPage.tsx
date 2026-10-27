@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pencil, Plus, Trash2, UserCog } from 'lucide-react';
 import type { ApiError, ModelProfile } from '@/types';
-import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { APP_MODE, canDelete, canEditProfiles, showEndpointFields } from '@/lib/mode';
 import { useAsync } from '@/lib/hooks';
 import { Button } from '@/components/ui/Button';
@@ -17,7 +17,6 @@ interface ProfileFormState {
   context_length: string;
   inference_engine: string;
   endpoint_url: string;
-  api_key_ref: string;
 }
 
 const emptyForm: ProfileFormState = {
@@ -27,7 +26,6 @@ const emptyForm: ProfileFormState = {
   context_length: '',
   inference_engine: '',
   endpoint_url: '',
-  api_key_ref: '',
 };
 
 function fromProfile(p: ModelProfile): ProfileFormState {
@@ -38,7 +36,6 @@ function fromProfile(p: ModelProfile): ProfileFormState {
     context_length: p.context_length != null ? String(p.context_length) : '',
     inference_engine: p.inference_engine ?? '',
     endpoint_url: p.endpoint_url ?? '',
-    api_key_ref: p.api_key_ref ?? '',
   };
 }
 
@@ -50,12 +47,11 @@ function toPayload(f: ProfileFormState): Omit<ModelProfile, 'id' | 'owner_id' | 
     context_length: f.context_length.trim() ? Number(f.context_length) : null,
     inference_engine: f.inference_engine.trim() || null,
     endpoint_url: showEndpointFields ? f.endpoint_url.trim() || null : null,
-    api_key_ref: showEndpointFields ? f.api_key_ref.trim() || null : null,
   };
 }
 
 export function ProfilesPage() {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
   const { data, loading, error, refetch } = useAsync(() => store.listProfiles(), []);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ModelProfile | null>(null);
@@ -316,12 +312,6 @@ export function ProfilesPage() {
                   onChange={(e) => setForm({ ...form, endpoint_url: e.target.value })}
                 />
               </Field>
-              <Field label="API key reference">
-                <TextInput
-                  value={form.api_key_ref}
-                  onChange={(e) => setForm({ ...form, api_key_ref: e.target.value })}
-                />
-              </Field>
             </>
           )}
         </div>
@@ -350,4 +340,3 @@ export function ProfilesPage() {
     </div>
   );
 }
-

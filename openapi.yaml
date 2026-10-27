@@ -244,11 +244,10 @@ components:
               type: array
               items:
                 type: object
-                required: [message]
+                required: [field, message]
                 properties:
                   field: { type: string }
                   message: { type: string }
-            existingRun: { $ref: "#/components/schemas/BenchmarkRun" }
     BenchmarkStartRequest:
       type: object
       required: [profile_id, config]
@@ -278,7 +277,7 @@ paths:
           description: Service is ready
         "503":
           description: Service is not ready
-  /profiles:
+  /api/v1/profiles:
     get:
       summary: List own profiles
       security: []
@@ -310,7 +309,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
-  /profiles/{id}:
+  /api/v1/profiles/{id}:
     parameters:
       - name: id
         in: path
@@ -369,7 +368,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
-  /runs:
+  /api/v1/runs:
     get:
       summary: List own runs
       description: >-
@@ -413,7 +412,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
-  /runs/{id}:
+  /api/v1/runs/{id}:
     parameters:
       - name: id
         in: path
@@ -442,7 +441,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiError" }
-  /runs/import:
+  /api/v1/runs/import:
     post:
       summary: Import result JSON
       description: >-
@@ -495,7 +494,7 @@ paths:
         "403": { description: Not available in this mode }
         "404": { description: Not found }
         "409": { description: A benchmark run is already active }
-  /runs/compare:
+  /api/v1/runs/compare:
     get:
       summary: Compare completed runs
       description: >-

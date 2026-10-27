@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import type { BenchmarkRun } from '@/types';
-import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { APP_MODE } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
 import { useAsync } from '@/lib/hooks';
@@ -11,7 +11,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
 
 export function ComparePage({ ids }: { ids: string[] }) {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
   const validIds = ids.filter(Boolean);
   const queryKey = validIds.join(',');
   const { data, loading, error, refetch } = useAsync(

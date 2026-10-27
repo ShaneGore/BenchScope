@@ -6,7 +6,7 @@ import {
   Upload,
 } from 'lucide-react';
 import type { BenchmarkRun } from '@/types';
-import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { useAsync } from '@/lib/hooks';
 import { APP_MODE, canImport, canLaunch, isDemo } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
@@ -18,7 +18,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function DashboardPage() {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
   const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), []);
 
   const summary = useMemo(() => computeSummary(data?.items ?? []), [data]);
@@ -292,5 +292,4 @@ function DashboardSkeleton() {
     </div>
   );
 }
-
 

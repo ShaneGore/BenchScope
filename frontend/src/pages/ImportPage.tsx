@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { FileUp, Upload } from 'lucide-react';
 import type { ApiError, BenchmarkRun, ImportError } from '@/types';
-import { getStore } from '@/mock/store';
+import { getBenchmarkService } from '@/services/benchmark-service';
 import { APP_MODE, canImport } from '@/lib/mode';
 import { navigate } from '@/lib/router';
 import { fmtDate } from '@/lib/format';
@@ -11,14 +11,14 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/State';
 
 export function ImportPage() {
-  const store = getStore(APP_MODE);
+  const store = getBenchmarkService(APP_MODE);
   const [file, setFile] = useState<File | null>(null);
   const [payload, setPayload] = useState<unknown>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<
     | { kind: 'success'; run: BenchmarkRun }
-    | { kind: 'duplicate'; run: BenchmarkRun }
+    | { kind: 'duplicate'; run?: BenchmarkRun }
     | { kind: 'error'; status: number; errors: ImportError[] }
     | null
   >(null);
@@ -58,7 +58,7 @@ export function ImportPage() {
       const res = await store.importRun(payload);
       if (res.ok) {
         setResult({ kind: 'success', run: res.run });
-      } else if (res.status === 409 && res.existingRun) {
+      } else if (res.status === 409) {
         setResult({ kind: 'duplicate', run: res.existingRun });
       } else {
         setResult({ kind: 'error', status: res.status, errors: res.errors });
@@ -146,9 +146,11 @@ export function ImportPage() {
           <p className="text-sm text-text-secondary mb-3">
             This result already exists in your history.
           </p>
-          <Button size="sm" variant="ghost" onClick={() => navigate(`/runs/${result.run.id}`)}>
-            View existing run
-          </Button>
+          {result.run && (
+            <Button size="sm" variant="ghost" onClick={() => navigate(`/runs/${result.run?.id}`)}>
+              View existing run
+            </Button>
+          )}
         </Card>
       )}
 
