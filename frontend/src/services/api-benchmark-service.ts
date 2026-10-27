@@ -96,9 +96,15 @@ function mapRun(run: ApiRun): BenchmarkRun {
     },
     benchmark_config: {
       name: config.name,
+      temperature: config.temperature,
       max_tokens: config.max_tokens,
       concurrency: config.concurrency,
       prompt_set: config.prompt_set,
+      reasoning: config.reasoning,
+      mtp: config.mtp,
+      ctx: config.ctx,
+      seed: config.seed,
+      repeat_index: config.repeat_index,
     } as BenchmarkConfig,
     ended_at: run.ended_at ?? null,
     related_run_id: run.related_run_id ?? null,
@@ -119,6 +125,8 @@ function mapRun(run: ApiRun): BenchmarkRun {
       elapsed_ms: run.metrics.elapsed_ms ?? null,
     },
     hardware_snapshot: run.hardware_snapshot ?? null,
+    benchmark_details: run.benchmark_details ?? null,
+    task_results: run.task_results ?? null,
   };
 }
 

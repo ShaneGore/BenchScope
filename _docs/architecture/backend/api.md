@@ -42,7 +42,7 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   A trusted exporter must normalize completed-run data before upload; private
   per-trial JSONL is not accepted and aggregate metrics are never derived here.
   The request requires a profile snapshot, named benchmark config, and
-  timezone-aware start/end timestamps. Only `temperature`, `max_tokens`,
+  timezone-aware start/end timestamps. In v1, only `temperature`, `max_tokens`,
   `reasoning`, `mtp`, `ctx`, and `seed` are accepted as config settings.
   Canonical metrics may be omitted or null; values are passed through, never
   derived, and missing values remain null. Unknown fields are rejected at every
@@ -55,6 +55,26 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   up to `MAX_UPLOAD_BYTES` (default 1 MiB, configurable via Pydantic settings).
   Returns the existing `ImportResult` success shape (`201`) or errors (`409`
   duplicate, `413` too large, `422` malformed/unsupported/invalid request).
+  `benchscope.run.v1` request and duplicate behavior are unchanged. The same
+  route also accepts strict `benchscope.run.v2`: it requires the same safe
+  profile/configuration and operator-supplied timezone-aware start/end, plus
+  `benchmark_details` (`benchmark_id`, manifest `release`, lowercase SHA-256
+  `manifest_sha256`, and unique canonical safe `expected_task_ids`) and unique
+  `{task_id, passed}` results whose IDs are a subset of the expected set.
+  Incomplete coverage is accepted; `pass_rate` is computed only for complete
+  coverage and otherwise null. `quality_score` and all other metrics remain
+  null for v2; token counts, TTFT, and throughput are not inferred. The owner
+  scoped v2 fingerprint has a separate `benchscope.run.v2` namespace. Responses
+  expose `benchmark_details` and `task_results` on import, history, detail, and
+  comparison. A local stdlib exporter at
+  `backend/scripts/export_private_jsonl.py` maps manifest aliases to safe
+  `release_id` values and emits only the v2 allowlist; it requires explicit
+  operator-provided start/end timestamps, reads `release` from the manifest,
+  and requires a selected seed/repeat group; both seed and repeat index are
+  preserved in the allowlisted v2 benchmark config so distinct groups remain
+  distinct imports. The manifest task-card shape is
+  `tasks: [{release_id, aliases?}]`; only canonical `release_id` values enter
+  the export.
 - `POST /runs/{id}/retry` — create a new attempt linked to a failed run (local mode only; hosted returns 403/404).
 
 ### Benchmark (local mode only)
@@ -85,6 +105,10 @@ The interim config UUID is opaque; no config catalog or private adapter mapping 
   the authenticated owner. Otherwise it returns only completed runs in input order;
   failed, interrupted, and running runs are excluded. Fewer than two completed
   runs returns 422. Null metrics remain null; no aggregation or zero coercion occurs.
+  Per-task comparisons are meaningful only when every selected v2 run has the
+  same benchmark ID, release, manifest digest, and expected task set. The
+  frontend hides v2 pass-rate comparisons and task outcomes otherwise; v1
+  metric comparisons remain supported.
 
 ## Ownership rules
 
@@ -93,6 +117,9 @@ The interim config UUID is opaque; no config catalog or private adapter mapping 
   request body/path/query.
 - Import v1 assigns the authenticated owner; owner, source, status, profile FK,
   fingerprint, event and artifact fields are never accepted from the request.
+- Import v2 uses the same ownership boundary and a distinct fingerprint
+  namespace. Only canonical safe task IDs and binary task outcomes are
+  accepted; per-trial source data and unknown fields are never retained.
 - Every `{id}` lookup includes `WHERE owner_id = authenticated owner`; mismatch → 404
   (not 403, to avoid enumeration).
 - Batch endpoints (compare) reject the complete request with a generic 404 if any

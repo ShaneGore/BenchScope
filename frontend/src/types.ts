@@ -58,6 +58,20 @@ export interface BenchmarkRun {
   error_message_sanitised?: string | null;
   process_exit_code?: number | null;
   hardware_snapshot?: HardwareSnapshot | null;
+  benchmark_details?: BenchmarkDetails | null;
+  task_results?: TaskResult[] | null;
+}
+
+export interface BenchmarkDetails {
+  benchmark_id: string;
+  release: string;
+  manifest_sha256: string;
+  expected_task_ids: string[];
+}
+
+export interface TaskResult {
+  task_id: string;
+  passed: boolean;
 }
 
 export interface RunMetrics {
@@ -73,9 +87,15 @@ export interface RunMetrics {
 
 export interface BenchmarkConfig {
   name: string;
+  temperature?: number | null;
   max_tokens?: number;
   concurrency?: number;
   prompt_set?: string;
+  reasoning?: boolean | null;
+  mtp?: boolean | null;
+  ctx?: number | null;
+  seed?: number | null;
+  repeat_index?: number | null;
 }
 
 export interface ModelProfile {

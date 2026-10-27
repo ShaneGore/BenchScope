@@ -127,6 +127,13 @@ export function ImportPage() {
           <p className="text-sm text-text-secondary mb-3">
             Run imported successfully. Missing metrics remain unavailable.
           </p>
+          {result.run.benchmark_details && (
+            <p className="text-xs text-text-muted mb-3">
+              {result.run.benchmark_details.benchmark_id} · {result.run.benchmark_details.release} ·{' '}
+              {result.run.task_results?.length ?? 0}/{result.run.benchmark_details.expected_task_ids.length} tasks · seed{' '}
+              {result.run.benchmark_config.seed ?? '—'} / repeat {result.run.benchmark_config.repeat_index ?? '—'}
+            </p>
+          )}
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-text-primary">{runProfileLabel(result.run)}</p>

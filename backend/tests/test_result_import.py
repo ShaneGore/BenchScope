@@ -20,6 +20,7 @@ from app.config import Settings
 from app.database import LOCAL_OWNER_ID, sqlalchemy_database_url
 from app.main import create_app
 from app.models import BenchmarkRun
+from scripts.export_private_jsonl import export_run
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -109,6 +110,26 @@ def valid_payload() -> dict[str, object]:
     }
 
 
+def valid_v2_payload() -> dict[str, object]:
+    return {
+        "format_version": "benchscope.run.v2",
+        "profile_snapshot": {
+            "name": "Local model",
+            "model_name": "example/model",
+        },
+        "benchmark_config": {"name": "local-coding", "seed": 1234, "repeat_index": 0},
+        "started_at": "2026-10-26T10:00:00Z",
+        "ended_at": "2026-10-26T10:10:00Z",
+        "benchmark_details": {
+            "benchmark_id": "local-coding",
+            "release": "release-1",
+            "manifest_sha256": "a" * 64,
+            "expected_task_ids": ["task-a", "task-b"],
+        },
+        "task_results": [{"task_id": "task-a", "passed": True}],
+    }
+
+
 def test_import_normalizes_fields_and_keeps_null_distinct_from_zero(
     postgres_api: tuple[TestClient, Engine],
 ) -> None:
@@ -160,6 +181,107 @@ def test_import_normalizes_fields_and_keeps_null_distinct_from_zero(
         assert stored.error_message_sanitised is None
         assert stored.artifact_ref is None
         assert session.scalar(select(func.count()).select_from(BenchmarkRun)) == 1
+
+
+def test_v2_import_stores_only_task_summary_and_null_metrics(
+    postgres_api: tuple[TestClient, Engine],
+) -> None:
+    client, engine = postgres_api
+    manifest = json.dumps(
+        {
+            "release": "release-1",
+            "tasks": [
+                {"release_id": "task-a", "aliases": ["legacy-a"]},
+                {"release_id": "task-b"},
+            ],
+        }
+    ).encode()
+    payload = export_run(
+        manifest,
+        json.dumps(
+            {
+                "task_id": "legacy-a",
+                "seed": 1234,
+                "repeat_index": 0,
+                "pass": True,
+                "prompt": "private prompt",
+                "served_model_path": "private path",
+                "error": "private error",
+                "generated_code": "private output",
+                "api_key": "private credential",
+            }
+        ),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00Z",
+        ended_at="2026-10-26T10:10:00Z",
+        seed=1234,
+        repeat_index=0,
+    )
+    response = client.post("/api/v1/runs/import", json=payload)
+
+    assert response.status_code == 201
+    run = response.json()["run"]
+    assert run["benchmark_details"]["release"] == "release-1"
+    assert run["task_results"] == [{"task_id": "task-a", "passed": True}]
+    assert run["metrics"]["pass_rate"] is None
+    assert run["metrics"]["quality_score"] is None
+    assert all(
+        run["metrics"][metric] is None
+        for metric in (
+            "ttft_ms",
+            "prompt_tokens",
+            "output_tokens",
+            "prompt_throughput_tps",
+            "generation_throughput_tps",
+            "elapsed_ms",
+        )
+    )
+    assert "private" not in response.text
+
+    complete = valid_v2_payload()
+    complete["task_results"] = [
+        {"task_id": "task-a", "passed": True},
+        {"task_id": "task-b", "passed": False},
+    ]
+    complete_run = client.post("/api/v1/runs/import", json=complete).json()["run"]
+    assert complete_run["metrics"]["pass_rate"] == 0.5
+
+    with Session(engine) as session:
+        stored = session.get(BenchmarkRun, UUID(run["id"]))
+        assert stored is not None
+        assert stored.benchmark_version == "release-1"
+        assert stored.task_results == [{"task_id": "task-a", "passed": True}]
+        assert stored.quality_score is None
+        assert stored.prompt_tokens is None
+
+
+def test_v2_duplicate_fingerprints_have_separate_namespace_and_owner_scope(
+    postgres_api: tuple[TestClient, Engine],
+) -> None:
+    client, engine = postgres_api
+    payload = valid_v2_payload()
+    first = client.post("/api/v1/runs/import", json=payload)
+    duplicate = client.post("/api/v1/runs/import", json=payload)
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    different_repeat = deepcopy(payload)
+    different_repeat["benchmark_config"]["repeat_index"] = 1
+    assert client.post("/api/v1/runs/import", json=different_repeat).status_code == 201
+    with Session(engine) as session:
+        stored = session.get(BenchmarkRun, UUID(first.json()["run"]["id"]))
+        assert stored is not None
+        assert (
+            stored.import_fingerprint
+            != hashlib.sha256(
+                b"benchscope.run.v1\0source_run_id\0trusted-export-123"
+            ).hexdigest()
+        )
+
+    # A v1 import keeps its original source_run_id fingerprint namespace.
+    v1 = client.post("/api/v1/runs/import", json=valid_payload())
+    assert v1.status_code == 201
 
 
 def test_deduplication_is_stable_and_scoped_to_owner(

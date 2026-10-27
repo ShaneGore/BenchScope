@@ -23,6 +23,8 @@ def run_history_response(run: BenchmarkRun) -> dict[str, Any]:
         "status": run.status,
         "profile_snapshot": run.profile_snapshot,
         "benchmark_config": run.benchmark_config,
+        "benchmark_details": run.benchmark_details,
+        "task_results": run.task_results,
         "started_at": run.started_at,
         "ended_at": run.completed_at,
         "related_run_id": run.related_run_id,

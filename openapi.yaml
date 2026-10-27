@@ -80,6 +80,19 @@ components:
         mtp: { type: boolean }
         ctx: { type: integer, minimum: 1 }
         seed: { type: integer, minimum: 0 }
+    ImportedBenchmarkConfigV2:
+      type: object
+      additionalProperties: false
+      required: [name, repeat_index]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        temperature: { type: number, minimum: 0 }
+        max_tokens: { type: integer, minimum: 1 }
+        reasoning: { type: boolean }
+        mtp: { type: boolean }
+        ctx: { type: integer, minimum: 1 }
+        seed: { type: integer, minimum: 0 }
+        repeat_index: { type: integer, minimum: 0 }
     ImportedMetrics:
       type: object
       additionalProperties: false
@@ -117,6 +130,43 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ImportedHardwareSnapshot"
             - type: "null"
+    ImportedBenchmarkDetails:
+      type: object
+      additionalProperties: false
+      required: [benchmark_id, release, manifest_sha256, expected_task_ids]
+      properties:
+        benchmark_id: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" }
+        release: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$", description: Benchmark version from the manifest's release field. }
+        manifest_sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        expected_task_ids:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          uniqueItems: true
+          items: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,127}$" }
+    ImportedTaskResult:
+      type: object
+      additionalProperties: false
+      required: [task_id, passed]
+      properties:
+        task_id: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,127}$" }
+        passed: { type: boolean }
+    RunImportV2Request:
+      type: object
+      additionalProperties: false
+      required: [format_version, profile_snapshot, benchmark_config, started_at, ended_at, benchmark_details, task_results]
+      properties:
+        format_version: { const: benchscope.run.v2 }
+        profile_snapshot: { $ref: "#/components/schemas/ImportedProfileSnapshot" }
+        benchmark_config: { $ref: "#/components/schemas/ImportedBenchmarkConfigV2" }
+        started_at: { type: string, format: date-time, description: Must include an operator-supplied timezone offset. }
+        ended_at: { type: string, format: date-time, description: Must include an operator-supplied timezone offset and be at or after started_at. }
+        benchmark_details: { $ref: "#/components/schemas/ImportedBenchmarkDetails" }
+        task_results:
+          type: array
+          maxItems: 10000
+          description: Outcomes may be incomplete but task IDs must be unique and expected.
+          items: { $ref: "#/components/schemas/ImportedTaskResult" }
     ProfileSnapshot:
       type: object
       required: [name, model_name]
@@ -140,6 +190,7 @@ components:
         mtp: { type: [boolean, "null"] }
         ctx: { type: [integer, "null"], minimum: 1 }
         seed: { type: [integer, "null"], minimum: 0 }
+        repeat_index: { type: [integer, "null"], minimum: 0 }
         concurrency: { type: integer }
         prompt_set: { type: string }
     ModelProfile:
@@ -220,6 +271,15 @@ components:
         error_message_sanitised: { type: [string, "null"] }
         process_exit_code: { type: [integer, "null"] }
         hardware_snapshot: { $ref: "#/components/schemas/HardwareSnapshot", nullable: true }
+        benchmark_details:
+          anyOf:
+            - $ref: "#/components/schemas/ImportedBenchmarkDetails"
+            - type: "null"
+        task_results:
+          anyOf:
+            - type: array
+              items: { $ref: "#/components/schemas/ImportedTaskResult" }
+            - type: "null"
     PaginatedRuns:
       type: object
       required: [items, has_more]
@@ -539,15 +599,20 @@ paths:
     post:
       summary: Import result JSON
       description: >-
-        Imports one normalized, completed run summary. A trusted exporter must
-        create benchscope.run.v1; private per-trial JSONL is not accepted and
-        the raw request bytes are not retained. Uploads are limited by
+        Imports one normalized, completed run summary in strict
+        benchscope.run.v1 or benchscope.run.v2 format. Private per-trial JSONL
+        is not accepted directly and raw request bytes are not retained. V2
+        includes safe benchmark details and canonical binary task results;
+        incomplete task coverage keeps pass_rate null. Uploads are limited by
         MAX_UPLOAD_BYTES (default 1 MiB).
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RunImportRequest" }
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/RunImportRequest"
+                - $ref: "#/components/schemas/RunImportV2Request"
       responses:
         "201":
           description: Imported
@@ -604,7 +669,9 @@ paths:
         Requires at least two distinct UUIDs. If any ID is missing or not owned by
         the authenticated owner, rejects the entire batch with the same generic 404. Returns
         completed runs only, in input order; if fewer than two remain, returns 422.
-        Metric values are passed through, including null values.
+        Metric values are passed through, including null values. V2 task results
+        are returned on each run; clients may compare them only when benchmark ID,
+        release, manifest digest, and expected task IDs match.
       parameters:
         - name: ids
           in: query

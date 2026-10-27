@@ -244,6 +244,32 @@ def test_detail_and_delete_are_owner_scoped_and_preserve_child_runs(
         assert surviving_child.related_run_id is None
 
 
+def test_v2_task_details_are_exposed_in_history_detail_and_compare(
+    history_api: tuple[TestClient, Engine],
+) -> None:
+    client, engine = history_api
+    details = {
+        "benchmark_id": "local-coding",
+        "release": "release-1",
+        "manifest_sha256": "a" * 64,
+        "expected_task_ids": ["task-a", "task-b"],
+    }
+    task_results = [{"task_id": "task-a", "passed": True}]
+    first = _make_run(benchmark_details=details, task_results=task_results)
+    second = _make_run(benchmark_details=details, task_results=task_results)
+    _save(engine, first, second)
+
+    history = client.get("/api/v1/runs").json()["items"]
+    assert history[0]["benchmark_details"] == details
+    assert history[0]["task_results"] == task_results
+    assert client.get(f"/api/v1/runs/{first.id}").json()["benchmark_details"] == details
+    compared = client.get(
+        "/api/v1/runs/compare", params={"ids": f"{first.id},{second.id}"}
+    ).json()
+    assert [run["benchmark_details"] for run in compared] == [details, details]
+    assert [run["task_results"] for run in compared] == [task_results, task_results]
+
+
 def test_compare_rejects_invalid_batches_and_returns_only_owned_completed_runs(
     history_api: tuple[TestClient, Engine],
 ) -> None:

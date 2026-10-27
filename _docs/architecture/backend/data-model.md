@@ -35,6 +35,10 @@ One attempt (imported or launched). Owned.
 - `source_run_id` (string, nullable) — benchmark's own run id
 - `import_fingerprint` (string, nullable, unique per owner where present) — duplicate detection
 - `benchmark_version` (string, nullable)
+- `benchmark_details` (json, nullable) — v2 benchmark ID, manifest release,
+  SHA-256 digest, and canonical expected task IDs only.
+- `task_results` (json, nullable) — v2 canonical task ID and binary pass result;
+  absent expected IDs represent tasks that were not run.
 - `started_at`, `completed_at` (nullable), `elapsed_ms` (nullable)
 - `quality_score` (numeric, nullable)
 - `pass_rate` (numeric, nullable)
@@ -94,6 +98,20 @@ The v1 result importer stores only the normalized allowlist, optional
 `source_run_id`, and a SHA-256 import fingerprint. It does not store raw request
 bytes, prompts, generated code, private task identifiers, raw outputs,
 credentials, events, artifacts, or error data.
+
+The v2 result importer stores the same safe profile/configuration summary plus
+only `benchmark_id`, manifest `release`, the SHA-256 manifest digest, canonical
+`release_id` expected task IDs, and canonical task pass/fail results. It
+fingerprints canonical validated JSON in the separate `benchscope.run.v2`
+namespace. A complete expected task set is required to compute `pass_rate`;
+the selected seed and repeat index are preserved as safe benchmark config so
+different trial groups produce distinct imports.
+incomplete sets leave it null. `quality_score` and all other metrics remain
+null because no authoritative mapping is approved. The offline stdlib exporter
+maps manifest aliases before serialization and never emits per-trial prompts,
+hashes/provenance, served paths, errors, generated code/raw output, credentials,
+or other private fields. Run start/end values are operator-supplied timezone-
+aware timestamps; per-trial times do not establish run-level semantics.
 
 The verified Clerk `sub` is the production owner key. Local development may use
 the fixed owner `local` (`LOCAL_OWNER_ID`) only under the documented
