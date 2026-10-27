@@ -36,6 +36,13 @@ frontend/
 - Base URL from `VITE_API_URL` (env, not hard-coded).
 - Typed client generated from OpenAPI (`openapi-typescript`); regenerated in CI or dev.
 - In hosted builds, Clerk provides sign-in/out and session tokens; an enabled personal API client attaches the current token as a bearer token. The Task 13 local-only API selection remains unchanged.
+- `ApiBenchmarkService` maps optional `benchmark_details` and `task_results`
+  from v2 import/history/detail/compare responses into `BenchmarkRun`. History
+  shows benchmark/release and task coverage; detail renders missing expected
+  task IDs as “Not run”, along with seed/repeat group identity. Compare renders
+  task outcomes and pass rates only when
+  all v2 runs match benchmark ID, release, manifest digest, and expected task
+  set. Existing v1 metric comparisons remain available.
 
 ## 5. Auth gating
 

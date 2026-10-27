@@ -66,6 +66,8 @@ class BenchmarkRun(Base):
     source_run_id: Mapped[str | None] = mapped_column(String(255))
     import_fingerprint: Mapped[str | None] = mapped_column(String(255))
     benchmark_version: Mapped[str | None] = mapped_column(String(255))
+    benchmark_details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    task_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

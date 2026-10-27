@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -16,6 +17,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    StringConstraints,
     ValidationError,
     model_validator,
 )
@@ -34,6 +36,9 @@ router = APIRouter()
 NonNegativeNumber = Annotated[StrictInt | StrictFloat, Field(ge=0, allow_inf_nan=False)]
 PositiveInteger = Annotated[StrictInt, Field(ge=1)]
 NonNegativeInteger = Annotated[StrictInt, Field(ge=0)]
+SAFE_TASK_ID_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,126}[A-Za-z0-9._-])?$"
+SAFE_TASK_ID = re.compile(SAFE_TASK_ID_PATTERN)
+SafeTaskId = Annotated[StrictStr, StringConstraints(pattern=SAFE_TASK_ID_PATTERN)]
 
 
 class StrictObject(BaseModel):
@@ -57,6 +62,10 @@ class ImportedBenchmarkConfig(StrictObject):
     seed: NonNegativeInteger = None
 
 
+class ImportedBenchmarkConfigV2(ImportedBenchmarkConfig):
+    repeat_index: NonNegativeInteger
+
+
 class ImportedMetrics(StrictObject):
     quality_score: NonNegativeNumber | None = None
     pass_rate: (
@@ -68,6 +77,12 @@ class ImportedMetrics(StrictObject):
     output_tokens: NonNegativeInteger | None = None
     prompt_throughput_tps: NonNegativeNumber | None = None
     generation_throughput_tps: NonNegativeNumber | None = None
+    elapsed_ms: NonNegativeInteger | None = None
+
+
+class ImportedMetricsV2(StrictObject):
+    prompt_tokens: NonNegativeInteger | None = None
+    output_tokens: NonNegativeInteger | None = None
     elapsed_ms: NonNegativeInteger | None = None
 
 
@@ -98,6 +113,61 @@ class RunImportRequest(StrictObject):
         return self
 
 
+class ImportedBenchmarkDetails(StrictObject):
+    benchmark_id: Annotated[
+        StrictStr, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+    ]
+    release: Annotated[
+        StrictStr, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+    ]
+    manifest_sha256: Annotated[StrictStr, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    expected_task_ids: list[SafeTaskId] = Field(min_length=1, max_length=10000)
+
+    @model_validator(mode="after")
+    def expected_ids_must_be_unique(self) -> "ImportedBenchmarkDetails":
+        if len(set(self.expected_task_ids)) != len(self.expected_task_ids):
+            raise ValueError("expected_task_ids must be unique")
+        if any(
+            not SAFE_TASK_ID.fullmatch(task_id) for task_id in self.expected_task_ids
+        ):
+            raise ValueError("expected_task_ids must be safe canonical IDs")
+        return self
+
+
+class ImportedTaskResult(StrictObject):
+    task_id: SafeTaskId
+    passed: StrictBool
+
+    @model_validator(mode="after")
+    def task_id_must_be_safe(self) -> "ImportedTaskResult":
+        if not SAFE_TASK_ID.fullmatch(self.task_id):
+            raise ValueError("task_id must be a safe canonical ID")
+        return self
+
+
+class RunImportV2Request(StrictObject):
+    format_version: Literal["benchscope.run.v2"]
+    profile_snapshot: ImportedProfile
+    benchmark_config: ImportedBenchmarkConfigV2
+    started_at: AwareDatetime
+    ended_at: AwareDatetime
+    benchmark_details: ImportedBenchmarkDetails
+    task_results: list[ImportedTaskResult] = Field(max_length=10000)
+    metrics: ImportedMetricsV2 = Field(default_factory=ImportedMetricsV2)
+
+    @model_validator(mode="after")
+    def validate_task_results(self) -> "RunImportV2Request":
+        if self.ended_at < self.started_at:
+            raise ValueError("ended_at must be greater than or equal to started_at")
+        expected = set(self.benchmark_details.expected_task_ids)
+        task_ids = [result.task_id for result in self.task_results]
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("task_results must contain unique task_id values")
+        if not set(task_ids) <= expected:
+            raise ValueError("task_results must be in expected_task_ids")
+        return self
+
+
 class ProfileSnapshotResponse(StrictObject):
     name: str
     model_name: str
@@ -113,6 +183,7 @@ class BenchmarkConfigResponse(StrictObject):
     mtp: bool | None = None
     ctx: int | None = None
     seed: int | None = None
+    repeat_index: int | None = None
 
 
 class MetricsResponse(StrictObject):
@@ -146,6 +217,8 @@ class ImportedRunResponse(StrictObject):
     fingerprint: str
     metrics: MetricsResponse
     hardware_snapshot: HardwareResponse | None
+    benchmark_details: ImportedBenchmarkDetails | None = None
+    task_results: list[ImportedTaskResult] | None = None
 
 
 class ImportErrorItem(StrictObject):
@@ -211,6 +284,14 @@ def _validation_failures(error: ValidationError) -> list[dict[str, str]]:
         "ram_gb",
         "gpu_vram_gb",
         "os",
+        "benchmark_details",
+        "benchmark_id",
+        "release",
+        "manifest_sha256",
+        "expected_task_ids",
+        "task_results",
+        "task_id",
+        "passed",
     }
     messages = {
         "missing": "Field is required.",
@@ -308,7 +389,84 @@ def _run_response(run: BenchmarkRun) -> dict[str, Any]:
         "fingerprint": run.import_fingerprint,
         "metrics": run_metrics(run),
         "hardware_snapshot": run.hardware_snapshot,
+        **(
+            {
+                "benchmark_details": run.benchmark_details,
+                "task_results": run.task_results,
+            }
+            if run.benchmark_details is not None
+            else {}
+        ),
     }
+
+
+def _fingerprint_v2(imported: RunImportV2Request) -> str:
+    canonical = json.dumps(
+        imported.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(
+        f"benchscope.run.v2\0payload\0{canonical}".encode()
+    ).hexdigest()
+
+
+def _pass_rate(imported: RunImportV2Request) -> float | None:
+    expected = imported.benchmark_details.expected_task_ids
+    if len(imported.task_results) != len(expected):
+        return None
+    return sum(result.passed for result in imported.task_results) / len(expected)
+
+
+def _import_v2(
+    owner_id: str, imported: RunImportV2Request, session: Session
+) -> ImportResult:
+    fingerprint = _fingerprint_v2(imported)
+    metrics = imported.metrics
+    run = BenchmarkRun(
+        owner_id=owner_id,
+        source="imported",
+        status="completed",
+        profile_id=None,
+        profile_snapshot=imported.profile_snapshot.model_dump(),
+        benchmark_config=imported.benchmark_config.model_dump(exclude_unset=True),
+        import_fingerprint=fingerprint,
+        benchmark_version=imported.benchmark_details.release,
+        benchmark_details=imported.benchmark_details.model_dump(mode="json"),
+        task_results=[result.model_dump() for result in imported.task_results],
+        started_at=imported.started_at,
+        completed_at=imported.ended_at,
+        elapsed_ms=metrics.elapsed_ms,
+        quality_score=None,
+        pass_rate=_pass_rate(imported),
+        ttft_ms=None,
+        prompt_tokens=metrics.prompt_tokens,
+        output_tokens=metrics.output_tokens,
+        prompt_throughput_tps=None,
+        generation_throughput_tps=None,
+    )
+    session.add(run)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        duplicate = session.scalar(
+            select(BenchmarkRun.id).where(
+                BenchmarkRun.owner_id == owner_id,
+                BenchmarkRun.import_fingerprint == fingerprint,
+            )
+        )
+        if duplicate is not None:
+            return _duplicate("request")
+        logger.error("Run import transaction failed with integrity error")
+        raise
+    except Exception:
+        session.rollback()
+        logger.error("Run import transaction failed")
+        raise
+    return {"ok": True, "run": _run_response(run)}
 
 
 def _duplicate(field: str) -> JSONResponse:
@@ -346,6 +504,22 @@ async def import_run(
         )
     except (ValueError, RecursionError):
         return _failure(422, "request", "Request body must be valid JSON.")
+    if (
+        isinstance(payload, dict)
+        and payload.get("format_version") == "benchscope.run.v2"
+    ):
+        try:
+            imported_v2 = RunImportV2Request.model_validate(payload)
+        except ValidationError as error:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "ok": False,
+                    "status": 422,
+                    "errors": _validation_failures(error),
+                },
+            )
+        return _import_v2(owner_id, imported_v2, session)
     try:
         imported = RunImportRequest.model_validate(payload)
     except ValidationError as error:
