@@ -269,6 +269,14 @@ The dashboard shows route/status request rates, validation/server failures,
 alert state, and correlated logs. Open Tempo Explore from the dashboard to
 search `benchscope-frontend` traces and follow the trace-to-log link.
 
+Run the controlled alert test from the repository root. The API stays up;
+synthetic `up` samples prove the alert's pending, firing, and resolution
+transitions:
+
+```powershell
+docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/api-alert-test.yml
+```
+
 ### Task 23: disposable local API-availability incident exercise
 
 This is a **local-development-only** exercise of the existing
