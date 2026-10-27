@@ -109,7 +109,7 @@ def test_import_normalizes_fields_and_keeps_null_distinct_from_zero(
     postgres_api: tuple[TestClient, Engine],
 ) -> None:
     client, engine = postgres_api
-    response = client.post("/runs/import", json=valid_payload())
+    response = client.post("/api/v1/runs/import", json=valid_payload())
 
     assert response.status_code == 201
     result = response.json()
@@ -180,10 +180,10 @@ def test_deduplication_is_stable_and_scoped_to_owner(
         )
         session.commit()
 
-    created = client.post("/runs/import", json=payload)
+    created = client.post("/api/v1/runs/import", json=payload)
     changed = deepcopy(payload)
     changed["metrics"] = {"quality_score": 0.5}
-    duplicate = client.post("/runs/import", json=changed)
+    duplicate = client.post("/api/v1/runs/import", json=changed)
     assert created.status_code == 201
     assert duplicate.status_code == 409
     assert duplicate.json()["status"] == 409
@@ -192,11 +192,11 @@ def test_deduplication_is_stable_and_scoped_to_owner(
 
     fallback = valid_payload()
     fallback.pop("source_run_id")
-    first = client.post("/runs/import", json=fallback)
-    same = client.post("/runs/import", json=fallback)
+    first = client.post("/api/v1/runs/import", json=fallback)
+    same = client.post("/api/v1/runs/import", json=fallback)
     other_summary = deepcopy(fallback)
     other_summary["metrics"] = {"quality_score": 0.25}
-    different = client.post("/runs/import", json=other_summary)
+    different = client.post("/api/v1/runs/import", json=other_summary)
     assert first.status_code == 201
     assert same.status_code == 409
     assert different.status_code == 201
@@ -235,7 +235,7 @@ def test_unknown_and_private_fields_are_rejected_without_echo_or_write(
     for field, private_value in disallowed:
         payload = valid_payload()
         payload[field] = private_value
-        response = client.post("/runs/import", json=payload)
+        response = client.post("/api/v1/runs/import", json=payload)
         assert response.status_code == 422
         assert str(private_value) not in response.text
         assert str(private_value) not in caplog.text
@@ -243,12 +243,12 @@ def test_unknown_and_private_fields_are_rejected_without_echo_or_write(
     for field in ("prompt_set", "concurrency"):
         payload = valid_payload()
         payload["benchmark_config"][field] = "private config"
-        response = client.post("/runs/import", json=payload)
+        response = client.post("/api/v1/runs/import", json=payload)
         assert response.status_code == 422
         assert "private config" not in response.text
 
     response = client.post(
-        "/runs/import",
+        "/api/v1/runs/import",
         content=b'{"format_version":"benchscope.run.v1","secret":"raw-secret"',
         headers={"content-type": "application/json"},
     )
@@ -256,7 +256,7 @@ def test_unknown_and_private_fields_are_rejected_without_echo_or_write(
     assert "raw-secret" not in response.text
     assert (
         client.post(
-            "/runs/import",
+            "/api/v1/runs/import",
             content=b"{}",
             headers={"content-type": "text/plain"},
         ).status_code
@@ -286,7 +286,7 @@ def test_unsupported_invalid_and_missing_values_return_422_without_writes(
     client, engine = postgres_api
     payload = valid_payload()
     change(payload)
-    response = client.post("/runs/import", json=payload)
+    response = client.post("/api/v1/runs/import", json=payload)
 
     assert response.status_code == 422
     assert response.json()["ok"] is False
@@ -308,7 +308,7 @@ def test_import_transaction_failure_rolls_back(
 
     event.listen(engine, "after_cursor_execute", fail_after_insert)
     try:
-        response = client.post("/runs/import", json=valid_payload())
+        response = client.post("/api/v1/runs/import", json=valid_payload())
     finally:
         event.remove(engine, "after_cursor_execute", fail_after_insert)
 
@@ -326,12 +326,12 @@ def test_streaming_upload_size_boundary_and_above(
     client.app.state.settings.max_upload_bytes = len(body)
 
     at_limit = client.post(
-        "/runs/import",
+        "/api/v1/runs/import",
         content=body,
         headers={"content-type": "application/json"},
     )
     over_limit = client.post(
-        "/runs/import",
+        "/api/v1/runs/import",
         content=iter((body, b" ")),
         headers={"content-type": "application/json"},
     )

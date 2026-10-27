@@ -88,7 +88,7 @@ def _make_run(
 
 
 def _save(engine: Engine, *runs: BenchmarkRun) -> None:
-    with Session(engine) as session:
+    with Session(engine, expire_on_commit=False) as session:
         session.add_all(runs)
         session.commit()
 
@@ -118,12 +118,14 @@ def test_list_run_filters_dates_empty_and_invalid_values(
     )
     _save(engine, first, second, third, fourth, other_owner)
 
-    by_model = client.get("/runs", params={"model": "example/model"}).json()
-    by_status = client.get("/runs", params={"status": "failed"}).json()
-    by_from = client.get("/runs", params={"from": "2026-01-01T12:00:00+02:00"}).json()
-    by_to = client.get("/runs", params={"to": "2026-01-01T12:00:00Z"}).json()
+    by_model = client.get("/api/v1/runs", params={"model": "example/model"}).json()
+    by_status = client.get("/api/v1/runs", params={"status": "failed"}).json()
+    by_from = client.get(
+        "/api/v1/runs", params={"from": "2026-01-01T12:00:00+02:00"}
+    ).json()
+    by_to = client.get("/api/v1/runs", params={"to": "2026-01-01T12:00:00Z"}).json()
     combined = client.get(
-        "/runs",
+        "/api/v1/runs",
         params={
             "model": "example/model",
             "status": "completed",
@@ -131,7 +133,7 @@ def test_list_run_filters_dates_empty_and_invalid_values(
             "to": "2026-01-01T12:00:00Z",
         },
     ).json()
-    empty = client.get("/runs", params={"model": "missing/model"}).json()
+    empty = client.get("/api/v1/runs", params={"model": "missing/model"}).json()
 
     assert {item["id"] for item in by_model["items"]} == {
         str(first.id),
@@ -151,13 +153,14 @@ def test_list_run_filters_dates_empty_and_invalid_values(
     }
     assert [item["id"] for item in combined["items"]] == [str(first.id)]
     assert empty == {"items": [], "next_cursor": None, "has_more": False}
-    assert client.get("/runs", params={"status": "unknown"}).status_code == 422
+    assert client.get("/api/v1/runs", params={"status": "unknown"}).status_code == 422
     assert (
-        client.get("/runs", params={"from": "2026-01-01T10:00:00"}).status_code == 422
+        client.get("/api/v1/runs", params={"from": "2026-01-01T10:00:00"}).status_code
+        == 422
     )
     assert (
         client.get(
-            "/runs",
+            "/api/v1/runs",
             params={
                 "from": "2026-01-01T10:00:00Z",
                 "to": "2026-01-01T10:00:00Z",
@@ -165,7 +168,7 @@ def test_list_run_filters_dates_empty_and_invalid_values(
         ).status_code
         == 422
     )
-    assert client.get("/runs", params={"limit": 101}).status_code == 422
+    assert client.get("/api/v1/runs", params={"limit": 101}).status_code == 422
 
 
 def test_cursor_pagination_is_deterministic_and_filter_scoped(
@@ -183,10 +186,10 @@ def test_cursor_pagination_is_deterministic_and_filter_scoped(
     )
     _save(engine, *ordered, foreign)
 
-    first_page = client.get("/runs", params={"limit": 1})
+    first_page = client.get("/api/v1/runs", params={"limit": 1})
     first_data = first_page.json()
     second_page = client.get(
-        "/runs",
+        "/api/v1/runs",
         params={"limit": 1, "cursor": first_data["next_cursor"]},
     )
     second_data = second_page.json()
@@ -196,16 +199,16 @@ def test_cursor_pagination_is_deterministic_and_filter_scoped(
     assert second_data["items"][0]["id"] == str(ordered[1].id)
     assert second_data["has_more"] is True
     assert client.get(
-        "/runs",
+        "/api/v1/runs",
         params={"model": "different", "cursor": str(ordered[2].id)},
     ).json() == {"detail": "Invalid cursor"}
-    assert client.get("/runs", params={"cursor": str(foreign.id)}).json() == {
+    assert client.get("/api/v1/runs", params={"cursor": str(foreign.id)}).json() == {
         "detail": "Invalid cursor"
     }
-    assert client.get("/runs", params={"cursor": str(uuid4())}).json() == {
+    assert client.get("/api/v1/runs", params={"cursor": str(uuid4())}).json() == {
         "detail": "Invalid cursor"
     }
-    invalid_cursor = client.get("/runs", params={"cursor": "not-a-uuid"})
+    invalid_cursor = client.get("/api/v1/runs", params={"cursor": "not-a-uuid"})
     assert invalid_cursor.status_code == 422
     assert invalid_cursor.json() == {"detail": "Invalid cursor"}
 
@@ -219,17 +222,17 @@ def test_detail_and_delete_are_owner_scoped_and_preserve_child_runs(
     foreign = _make_run(owner_id="someone-else")
     _save(engine, owned, child, foreign)
 
-    assert client.get(f"/runs/{owned.id}").status_code == 200
-    owned_missing = client.get(f"/runs/{uuid4()}")
-    other_owner = client.get(f"/runs/{foreign.id}")
+    assert client.get(f"/api/v1/runs/{owned.id}").status_code == 200
+    owned_missing = client.get(f"/api/v1/runs/{uuid4()}")
+    other_owner = client.get(f"/api/v1/runs/{foreign.id}")
     assert owned_missing.status_code == other_owner.status_code == 404
     assert owned_missing.json() == other_owner.json() == {"detail": "Run not found"}
 
-    assert client.delete(f"/runs/{foreign.id}").status_code == 404
+    assert client.delete(f"/api/v1/runs/{foreign.id}").status_code == 404
     with Session(engine) as session:
         assert session.get(BenchmarkRun, foreign.id) is not None
 
-    assert client.delete(f"/runs/{owned.id}").status_code == 204
+    assert client.delete(f"/api/v1/runs/{owned.id}").status_code == 204
     with Session(engine) as session:
         assert session.get(BenchmarkRun, owned.id) is None
         surviving_child = session.get(BenchmarkRun, child.id)
@@ -258,7 +261,7 @@ def test_compare_rejects_invalid_batches_and_returns_only_owned_completed_runs(
     )
 
     response = client.get(
-        "/runs/compare",
+        "/api/v1/runs/compare",
         params={
             "ids": ",".join(
                 str(run.id)
@@ -284,36 +287,38 @@ def test_compare_rejects_invalid_batches_and_returns_only_owned_completed_runs(
     assert compared[1]["metrics"]["pass_rate"] == 0
 
     missing = client.get(
-        "/runs/compare",
+        "/api/v1/runs/compare",
         params={"ids": f"{completed_zero.id},{uuid4()}"},
     )
     non_owned = client.get(
-        "/runs/compare",
+        "/api/v1/runs/compare",
         params={"ids": f"{completed_zero.id},{foreign.id}"},
     )
     assert missing.status_code == non_owned.status_code == 404
     assert missing.json() == non_owned.json() == {"detail": "Run not found"}
     assert (
         client.get(
-            "/runs/compare",
+            "/api/v1/runs/compare",
             params={"ids": f"{completed_zero.id},{failed.id}"},
         ).status_code
         == 422
     )
     assert (
         client.get(
-            "/runs/compare",
+            "/api/v1/runs/compare",
             params={"ids": f"{completed_zero.id},{completed_zero.id}"},
         ).status_code
         == 422
     )
     assert (
         client.get(
-            "/runs/compare", params={"ids": f"{completed_zero.id},bad"}
+            "/api/v1/runs/compare", params={"ids": f"{completed_zero.id},bad"}
         ).status_code
         == 422
     )
     assert (
-        client.get("/runs/compare", params={"ids": str(completed_zero.id)}).status_code
+        client.get(
+            "/api/v1/runs/compare", params={"ids": str(completed_zero.id)}
+        ).status_code
         == 422
     )

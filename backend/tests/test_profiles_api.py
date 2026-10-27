@@ -38,7 +38,7 @@ def hosted_api(tmp_path: Path) -> Iterator[tuple[TestClient, Engine]]:
 
 def _create(client: TestClient, **values: object):
     return client.post(
-        "/profiles",
+        "/api/v1/profiles",
         json={"name": "Local model", "model_name": "example/model", **values},
     )
 
@@ -61,10 +61,10 @@ def test_local_profile_crud_keeps_data_as_data(
     assert profile["inference_config"] == {"temperature": 0.2}
     profile_id = profile["id"]
 
-    assert client.get("/profiles").json() == [profile]
-    assert client.get(f"/profiles/{profile_id}").json() == profile
+    assert client.get("/api/v1/profiles").json() == [profile]
+    assert client.get(f"/api/v1/profiles/{profile_id}").json() == profile
     updated = client.patch(
-        f"/profiles/{profile_id}",
+        f"/api/v1/profiles/{profile_id}",
         json={"quantisation": "Q4_K_M", "endpoint_url": "http://127.0.0.1:8001"},
     )
     assert updated.status_code == 200
@@ -84,10 +84,10 @@ def test_local_profile_crud_keeps_data_as_data(
         session.commit()
         run_id = run.id
 
-    deleted = client.delete(f"/profiles/{profile_id}")
+    deleted = client.delete(f"/api/v1/profiles/{profile_id}")
     assert deleted.status_code == 204
-    assert client.get(f"/profiles/{profile_id}").status_code == 404
-    assert client.get("/profiles").json() == []
+    assert client.get(f"/api/v1/profiles/{profile_id}").status_code == 404
+    assert client.get("/api/v1/profiles").json() == []
     with Session(engine) as session:
         run = session.get(BenchmarkRun, run_id)
         assert run is not None
@@ -112,21 +112,25 @@ def test_profiles_are_isolated_to_fixed_local_owner(
         session.commit()
         other_id = other.id
 
-    assert client.get("/profiles").json() == []
-    assert client.get(f"/profiles/{other_id}").status_code == 404
+    assert client.get("/api/v1/profiles").json() == []
+    assert client.get(f"/api/v1/profiles/{other_id}").status_code == 404
     assert (
-        client.patch(f"/profiles/{other_id}", json={"name": "Changed"}).status_code
+        client.patch(
+            f"/api/v1/profiles/{other_id}", json={"name": "Changed"}
+        ).status_code
         == 404
     )
-    assert client.delete(f"/profiles/{other_id}").status_code == 404
+    assert client.delete(f"/api/v1/profiles/{other_id}").status_code == 404
 
     missing_id = "00000000-0000-0000-0000-000000000001"
-    assert client.get(f"/profiles/{missing_id}").status_code == 404
+    assert client.get(f"/api/v1/profiles/{missing_id}").status_code == 404
     assert (
-        client.patch(f"/profiles/{missing_id}", json={"name": "Changed"}).status_code
+        client.patch(
+            f"/api/v1/profiles/{missing_id}", json={"name": "Changed"}
+        ).status_code
         == 404
     )
-    assert client.delete(f"/profiles/{missing_id}").status_code == 404
+    assert client.delete(f"/api/v1/profiles/{missing_id}").status_code == 404
 
 
 def test_invalid_create_and_patch_are_rejected_without_writes(
@@ -134,7 +138,7 @@ def test_invalid_create_and_patch_are_rejected_without_writes(
 ) -> None:
     client, engine = local_api
     invalid = _create(client, owner_id="attacker", api_key="do-not-return")
-    missing_required = client.post("/profiles", json={"name": "Missing model"})
+    missing_required = client.post("/api/v1/profiles", json={"name": "Missing model"})
     too_long = _create(client, name="x" * 256)
     embedded_userinfo = _create(
         client, endpoint_url="http://user:private-token@localhost/v1"
@@ -151,17 +155,17 @@ def test_invalid_create_and_patch_are_rejected_without_writes(
     assert "do-not-return" not in invalid.text
     assert "private-token" not in embedded_userinfo.text
     assert "private-token" not in embedded_query_secret.text
-    assert client.get("/profiles").json() == []
+    assert client.get("/api/v1/profiles").json() == []
 
     profile = _create(client).json()
     invalid_update = client.patch(
-        f"/profiles/{profile['id']}",
+        f"/api/v1/profiles/{profile['id']}",
         json={"name": "Changed", "credential": "do-not-return"},
     )
-    null_name = client.patch(f"/profiles/{profile['id']}", json={"name": None})
-    empty_update = client.patch(f"/profiles/{profile['id']}", json={})
+    null_name = client.patch(f"/api/v1/profiles/{profile['id']}", json={"name": None})
+    empty_update = client.patch(f"/api/v1/profiles/{profile['id']}", json={})
     embedded_secret_update = client.patch(
-        f"/profiles/{profile['id']}",
+        f"/api/v1/profiles/{profile['id']}",
         json={
             "name": "Changed",
             "endpoint_url": "http://localhost/v1?api_key=private-token",
@@ -174,7 +178,9 @@ def test_invalid_create_and_patch_are_rejected_without_writes(
     assert embedded_secret_update.status_code == 422
     assert "do-not-return" not in invalid_update.text
     assert "private-token" not in embedded_secret_update.text
-    assert client.get(f"/profiles/{profile['id']}").json()["name"] == "Local model"
+    assert (
+        client.get(f"/api/v1/profiles/{profile['id']}").json()["name"] == "Local model"
+    )
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(ModelProfile)) == 1
 
@@ -202,7 +208,7 @@ def test_invalid_endpoint_urls_are_rejected_without_writes(
         response = _create(client, endpoint_url=endpoint_url)
     else:
         response = client.patch(
-            f"/profiles/{profile['id']}", json={"endpoint_url": endpoint_url}
+            f"/api/v1/profiles/{profile['id']}", json={"endpoint_url": endpoint_url}
         )
 
     assert response.status_code == 422
@@ -212,7 +218,7 @@ def test_invalid_endpoint_urls_are_rejected_without_writes(
             profile is not None
         )
     if profile is not None:
-        stored = client.get(f"/profiles/{profile['id']}").json()
+        stored = client.get(f"/api/v1/profiles/{profile['id']}").json()
         assert stored["endpoint_url"] is None
 
 
@@ -233,7 +239,7 @@ def test_hosted_create_rejects_local_only_fields_without_persistence(
     assert response.status_code == 422
     assert "private-token" not in response.text
     assert "private.example" not in response.text
-    assert client.get("/profiles").json() == []
+    assert client.get("/api/v1/profiles").json() == []
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(ModelProfile)) == 0
 
@@ -252,14 +258,14 @@ def test_hosted_update_rejects_local_only_fields_without_partial_write(
     profile = _create(client).json()
 
     response = client.patch(
-        f"/profiles/{profile['id']}",
+        f"/api/v1/profiles/{profile['id']}",
         json={"name": "Changed", field: value},
     )
 
     assert response.status_code == 422
     assert "private-token" not in response.text
     assert "private.example" not in response.text
-    stored = client.get(f"/profiles/{profile['id']}").json()
+    stored = client.get(f"/api/v1/profiles/{profile['id']}").json()
     assert stored["name"] == "Local model"
     assert stored["endpoint_url"] is None
     assert stored["inference_config"] is None
@@ -275,7 +281,7 @@ def test_hosted_rejects_present_endpoint_even_when_null_and_credential_fields(
     credential = _create(client, api_key_ref="secret-reference")
     profile = _create(client).json()
     credential_update = client.patch(
-        f"/profiles/{profile['id']}", json={"api_key": "private-token"}
+        f"/api/v1/profiles/{profile['id']}", json={"api_key": "private-token"}
     )
 
     assert endpoint.status_code == 422
@@ -283,7 +289,7 @@ def test_hosted_rejects_present_endpoint_even_when_null_and_credential_fields(
     assert credential_update.status_code == 422
     assert "secret-reference" not in credential.text
     assert "private-token" not in credential_update.text
-    assert client.get("/profiles").json() == [profile]
+    assert client.get("/api/v1/profiles").json() == [profile]
 
 
 def test_hosted_accepts_null_inference_config_update(
@@ -293,7 +299,7 @@ def test_hosted_accepts_null_inference_config_update(
     profile = _create(client).json()
 
     response = client.patch(
-        f"/profiles/{profile['id']}", json={"inference_config": None}
+        f"/api/v1/profiles/{profile['id']}", json={"inference_config": None}
     )
 
     assert response.status_code == 200

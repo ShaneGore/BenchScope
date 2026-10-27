@@ -23,6 +23,7 @@ from app.run_history import router as run_history_router
 
 logger = logging.getLogger("app.request")
 CORRELATION_HEADER = "X-Correlation-ID"
+API_PREFIX = "/api/v1"
 
 
 def database_is_ready(database_url: str | None) -> bool:
@@ -140,9 +141,9 @@ def create_app(
         if engine is not None
         else None
     )
-    app.include_router(profiles_router)
-    app.include_router(imports_router)
-    app.include_router(run_history_router)
+    app.include_router(profiles_router, prefix=API_PREFIX)
+    app.include_router(imports_router, prefix=API_PREFIX)
+    app.include_router(run_history_router, prefix=API_PREFIX)
 
     @app.get("/health")
     def health() -> dict[str, str]:
