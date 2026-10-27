@@ -513,7 +513,7 @@ export interface paths {
         put?: never;
         /**
          * Import result JSON
-         * @description Imports one normalized, completed run summary in strict benchscope.run.v1 or benchscope.run.v2 format. Private per-trial JSONL is not accepted directly and raw request bytes are not retained. V2 includes safe benchmark details and canonical binary task results; incomplete task coverage keeps pass_rate null. Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
+         * @description Imports one normalized, completed run summary in strict benchscope.run.v1 or benchscope.run.v2 format. Private per-trial JSONL is not accepted directly and raw request bytes are not retained. V2 includes safe benchmark details and canonical binary task results; incomplete task coverage keeps pass_rate null. V2 imports may include per-task token totals and elapsed time only; other metrics remain null. Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
          */
         post: {
             parameters: {
@@ -1046,6 +1046,15 @@ export interface components {
             generation_throughput_tps?: number | null;
             elapsed_ms?: number | null;
         };
+        /** @description Only allowlisted aggregate metrics with confirmed semantics. Prompt and output token totals are null unless every selected task row contains a valid non-negative integer. Elapsed time is derived from the supplied timezone-aware start and end timestamps. */
+        ImportedMetricsV2: {
+            /** @description Aggregate prompt tokens. */
+            prompt_tokens?: number | null;
+            /** @description Aggregate output tokens. */
+            output_tokens?: number | null;
+            /** @description End minus start in milliseconds. */
+            elapsed_ms?: number | null;
+        };
         ImportedHardwareSnapshot: {
             cpu?: string | null;
             gpu?: string | null;
@@ -1101,6 +1110,7 @@ export interface components {
             benchmark_details: components["schemas"]["ImportedBenchmarkDetails"];
             /** @description Outcomes may be incomplete but task IDs must be unique and expected. */
             task_results: components["schemas"]["ImportedTaskResult"][];
+            metrics?: components["schemas"]["ImportedMetricsV2"];
         };
         ProfileSnapshot: {
             profile_id?: string | null;

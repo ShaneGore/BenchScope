@@ -149,6 +149,31 @@ def test_v2_validates_safe_unique_results_and_allows_incomplete_coverage() -> No
     )
 
 
+def test_v2_accepts_only_supported_aggregate_metrics() -> None:
+    payload = valid_v2_request()
+    payload["metrics"] = {
+        "prompt_tokens": 0,
+        "output_tokens": 12,
+        "elapsed_ms": 2500,
+    }
+    imported = RunImportV2Request.model_validate(payload)
+    assert imported.metrics.prompt_tokens == 0
+    assert imported.metrics.output_tokens == 12
+    assert imported.metrics.elapsed_ms == 2500
+
+    for metric in ("quality_score", "pass_rate", "ttft_ms", "prompt_throughput_tps"):
+        invalid = valid_v2_request()
+        invalid["metrics"] = {metric: 1}
+        with pytest.raises(ValidationError):
+            RunImportV2Request.model_validate(invalid)
+
+    for invalid_value in (-1, True, 1.5, "12"):
+        invalid = valid_v2_request()
+        invalid["metrics"] = {"prompt_tokens": invalid_value}
+        with pytest.raises(ValidationError):
+            RunImportV2Request.model_validate(invalid)
+
+
 def test_v2_rejects_private_fields_and_bad_manifest_digest() -> None:
     payload = valid_v2_request()
     payload["raw_output"] = "private content"

@@ -80,6 +80,12 @@ class ImportedMetrics(StrictObject):
     elapsed_ms: NonNegativeInteger | None = None
 
 
+class ImportedMetricsV2(StrictObject):
+    prompt_tokens: NonNegativeInteger | None = None
+    output_tokens: NonNegativeInteger | None = None
+    elapsed_ms: NonNegativeInteger | None = None
+
+
 class ImportedHardware(StrictObject):
     cpu: StrictStr | None = None
     gpu: StrictStr | None = None
@@ -147,6 +153,7 @@ class RunImportV2Request(StrictObject):
     ended_at: AwareDatetime
     benchmark_details: ImportedBenchmarkDetails
     task_results: list[ImportedTaskResult] = Field(max_length=10000)
+    metrics: ImportedMetricsV2 = Field(default_factory=ImportedMetricsV2)
 
     @model_validator(mode="after")
     def validate_task_results(self) -> "RunImportV2Request":
@@ -417,6 +424,7 @@ def _import_v2(
     owner_id: str, imported: RunImportV2Request, session: Session
 ) -> ImportResult:
     fingerprint = _fingerprint_v2(imported)
+    metrics = imported.metrics
     run = BenchmarkRun(
         owner_id=owner_id,
         source="imported",
@@ -430,11 +438,12 @@ def _import_v2(
         task_results=[result.model_dump() for result in imported.task_results],
         started_at=imported.started_at,
         completed_at=imported.ended_at,
+        elapsed_ms=metrics.elapsed_ms,
         quality_score=None,
         pass_rate=_pass_rate(imported),
         ttft_ms=None,
-        prompt_tokens=None,
-        output_tokens=None,
+        prompt_tokens=metrics.prompt_tokens,
+        output_tokens=metrics.output_tokens,
         prompt_throughput_tps=None,
         generation_throughput_tps=None,
     )

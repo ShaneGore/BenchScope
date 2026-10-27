@@ -183,7 +183,7 @@ def test_import_normalizes_fields_and_keeps_null_distinct_from_zero(
         assert session.scalar(select(func.count()).select_from(BenchmarkRun)) == 1
 
 
-def test_v2_import_stores_only_task_summary_and_null_metrics(
+def test_v2_import_stores_task_summary_and_supported_metrics(
     postgres_api: tuple[TestClient, Engine],
 ) -> None:
     client, engine = postgres_api
@@ -209,6 +209,8 @@ def test_v2_import_stores_only_task_summary_and_null_metrics(
                 "error": "private error",
                 "generated_code": "private output",
                 "api_key": "private credential",
+                "prompt_tokens": 17,
+                "output_tokens": 9,
             }
         ),
         benchmark_id="local-coding",
@@ -227,15 +229,15 @@ def test_v2_import_stores_only_task_summary_and_null_metrics(
     assert run["task_results"] == [{"task_id": "task-a", "passed": True}]
     assert run["metrics"]["pass_rate"] is None
     assert run["metrics"]["quality_score"] is None
+    assert run["metrics"]["prompt_tokens"] == 17
+    assert run["metrics"]["output_tokens"] == 9
+    assert run["metrics"]["elapsed_ms"] == 600000
     assert all(
         run["metrics"][metric] is None
         for metric in (
             "ttft_ms",
-            "prompt_tokens",
-            "output_tokens",
             "prompt_throughput_tps",
             "generation_throughput_tps",
-            "elapsed_ms",
         )
     )
     assert "private" not in response.text
@@ -254,7 +256,9 @@ def test_v2_import_stores_only_task_summary_and_null_metrics(
         assert stored.benchmark_version == "release-1"
         assert stored.task_results == [{"task_id": "task-a", "passed": True}]
         assert stored.quality_score is None
-        assert stored.prompt_tokens is None
+        assert stored.prompt_tokens == 17
+        assert stored.output_tokens == 9
+        assert stored.elapsed_ms == 600000
 
 
 def test_v2_duplicate_fingerprints_have_separate_namespace_and_owner_scope(

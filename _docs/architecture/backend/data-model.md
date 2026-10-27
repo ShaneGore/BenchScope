@@ -55,6 +55,12 @@ One attempt (imported or launched). Owned.
 - `related_run_id` (fk → BenchmarkRun, nullable) — retry lineage
 - `created_at`, `updated_at`
 
+For v2 imports, `pass_rate` is populated only for complete task coverage.
+Prompt/output token totals are populated only when every selected row provides a
+valid non-negative count; elapsed time comes from the supplied aware
+timestamps. Quality score, unconfirmed aggregate metrics, and hardware
+mappings remain null.
+
 ## RunEvent (optional, for launched runs)
 
 Timeline events for a launched run (status transitions, timeout). Owned via run.

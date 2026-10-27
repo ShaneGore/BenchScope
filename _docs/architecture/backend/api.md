@@ -62,8 +62,13 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   `manifest_sha256`, and unique canonical safe `expected_task_ids`) and unique
   `{task_id, passed}` results whose IDs are a subset of the expected set.
   Incomplete coverage is accepted; `pass_rate` is computed only for complete
-  coverage and otherwise null. `quality_score` and all other metrics remain
-  null for v2; token counts, TTFT, and throughput are not inferred. The owner
+  coverage and otherwise null. V2's optional strict `metrics` object supports
+  only `prompt_tokens`, `output_tokens`, and `elapsed_ms`: token totals are
+  summed only when every selected trial row provides a non-negative integer
+  value (missing/null values keep that total null; invalid values reject the
+  export), and elapsed time comes from the operator-supplied start/end
+  timestamps. `quality_score` remains null; TTFT, throughput, wall-time, and
+  VRAM have no confirmed aggregate mapping and remain null/unmapped. The owner
   scoped v2 fingerprint has a separate `benchscope.run.v2` namespace. Responses
   expose `benchmark_details` and `task_results` on import, history, detail, and
   comparison. A local stdlib exporter at

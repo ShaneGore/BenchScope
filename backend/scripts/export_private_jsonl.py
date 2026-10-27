@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -114,8 +114,11 @@ def export_run(
         raise ExportError("benchmark and profile labels are required")
     start = _aware_timestamp(started_at)
     end = _aware_timestamp(ended_at)
-    if datetime.fromisoformat(end) < datetime.fromisoformat(start):
+    start_datetime = datetime.fromisoformat(start)
+    end_datetime = datetime.fromisoformat(end)
+    if end_datetime < start_datetime:
         raise ExportError("end must be at or after start")
+    elapsed_ms = (end_datetime - start_datetime) // timedelta(milliseconds=1)
     if (
         type(seed) is not int
         or seed < 0
@@ -125,6 +128,8 @@ def export_run(
         raise ExportError("seed and repeat index must be non-negative integers")
 
     outcomes: dict[str, bool] = {}
+    token_totals = {"prompt_tokens": 0, "output_tokens": 0}
+    complete_token_totals = {"prompt_tokens": True, "output_tokens": True}
     for line_number, line in enumerate(jsonl.splitlines(), start=1):
         if not line.strip():
             continue
@@ -159,6 +164,14 @@ def export_run(
         if canonical_id in outcomes:
             raise ExportError(f"duplicate task outcome for {canonical_id}")
         outcomes[canonical_id] = passed
+        for metric in token_totals:
+            value = record.get(metric)
+            if value is None:
+                complete_token_totals[metric] = False
+            elif type(value) is not int or value < 0:
+                raise ExportError(f"JSONL record {line_number} has invalid {metric}")
+            else:
+                token_totals[metric] += value
 
     if not outcomes:
         raise ExportError("selected seed/repeat group has no records")
@@ -176,6 +189,11 @@ def export_run(
         },
         "started_at": start,
         "ended_at": end,
+        "metrics": {
+            metric: token_totals[metric] if complete_token_totals[metric] else None
+            for metric in token_totals
+        }
+        | {"elapsed_ms": elapsed_ms},
         "benchmark_details": {
             "benchmark_id": benchmark_id,
             "release": release,

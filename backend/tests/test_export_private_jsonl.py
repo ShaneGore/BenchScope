@@ -30,6 +30,9 @@ def row(task_id: str, passed: bool, **extra: object) -> str:
             "prompt_sha256_16": "private hash",
             "prompt_tokens": 17,
             "output_tokens": 9,
+            "wall_s": "private wall time",
+            "tok_per_s": "private throughput",
+            "vram_peak_mib": "private VRAM",
             "timestamp_utc": "private trial time",
             **extra,
         }
@@ -68,6 +71,11 @@ def test_export_maps_aliases_and_excludes_private_fields() -> None:
         {"task_id": "release-task-a", "passed": True},
         {"task_id": "release-task-b", "passed": False},
     ]
+    assert result["metrics"] == {
+        "prompt_tokens": 34,
+        "output_tokens": 18,
+        "elapsed_ms": 600000,
+    }
     assert (
         RunImportV2Request.model_validate(result).task_results[0].task_id
         == "release-task-a"
@@ -79,20 +87,61 @@ def test_export_maps_aliases_and_excludes_private_fields() -> None:
         "private error",
         "private output",
         "private credential",
+        "private wall time",
+        "private throughput",
+        "private VRAM",
     ):
         assert private not in result_text
     for private_key in (
-        "prompt",
         "prompt_sha256_16",
         "served_model_path",
         "error",
         "generated_code",
         "api_key",
-        "prompt_tokens",
-        "output_tokens",
+        "wall_s",
+        "tok_per_s",
+        "vram_peak_mib",
         "timestamp_utc",
     ):
         assert private_key not in result_text
+
+
+def test_export_preserves_null_token_totals_and_computes_elapsed_ms() -> None:
+    first = json.loads(row("release-task-a", True, prompt_tokens=None))
+    second = json.loads(row("release-task-b", False))
+    del second["output_tokens"]
+    result = export_run(
+        MANIFEST_BYTES,
+        json.dumps(first) + "\n" + json.dumps(second),
+        benchmark_id="local-coding",
+        model_name="example/model",
+        profile_name="Local model",
+        started_at="2026-10-26T10:00:00.125Z",
+        ended_at="2026-10-26T10:00:03.625Z",
+        seed=1234,
+        repeat_index=0,
+    )
+
+    assert result["metrics"] == {
+        "prompt_tokens": None,
+        "output_tokens": None,
+        "elapsed_ms": 3500,
+    }
+    assert RunImportV2Request.model_validate(result).metrics.prompt_tokens is None
+
+
+@pytest.mark.parametrize(
+    ("metric", "value"),
+    [
+        ("prompt_tokens", -1),
+        ("prompt_tokens", True),
+        ("prompt_tokens", 1.5),
+        ("output_tokens", "9"),
+    ],
+)
+def test_export_rejects_invalid_token_values(metric: str, value: object) -> None:
+    with pytest.raises(ExportError, match=f"invalid {metric}"):
+        export(row("release-task-a", True, **{metric: value}))
 
 
 def test_export_accepts_canonical_ids_with_case_and_internal_spaces() -> None:

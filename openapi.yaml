@@ -105,6 +105,21 @@ components:
         prompt_throughput_tps: { type: [number, "null"], minimum: 0 }
         generation_throughput_tps: { type: [number, "null"], minimum: 0 }
         elapsed_ms: { type: [integer, "null"], minimum: 0 }
+    ImportedMetricsV2:
+      type: object
+      additionalProperties: false
+      description: >-
+        Only allowlisted aggregate metrics with confirmed semantics. Prompt
+        and output token totals are null unless every selected task row contains
+        a valid non-negative integer. Elapsed time is derived from the supplied
+        timezone-aware start and end timestamps.
+      properties:
+        prompt_tokens:
+          { type: [integer, "null"], minimum: 0, description: Aggregate prompt tokens. }
+        output_tokens:
+          { type: [integer, "null"], minimum: 0, description: Aggregate output tokens. }
+        elapsed_ms:
+          { type: [integer, "null"], minimum: 0, description: End minus start in milliseconds. }
     ImportedHardwareSnapshot:
       type: object
       additionalProperties: false
@@ -167,6 +182,7 @@ components:
           maxItems: 10000
           description: Outcomes may be incomplete but task IDs must be unique and expected.
           items: { $ref: "#/components/schemas/ImportedTaskResult" }
+        metrics: { $ref: "#/components/schemas/ImportedMetricsV2" }
     ProfileSnapshot:
       type: object
       required: [name, model_name]
@@ -603,8 +619,9 @@ paths:
         benchscope.run.v1 or benchscope.run.v2 format. Private per-trial JSONL
         is not accepted directly and raw request bytes are not retained. V2
         includes safe benchmark details and canonical binary task results;
-        incomplete task coverage keeps pass_rate null. Uploads are limited by
-        MAX_UPLOAD_BYTES (default 1 MiB).
+        incomplete task coverage keeps pass_rate null. V2 imports may include
+        per-task token totals and elapsed time only; other metrics remain null.
+        Uploads are limited by MAX_UPLOAD_BYTES (default 1 MiB).
       requestBody:
         required: true
         content:
