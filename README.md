@@ -442,6 +442,10 @@ occupied by another listener, do not stop or alter it. The alert is local-only;
 no hosted or production service, external telemetry, or notification receiver
 is involved.
 
+Ordinary `docker compose down` retains database and telemetry volumes. Use
+`--volumes` only when intentionally deleting them, and only for this verified
+disposable project.
+
 Pre-auth local storage fixtures use the fixed owner id `local`; owner ids are
 not accepted from callers.
 
