@@ -1,3 +1,4 @@
+.git
 .env
 .env.*
 .venv
@@ -5,7 +6,15 @@ __pycache__
 .pytest_cache
 .ruff_cache
 tests
+secrets
+*.pem
+*.key
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
 private-benchmark
+benchmarks/private
 benchmark-artifacts
 raw-benchmark-artifacts
-secrets

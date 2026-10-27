@@ -65,3 +65,25 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm check:api
+      - name: Build and verify Pages-path static output
+        env:
+          VITE_BASE_PATH: /pages-preview/
+          VITE_API_URL: https://api.example.invalid
+        run: |
+          pnpm exec vite build --outDir dist-pages
+          node scripts/check-static-build.mjs dist-pages
+
+  container-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build backend image without publishing
+        run: docker build --tag benchscope-backend:ci ./backend
+      - name: Build frontend image without publishing
+        run: >-
+          docker build --tag benchscope-frontend:ci
+          --build-arg VITE_BASE_PATH=/
+          --build-arg VITE_API_URL=
+          ./frontend

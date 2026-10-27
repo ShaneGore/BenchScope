@@ -16,6 +16,7 @@ __pycache__/
 # Frontend
 node_modules/
 dist/
+dist-pages/
 
 # Private benchmark material
 /private-benchmark/

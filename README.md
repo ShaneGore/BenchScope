@@ -115,7 +115,12 @@ workflow.
 
 The workflow has read-only repository permissions and needs no credentials,
 private benchmark materials, model weights, GPU, or paid service. Docker image
-builds are deferred to issue #20, which owns both Dockerfiles and image checks.
+builds are included without registry login or publishing. CI also builds a
+Pages-path-configured static Vite artifact and verifies its asset paths and
+separate public API URL. GitHub Pages serves only that static frontend; the
+FastAPI API is a separate service. See
+`_docs/architecture/deployment.md` for configuration boundaries and the
+required pre-provisioning provider/owner checks.
 
 To run the same checks locally, start a disposable PostgreSQL instance and set
 `TEST_DATABASE_URL` to its URL. From the repository root in PowerShell:
@@ -135,6 +140,11 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm test
 corepack pnpm build
 corepack pnpm check:api
+$env:VITE_BASE_PATH = "/pages-preview/"
+$env:VITE_API_URL = "https://api.example.invalid"
+corepack pnpm exec vite build --outDir dist-pages
+node scripts/check-static-build.mjs dist-pages
+Remove-Item Env:VITE_BASE_PATH, Env:VITE_API_URL
 Pop-Location
 Remove-Item Env:TEST_DATABASE_URL
 ```
