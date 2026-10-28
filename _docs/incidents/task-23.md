@@ -252,11 +252,15 @@ checks, UTF-8/4 KiB bounds, and sentinel checks pass. It adds no recovery or
 benchmark operation.
 
 The Copilot CLI adapter passes exactly `--model=gpt-6-luna`, disables built-in
-MCPs, selects no available tools, and denies tool and URL access. It refuses to
-invoke without explicit entitlement, usage/cost, and tool-policy verification.
-Process-tree cleanup uses an isolated process group on POSIX and a kill-on-close
-Job Object on Windows. Both use a 60-second run timeout, allow up to five
-seconds for graceful shutdown, then force-terminate remaining descendants.
+MCPs, and supplies an empty `--available-tools` allowlist. The installed CLI
+documents this option as exposing only the listed tools; with no listed tools,
+there are no model-callable shell, file, repository, or URL tools. The adapter
+does not pass wildcard tool-denial rules because the installed CLI rejects
+`--deny-tool=*`. It refuses to invoke without explicit entitlement, usage/cost,
+and tool-policy verification. Process-tree cleanup uses an isolated process
+group on POSIX and a kill-on-close Job Object on Windows. Both use a 60-second
+run timeout, allow up to five seconds for graceful shutdown, then
+force-terminate remaining descendants.
 
 The automated tests use a fake provider and controlled local child processes.
 They prove validation, failure gates, output bounds, and process cleanup only;
