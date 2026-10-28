@@ -54,6 +54,7 @@ def test_postgres_baseline_migration_and_storage_contract() -> None:
             assert tables_after_first_upgrade == {
                 "alembic_version",
                 "benchmark_runs",
+                "incident_records",
                 "model_profiles",
             }
 
