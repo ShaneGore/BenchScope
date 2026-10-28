@@ -25,88 +25,74 @@ it, and Prometheus returned no exemplars until the flag was set. Grafana's
 provisioned Prometheus data source maps the exemplar label `trace_id` to Tempo's
 data-source UID `tempo`.
 
-## Reproduce with synthetic local traffic
+## Reproduce in an isolated synthetic Compose project
 
-Start the normal local Compose stack, then run this PowerShell from the
-repository root. It sends only a synthetic `GET /api/v1/runs`; it does not
-import or persist a result. Add the normal local authorization header if the
-local stack requires one.
+From a clean checkout on Windows with Docker Desktop and PowerShell, run:
 
 ```powershell
-$traceId = [guid]::NewGuid().ToString("N")
-$parentSpanId = [guid]::NewGuid().ToString("N").Substring(0, 16)
-$traceparent = "00-$traceId-$parentSpanId-01"
-$start = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-
-$response = Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/v1/runs" `
-  -Headers @{ traceparent = $traceparent }
-if ($null -eq $response) { throw "Synthetic API request failed" }
-
-$query = [uri]::EscapeDataString(
-  'benchscope_http_server_requests_total{http_route="/api/v1/runs"}'
-)
-$series = $null
-$exemplar = $null
-for ($attempt = 0; $attempt -lt 20 -and $null -eq $exemplar; $attempt++) {
-  $end = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-  $data = Invoke-RestMethod `
-    -Uri "http://127.0.0.1:9090/api/v1/query_exemplars?query=$query&start=$($start - 5)&end=$end"
-  foreach ($candidate in $data.data) {
-    $match = @($candidate.exemplars |
-      Where-Object { $_.labels.trace_id -eq $traceId } |
-      Select-Object -First 1)
-    if ($match.Count -gt 0) {
-      $series = $candidate.seriesLabels
-      $exemplar = $match[0]
-      break
-    }
-  }
-  if ($null -eq $exemplar) { Start-Sleep -Seconds 2 }
-}
-if ($null -eq $exemplar) { throw "Prometheus did not return the synthetic trace exemplar" }
-if ($series.PSObject.Properties.Name -contains "trace_id") {
-  throw "Trace ID unexpectedly appears as a metric label"
-}
-
-$trace = $null
-for ($attempt = 0; $attempt -lt 20 -and $null -eq $trace; $attempt++) {
-  try {
-    $trace = Invoke-RestMethod -Uri "http://127.0.0.1:3200/api/traces/$traceId"
-    $tempoTraceIds = @(
-      foreach ($batch in $trace.batches) {
-        foreach ($scope in $batch.scopeSpans) {
-          foreach ($span in $scope.spans) {
-            ([BitConverter]::ToString(
-              [Convert]::FromBase64String($span.traceId)
-            )).Replace("-", "").ToLowerInvariant()
-          }
-        }
-      }
-    )
-    if ($tempoTraceIds -notcontains $traceId) { $trace = $null }
-  } catch {
-    $trace = $null
-    Start-Sleep -Seconds 2
-  }
-}
-if ($null -eq $trace) { throw "Tempo trace ID did not match $traceId" }
-"Verified metric exemplar and Tempo trace: $traceId"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\scripts\verify_metric_trace.ps1
 ```
 
-In Grafana, use an account allowed to access Explore, open **BenchScope local
-journey**, hover the synthetic request-rate observation, and click its
-**Trace** exemplar. The exemplar label is the same ID checked above; the
-provisioned destination opens that ID in Tempo. The link was clicked in Grafana
-12.1.1 and its Tempo Explore query contained the exact synthetic trace ID. A
-Viewer-only anonymous session can see the dashboard/exemplar but is redirected
-away from Explore; sign in with an authorized account to follow the trace link.
-The Prometheus exemplar API and Tempo trace API checks above independently
-confirm that the link target is the exact synthetic trace, not a time-window
-guess.
+The script uses a random Compose project name, a temporary synthetic-only env
+file and secret, unique loopback ports, and project-scoped volumes. It never
+reads `.env`; every Compose invocation supplies the temporary env file and
+explicit project/file paths. It refuses a non-local Docker endpoint, missing
+cached images, or unavailable ports; it never pulls images or touches an
+existing Compose project. It starts only that disposable local project, runs
+`GET /api/v1/runs` with a generated W3C `traceparent`, and removes only its own
+containers and volumes afterward. The endpoint returns an empty page from the
+newly created project database; the script fails if that database contains a
+run. No run data is imported or persisted. The local-only auth bypass is
+enabled only in the synthetic API container, and benchmark execution remains
+disabled.
+
+The check polls Prometheus for the exact generated trace ID on the
+`benchscope_http_server_requests_total` exemplar for
+`/api/v1/runs`, verifies the ID is not a series label, then
+fetches that ID from Tempo and compares it with the decoded trace IDs on the
+returned spans. It prints the actual Prometheus version, locked API telemetry
+package versions, pinned local service image versions, exemplar ID, and Tempo
+IDs. A nonzero exit means the integration check did not pass; missing images or
+ports are reported before Compose starts. The images must already be present
+locally; this procedure does not download them.
+
+## Grafana 12.1.1 access limitation
+
+The issue's current Compose settings grant anonymous users only the `Viewer`
+role, disable the login form, and disallow sign-ups. Grafana's versioned
+[role-permission table for 12.1](https://grafana.com/docs/grafana/v12.1/administration/roles-and-permissions/)
+states that Viewer does **not** have **Access Explore** permission (Editor and
+organization administrator do). Therefore the anonymous Viewer can see the
+dashboard exemplar but cannot follow its Grafana **Trace** link into Explore.
+There is no sign-in path or authenticated Viewer account provisioned by this
+local Compose configuration. Creating an Editor/Admin or weakening the
+anonymous role just to make the link work would be an unsafe privilege change;
+this procedure does neither. A user who already has an authorized Grafana
+account in a separately configured local instance can sign in there and use
+the dashboard link, but that is not reproducible from this clean checkout.
+
+The exemplar's exact ID and the isolated script's direct Tempo trace lookup
+verify correlation independently of Grafana permissions. However, the
+Grafana-UI navigation criterion remains **not verified for the default local
+Viewer** until the project has a safe, explicitly authorized local-account
+provisioning path. The permission limitation is not evidence that the metric or
+trace data is incompatible.
+
+## Follow-up verification evidence (2026-10-28)
+
+The focused backend observability tests pass (4 tests). The synthetic Compose
+script's preflight failed closed because the local Docker engine did not have
+`ghcr.io/astral-sh/uv:0.12.5` or `python:3.12-slim`, which are required to
+build this checkout's API image. It did not pull images, create a Compose
+project, start services, or produce a new trace ID; therefore this follow-up
+does not claim a live metric-to-Tempo integration pass. Prometheus `3.5.0`,
+Grafana `12.1.1`, Collector Contrib `0.136.0`, Loki `3.5.3`, and Tempo `2.8.1`
+images were already available locally. The Grafana Viewer/Explore limitation
+above was independently checked against Grafana's 12.1 role-permission table.
 
 The backend test `test_request_metric_exposes_exact_trace_as_openmetrics_exemplar`
-also sends a synthetic request and verifies that the OpenMetrics counter
-sample's exemplar exactly matches the exported span trace ID. Existing tests
-continue to check that trace IDs, owner IDs, and run IDs are absent from metric
-labels and that trace/log correlation is preserved.
+also sends a synthetic request to the harmless empty-run-list route and verifies
+that the OpenMetrics counter sample's exemplar exactly matches the exported
+span trace ID. Existing tests continue to check that trace IDs, owner IDs, and
+run IDs are absent from metric labels and that trace/log correlation is
+preserved.
