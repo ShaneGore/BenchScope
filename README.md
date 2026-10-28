@@ -238,6 +238,25 @@ configured. Local authentication bypass is only for a developer workstation.
    # Edit .env locally; do not commit it.
    ```
 
+   Generate the receiver bearer secret. The receiver reads the Compose secret
+   file; Grafana provisioning reads the same value from the ignored local
+   `.env`. Do not print or commit it:
+
+   ```powershell
+   New-Item -ItemType Directory -Force secrets | Out-Null
+   $bytes = New-Object byte[] 32
+   $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+   $rng.GetBytes($bytes)
+   $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+   [IO.File]::WriteAllText("secrets/alert-receiver-bearer", $secret, [Text.Encoding]::ASCII)
+   $envFile = [IO.File]::ReadAllText(".env")
+   $envFile = [regex]::Replace($envFile, '(?m)^ALERT_RECEIVER_BEARER=.*$', "ALERT_RECEIVER_BEARER=$secret")
+   [IO.File]::WriteAllText(".env", $envFile)
+   [Array]::Clear($bytes, 0, $bytes.Length)
+   $rng.Dispose()
+   Remove-Variable secret
+   ```
+
 2. Start the stack. The Compose API container applies its Alembic migrations
    before serving requests:
 
@@ -289,6 +308,18 @@ It injects an API outage by stopping only the API in a uniquely named,
 disposable Compose project. Use synthetic settings and data; do not use hosted
 URLs, real user data, an external receiver, or a developer's persistent Compose
 project/database. All Compose-published endpoints are loopback-only.
+
+The authenticated Grafana-managed alert rule and webhook procedure added for
+issue #32 is documented in [`_docs/incidents/task-23.md`](./_docs/incidents/task-23.md)
+under “Issue #32 — Stage 1 alert intake”. Grafana evaluates the API-down rule
+against Prometheus and delivers firing/resolved notifications directly to the
+receiver over the Compose network. Prometheus retains a non-notifying mirror
+for the existing dashboard and `promtool` rule test. The procedure uses its own
+ignored synthetic
+configuration and Compose project with alternate loopback ports (API `18000`,
+OTLP `14318`, Prometheus `19090`, Loki `13100`, Tempo `13200`, Grafana `13000`,
+PostgreSQL `15442`) and preflights each before startup. The earlier Task 23
+result above does not claim that alert delivery was exercised.
 
 Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
 the repository's `compose.yaml` and `observability/` files. The required host

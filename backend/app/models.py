@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     desc,
     func,
@@ -119,4 +120,35 @@ class BenchmarkRun(Base):
             desc("created_at"),
         ),
         Index("ix_benchmark_runs_owner_status", "owner_id", "status"),
+    )
+
+
+class IncidentRecord(Base):
+    __tablename__ = "incident_records"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    alert_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(16), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    alert_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fingerprint", "starts_at", name="uq_incident_records_fingerprint_start"
+        ),
+        CheckConstraint(
+            "alert_status IN ('firing', 'resolved')",
+            name="ck_incident_records_alert_status",
+        ),
+        CheckConstraint(
+            "evidence_status IN ('complete', 'partial', 'failed')",
+            name="ck_incident_records_evidence_status",
+        ),
     )
