@@ -81,16 +81,6 @@ services:
     secrets:
       - alert-receiver-bearer
 
-  alertmanager:
-    image: prom/alertmanager:v0.28.1
-    command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --web.listen-address=:9093
-    volumes:
-      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    secrets:
-      - alert-receiver-bearer
-
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.136.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
@@ -116,8 +106,6 @@ services:
       - prometheus-data:/prometheus
     depends_on:
       api:
-        condition: service_started
-      alertmanager:
         condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
@@ -158,6 +146,7 @@ services:
   grafana:
     image: grafana/grafana:12.1.1
     environment:
+      ALERT_RECEIVER_BEARER: ${ALERT_RECEIVER_BEARER:?Set ALERT_RECEIVER_BEARER in local configuration}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "true"

@@ -55,9 +55,9 @@ stopped, altered, or cleaned up.
 
 ## Issue #32 — Stage 1 authenticated alert intake
 
-This is a local-only verification of the Prometheus-managed
-`BenchScopeApiUnavailable` rule being sent through Alertmanager to the
-separate, bearer-authenticated receiver. It verifies a sanitized incident
+This is a local-only verification of Grafana's managed
+`BenchScopeApiUnavailable` rule evaluating Prometheus data and sending a
+bearer-authenticated webhook directly to the receiver. It verifies a sanitized incident
 record and its resolved update. It does **not** verify AI investigation,
 recovery automation, or completion of the course incident-response criterion.
 Use synthetic data only. Do not use the repository `.env`, hosted services,
@@ -68,10 +68,11 @@ The default published ports (`8000`, `4318`, `9090`, `3100`, `3200`, `3000`)
 were occupied, so this disposable project uses alternate loopback ports:
 API `18000`, OTLP `14318`, Prometheus `19090`, Loki `13100`, Tempo `13200`,
 Grafana `13000`, and PostgreSQL `15442`. A listener-only check found these
-alternates free, but recheck immediately before startup. The
-`prom/alertmanager:v0.28.1` image is not cached, so E2E was not run; no service
-was stopped and no image was pulled. Do not run E2E until the image is locally
-available and explicitly authorized.
+alternates free, but recheck immediately before startup. Grafana owns the
+notification-driving rule and delivers firing/resolved webhooks directly to
+the receiver; no standalone Alertmanager image is needed. Prometheus retains
+a non-notifying mirror only for the existing dashboard and `promtool` rule
+test.
 
 From the repository root in a clean PowerShell session, confirm the Docker
 context is local, the exact disposable project does not already exist, and
@@ -104,7 +105,6 @@ $dbPort = 15442
 $requiredImages = @(
   "postgres:17-alpine",
   "prom/prometheus:v3.5.0",
-  "prom/alertmanager:v0.28.1",
   "grafana/loki:3.5.3",
   "grafana/tempo:2.8.1",
   "grafana/grafana:12.1.1",
@@ -120,9 +120,9 @@ foreach ($image in $requiredImages) {
 
 Only after that preflight succeeds, make the dedicated ignored configuration
 file `.env.incident-response-disposable` and its ignored Compose-secret file.
-Both credentials below are generated randomly and remain local. The bearer
-secret is supplied only as a Compose secret to Alertmanager and the receiver;
-it is never placed in an environment variable or printed.
+Both credentials below are generated randomly and remain local. The bearer is
+provided to the receiver as a Compose secret and to Grafana through the ignored
+local Compose environment file; it is never printed.
 
 ```powershell
 New-Item -ItemType Directory -Force secrets | Out-Null
@@ -148,6 +148,7 @@ LOKI_PORT=13100
 TEMPO_PORT=13200
 GRAFANA_PORT=13000
 ALERT_RECEIVER_SECRET_FILE=./secrets/alert-receiver-bearer
+ALERT_RECEIVER_BEARER=$bearer
 APP_MODE=local
 APP_ENV=development
 LOCAL_AUTH_BYPASS=false
@@ -164,20 +165,21 @@ try {
 if (@($listeners | Where-Object { $requiredPorts -contains $_.Port }).Count -gt 0) {
   throw "An alternate port became occupied; abort without changing its listener."
 }
-# Run only after explicit authorization and confirmation that every image is cached.
+# Run only after confirming every required image is cached; do not pull images.
 docker compose --env-file .env.incident-response-disposable -p $project up --build --pull never --wait --detach
 docker compose --env-file .env.incident-response-disposable -p $project ps
 ```
 
-Do not substitute `.env` or start the default Compose project. The Alertmanager
-and receiver have no published host ports. This project publishes its API,
-OTLP, Prometheus, Loki, Tempo, Grafana, and database only on the alternate
+Do not substitute `.env` or start the default Compose project. The receiver
+has no published host port; Grafana reaches it at
+`http://alert-receiver:8001/grafana/v1` on the private Compose network. This
+project publishes its API, OTLP, Prometheus, Loki, Tempo, Grafana, and database only on the alternate
 loopback ports above; the normal Compose defaults remain unchanged.
 
 Verify the API, Prometheus, Loki, Tempo, and Grafana health URLs; confirm
 `up{job="api"}` is `1`, the alert is clear, and no existing incident record
 is being mistaken for this exercise. Then stop only this project's API and
-wait long enough for the one-minute rule and Alertmanager delivery:
+wait long enough for Grafana's one-minute rule and webhook delivery:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18000/ready
@@ -193,20 +195,24 @@ curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=ALERTS%7Balertname%3D
 docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
 ```
 
-The Prometheus alert must be firing and the database row must show
-`firing|complete` for complete evidence. `firing|partial` or `firing|failed`
-proves authenticated delivery but records incomplete diagnostics; record that
-state without describing the evidence as complete. No row means delivery was
-not verified. The receiver writes no record for missing or invalid
-authentication, and it stores no raw webhook or datasource response.
+Grafana's `BenchScopeApiUnavailable` rule must be firing and the database row
+must show `firing|complete` for complete evidence. The Prometheus mirror may
+also show firing, but it has no notification route. `firing|partial` or
+`firing|failed` proves authenticated webhook delivery but records incomplete
+diagnostics; record that state without describing the evidence as complete.
+No row means delivery was not verified. The receiver writes no record for
+missing or invalid authentication, and it stores no raw webhook or datasource
+response.
 
-Restart only this project's API. Wait for readiness, `up=1`, and the alert to
-resolve; then confirm the same incident row is resolved rather than duplicated:
+Restart only this project's API. Wait for readiness and `up=1`; allow up to
+60 seconds for Grafana's 30-second evaluation and notification intervals to
+deliver the resolved webhook. Then confirm the same incident row is resolved
+rather than duplicated:
 
 ```powershell
 docker compose --env-file .env.incident-response-disposable -p $project start api
 Invoke-RestMethod http://127.0.0.1:18000/ready
-Start-Sleep -Seconds 30
+Start-Sleep -Seconds 60
 curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
 Invoke-RestMethod http://127.0.0.1:19090/api/v1/alerts
 docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'

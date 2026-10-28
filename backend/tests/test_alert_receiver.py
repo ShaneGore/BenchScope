@@ -49,22 +49,36 @@ def _webhook(
     return {
         "receiver": "benchscope-alert-intake",
         "status": status,
+        "state": "alerting" if status == "firing" else "ok",
+        "orgId": 1,
+        "title": f"[{status.upper()}:1] {name}",
+        "message": "synthetic local alert",
         "alerts": [
             {
                 "status": status,
                 "labels": {"alertname": name, "severity": "warning"},
                 "annotations": {"summary": "synthetic local alert"},
                 "startsAt": starts_at,
-                "endsAt": ends_at,
+                "endsAt": (
+                    ends_at
+                    if status == "resolved"
+                    else "0001-01-01T00:00:00Z"
+                ),
                 "generatorURL": "http://prometheus:9090/graph",
                 "fingerprint": fingerprint,
+                "orgId": 1,
+                "silenceURL": "http://grafana:3000/alerting/silence",
+                "dashboardURL": "",
+                "panelURL": "",
+                "values": {"A": 0, "C": 1},
+                "valueString": "synthetic value",
             }
         ],
         "groupLabels": {"alertname": name},
         "commonLabels": {"alertname": name},
         "commonAnnotations": {"summary": "synthetic local alert"},
-        "externalURL": "http://alertmanager:9093",
-        "version": "4",
+        "externalURL": "http://grafana:3000",
+        "version": "1",
         "groupKey": "{}",
         "truncatedAlerts": 0,
     }
@@ -158,7 +172,7 @@ def _fetcher(payloads: dict[str, dict] | None = None, calls: list | None = None)
 
 def _post(client, payload: dict, secret: str = SECRET):
     return client.post(
-        "/alertmanager/v4",
+        "/grafana/v1",
         content=json.dumps(payload),
         headers={
             "Authorization": f"Bearer {secret}",
@@ -263,7 +277,7 @@ def test_invalid_webhooks_are_rejected_without_queries_or_records(
 
     with TestClient(app) as client:
         response = client.post(
-            "/alertmanager/v4",
+            "/grafana/v1",
             content=raw_body if raw_body is not None else json.dumps(payload),
             headers={
                 "Authorization": f"Bearer {SECRET}",
@@ -289,9 +303,9 @@ def test_authentication_and_missing_secret_fail_closed_before_collection(
         "synthetic local alert", TOKEN + OWNER + PROMPT + OUTPUT
     )
     with caplog.at_level(logging.INFO), TestClient(app) as client:
-        absent = client.post("/alertmanager/v4", content=raw_payload)
+        absent = client.post("/grafana/v1", content=raw_payload)
         invalid = client.post(
-            "/alertmanager/v4",
+            "/grafana/v1",
             content=raw_payload,
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
@@ -324,7 +338,7 @@ def test_oversized_body_is_rejected_before_collection(tmp_path) -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/alertmanager/v4",
+            "/grafana/v1",
             content=b"x" * (16 * 1024 + 1),
             headers={
                 "Authorization": f"Bearer {SECRET}",
@@ -522,6 +536,25 @@ def test_datasource_errors_are_sanitized_and_mark_partial(tmp_path, caplog):
     assert (
         error_sentinel not in json.dumps(record.evidence) + response.text + caplog.text
     )
+
+
+def test_unexpected_collection_error_is_not_acknowledged_as_recorded(tmp_path):
+    database_url = _database(tmp_path)
+    app = create_receiver_app(
+        database_url,
+        secret=SECRET,
+        fetch_json=lambda *_: (_ for _ in ()).throw(RuntimeError("unexpected")),
+        clock=lambda: NOW,
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = _post(client, _webhook())
+
+    assert response.status_code == 500
+    (record,) = _read_records(database_url)
+    assert record.alert_status == "firing"
+    assert record.evidence_status == "failed"
+    assert record.evidence["reason"] == "collection_not_finished"
 
 
 def test_total_budget_stops_additional_datasource_queries() -> None:

@@ -28,7 +28,7 @@ from app.database import create_database_engine
 from app.models import IncidentRecord
 
 ALERT_NAME = "BenchScopeApiUnavailable"
-WEBHOOK_PATH = "/alertmanager/v4"
+WEBHOOK_PATH = "/grafana/v1"
 MAX_BODY_BYTES = 16 * 1024
 MAX_EVIDENCE_BYTES = 64 * 1024
 MAX_SOURCE_BYTES = 256 * 1024
@@ -81,8 +81,15 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, An
     return result
 
 
-def _exact_keys(value: Any, keys: set[str]) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != keys:
+def _exact_keys(
+    value: Any, keys: set[str], optional: set[str] | None = None
+) -> dict[str, Any]:
+    optional_keys = optional or set()
+    if (
+        not isinstance(value, dict)
+        or not keys.issubset(value)
+        or set(value) - keys - optional_keys
+    ):
         raise InvalidWebhook
     return value
 
@@ -109,7 +116,7 @@ def _timestamp(value: Any) -> datetime:
     return normalized
 
 
-def parse_alertmanager_webhook(body: bytes) -> dict[str, Any]:
+def parse_grafana_webhook(body: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(
             body,
@@ -131,16 +138,35 @@ def parse_alertmanager_webhook(body: bytes) -> dict[str, Any]:
             "version",
             "groupKey",
             "truncatedAlerts",
+            "orgId",
+            "state",
+            "title",
+            "message",
         },
     )
     if (
-        payload["version"] != "4"
+        payload["version"] != "1"
         or not all(
             isinstance(payload[key], str)
-            for key in ("receiver", "status", "externalURL", "groupKey")
+            for key in (
+                "receiver",
+                "status",
+                "state",
+                "title",
+                "message",
+                "externalURL",
+                "groupKey",
+            )
         )
         or type(payload["truncatedAlerts"]) is not int
         or payload["truncatedAlerts"] != 0
+        or type(payload["orgId"]) is not int
+        or payload["orgId"] < 1
+        or payload["state"]
+        != ("alerting" if payload["status"] == "firing" else "ok")
+        or any(
+            len(payload[key]) > MAX_BODY_BYTES for key in ("title", "message")
+        )
     ):
         raise InvalidWebhook
     _string_map(payload["groupLabels"])
@@ -159,10 +185,29 @@ def parse_alertmanager_webhook(body: bytes) -> dict[str, Any]:
             "endsAt",
             "generatorURL",
             "fingerprint",
+            "orgId",
         },
+        {"silenceURL", "dashboardURL", "panelURL", "values", "valueString"},
     )
     labels = _string_map(alert["labels"])
     _string_map(alert["annotations"])
+    for key in ("generatorURL", "silenceURL", "dashboardURL", "panelURL", "valueString"):
+        if key in alert and (
+            not isinstance(alert[key], str) or len(alert[key]) > MAX_BODY_BYTES
+        ):
+            raise InvalidWebhook
+    if "values" in alert and (
+        not isinstance(alert["values"], dict)
+        or any(
+            not isinstance(key, str)
+            or isinstance(value, bool)
+            or not isinstance(value, (str, int, float))
+            or (isinstance(value, str) and len(value) > 1024)
+            or (isinstance(value, float) and not math.isfinite(value))
+            for key, value in alert["values"].items()
+        )
+    ):
+        raise InvalidWebhook
     starts_at = _timestamp(alert["startsAt"])
     ends_at = _timestamp(alert["endsAt"])
     fingerprint = alert["fingerprint"]
@@ -172,7 +217,9 @@ def parse_alertmanager_webhook(body: bytes) -> dict[str, Any]:
         or status not in {"firing", "resolved"}
         or payload["status"] != status
         or not isinstance(alert["generatorURL"], str)
-        or starts_at > ends_at
+        or (status == "resolved" and starts_at > ends_at)
+        or type(alert["orgId"]) is not int
+        or alert["orgId"] != payload["orgId"]
         or not isinstance(fingerprint, str)
         or not FINGERPRINT_PATTERN.fullmatch(fingerprint)
         or not isinstance(labels.get("alertname"), str)
@@ -651,7 +698,7 @@ def create_receiver_app(
                 )
             body.extend(chunk)
         try:
-            alert = parse_alertmanager_webhook(bytes(body))
+            alert = parse_grafana_webhook(bytes(body))
         except InvalidWebhook:
             return JSONResponse(status_code=400, content={"status": "invalid_payload"})
 
@@ -721,22 +768,14 @@ def create_receiver_app(
         except SQLAlchemyError:
             return JSONResponse(status_code=503, content={"status": "not_ready"})
 
-        try:
-            evidence = await evidence_collector(received_at)
-            evidence = _bounded_evidence(evidence)
-            evidence_status = evidence.get("status")
-            if evidence_status not in {"complete", "partial", "failed"}:
-                evidence = {
-                    **_bounded_evidence({}),
-                    "status": "failed",
-                    "reason": "collection_failed",
-                }
-                evidence_status = "failed"
-        except Exception:  # noqa: BLE001 - conceal datasource and evidence errors
+        evidence = await evidence_collector(received_at)
+        evidence = _bounded_evidence(evidence)
+        evidence_status = evidence.get("status")
+        if evidence_status not in {"complete", "partial", "failed"}:
             evidence = {
+                **_bounded_evidence({}),
                 "status": "failed",
                 "reason": "collection_failed",
-                "truncated": {"logs": False, "traces": False, "spans": False},
             }
             evidence_status = "failed"
         try:
