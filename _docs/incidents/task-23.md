@@ -240,3 +240,30 @@ docker volume ls --filter "label=com.docker.compose.project=$project"
 This exercise demonstrates only authenticated local alert delivery, persistent
 deduplication, and bounded sanitized evidence. It does not demonstrate AI
 investigation, recovery automation, or completion of the course criterion.
+
+## Issue #33 — Stage 2 read-only investigation
+
+The local `app.incident_investigation` runner accepts only a persisted
+`IncidentRecord` with a schema-valid Stage 1 evidence bundle in `complete` or
+`partial` state, serialized at no more than 64 KiB. It sends only the
+allowlisted evidence, completion status, and truncation flags in the prompt.
+It stores a summary only after capability checks, selected/effective model
+checks, UTF-8/4 KiB bounds, and sentinel checks pass. It adds no recovery or
+benchmark operation.
+
+The Copilot CLI adapter passes exactly `--model=gpt-6-luna`, disables built-in
+MCPs, selects no available tools, and denies tool and URL access. It refuses to
+invoke without explicit entitlement, usage/cost, and tool-policy verification.
+Process-tree cleanup uses an isolated process group on POSIX and a kill-on-close
+Job Object on Windows. Both use a 60-second run timeout, allow up to five
+seconds for graceful shutdown, then force-terminate remaining descendants.
+
+The automated tests use a fake provider and controlled local child processes.
+They prove validation, failure gates, output bounds, and process cleanup only;
+they are **mocked/local tests, not evidence that a live model was used**.
+The installed Copilot CLI 1.0.81 accepted the non-requesting
+`--model=gpt-6-luna --help` invocation and its help exposed the model and
+tool-control flags. No model request was made: effective model identity,
+existing entitlement, usage/cost limits, and enforcement of tool restrictions
+were not verified. Therefore no successful investigation is claimed and the
+required live verification remains blocked.

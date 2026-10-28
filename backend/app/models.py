@@ -134,6 +134,7 @@ class IncidentRecord(Base):
     alert_status: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence_status: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    investigation_summary: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
