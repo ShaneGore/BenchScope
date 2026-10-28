@@ -16,7 +16,7 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   the current owner and filter scope or the request returns a generic 422.
 - Filtering: `?status=`, `?model=`, `?from=`, `?to=`.
   Run model matches `profile_snapshot.model_name` exactly. Status values are
-  `running`, `completed`, `failed`, and `interrupted`. `from` and `to` require
+  `running`, `completed`, `failed`, `interrupted`, and `cancelled`. `from` and `to` require
   timezone-aware instants, normalize to UTC, and apply to `started_at`; `from` is
   inclusive, `to` is exclusive, and `from` must precede `to`.
 
@@ -89,12 +89,13 @@ FastAPI-generated OpenAPI is the source of truth; TS types generated via `openap
   an authorization check.
 - `POST /benchmark/runs` — start a run with UUID `{profile_id, config_id}`. Returns run id + `running`; 409 if a run is already active (the rejected request creates no row), 503 if no adapter is configured.
 - `GET /benchmark/runs/{id}` — owner-scoped status and sanitized diagnostics.
+- `POST /benchmark/runs/{id}/cancel` - owner-scoped cancellation; waits for cooperative adapter cleanup and returns the existing status. Only the local synthetic coroutine seam is covered; no process termination is promised.
 - `POST /runs/{id}/retry` — retry an owned failed launched run, creating a distinct linked attempt.
 
-Runner start/status/retry routes are not registered unless the server is local
+Runner start/status/cancel/retry routes are not registered unless the server is local
 and benchmarks are enabled (404 otherwise). The capability endpoint remains
 available in every mode; frontend gating is presentation only.
-The interim config UUID is opaque; no config catalog or private adapter mapping is claimed. Cancellation is not implemented or exposed; its semantics are deferred to #25.
+The interim config UUID is opaque; no config catalog or private adapter mapping is claimed. Cancellation does not create a run or metrics; timeouts remain `failed` and unexpected process loss remains `interrupted`.
 
 ### Demo (anonymous, read-only)
 - `GET /demo/runs` — deterministic synthetic fixture records; no authentication,

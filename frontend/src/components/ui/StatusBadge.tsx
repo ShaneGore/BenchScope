@@ -40,6 +40,13 @@ const config: Record<
     border: 'border-status-interrupted-border',
     icon: AlertTriangle,
   },
+  cancelled: {
+    label: 'Cancelled',
+    fg: 'text-status-interrupted-fg',
+    bg: 'bg-status-interrupted-bg',
+    border: 'border-status-interrupted-border',
+    icon: AlertTriangle,
+  },
 };
 
 export function StatusBadge({ status, size = 'md', showDot = false }: StatusBadgeProps) {

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { BenchmarkRun, ModelProfile } from '@/types';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { BenchmarkPage } from './BenchmarkPage';
 import { RunDetailPage } from './RunDetailPage';
 
@@ -100,4 +101,10 @@ test('local retry uses the backend runner route when capability is enabled', asy
   render(<RunDetailPage id={failedRun.id} runnerEnabled />);
   fireEvent.click(await screen.findByRole('button', { name: 'Retry run' }));
   await waitFor(() => expect(mocks.runner.retry).toHaveBeenCalledWith(failedRun.id));
+});
+
+
+test('cancelled run status renders distinctly', () => {
+  render(<StatusBadge status="cancelled" />);
+  expect(screen.getByRole('status', { name: 'Cancelled' })).toBeTruthy();
 });

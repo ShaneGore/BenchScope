@@ -104,7 +104,7 @@ class BenchmarkRun(Base):
             "source IN ('imported', 'launched')", name="ck_benchmark_runs_source"
         ),
         CheckConstraint(
-            "status IN ('running', 'completed', 'failed', 'interrupted')",
+            "status IN ('running', 'completed', 'failed', 'interrupted', 'cancelled')",
             name="ck_benchmark_runs_status",
         ),
         Index(

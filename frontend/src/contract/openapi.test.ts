@@ -79,22 +79,22 @@ test("contract exposes required endpoints", () => {
   expectTypeOf<paths>().toHaveProperty("/benchmark/runs/{id}");
   expectTypeOf<paths>().toHaveProperty("/benchmark/capabilities");
   expectTypeOf<paths>().toHaveProperty("/runs/{id}/retry");
-  expectTypeOf<paths>().not.toHaveProperty("/benchmark/runs/{id}/cancel");
+  expectTypeOf<paths>().toHaveProperty("/benchmark/runs/{id}/cancel");
   expectTypeOf<paths>().toHaveProperty("/api/v1/demo/runs");
   expectTypeOf<paths>().toHaveProperty("/api/v1/demo/runs/{id}");
 });
 
-test("interim runner contract validates IDs and exposes no cancellation mapping", () => {
+test("interim runner contract validates IDs and exposes distinct cancellation", () => {
   type StartRequest = components["schemas"]["BenchmarkStartRequest"];
   expectTypeOf<StartRequest>().toHaveProperty("profile_id");
   expectTypeOf<StartRequest>().toHaveProperty("config_id");
   expectTypeOf<components["schemas"]["RunStatus"]>().toEqualTypeOf<
-    "running" | "completed" | "failed" | "interrupted"
+    "running" | "completed" | "failed" | "interrupted" | "cancelled"
   >();
   expectTypeOf<RunStatus>().toEqualTypeOf<
-    "running" | "completed" | "failed" | "interrupted"
+    "running" | "completed" | "failed" | "interrupted" | "cancelled"
   >();
-  expectTypeOf<"cancelled">().not.toMatchTypeOf<RunStatus>();
+  expectTypeOf<"cancelled">().toMatchTypeOf<RunStatus>();
   expectTypeOf<"CANCELLED">().not.toMatchTypeOf<ErrorCategory>();
 });
 

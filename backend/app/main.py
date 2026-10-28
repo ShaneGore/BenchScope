@@ -171,7 +171,7 @@ def create_app(
 
         app.state.benchmark_adapter = benchmark_adapter
         app.state.benchmark_lock = asyncio.Lock()
-        app.state.benchmark_tasks = set()
+        app.state.benchmark_tasks = {}
         app.include_router(runner_router, prefix=API_PREFIX)
     app.include_router(profiles_router, prefix=API_PREFIX)
     app.include_router(imports_router, prefix=API_PREFIX)

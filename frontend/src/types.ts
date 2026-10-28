@@ -2,7 +2,8 @@ export type RunStatus =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'interrupted';
+  | 'interrupted'
+  | 'cancelled';
 
 export type AppMode = 'local' | 'hosted' | 'demo';
 
