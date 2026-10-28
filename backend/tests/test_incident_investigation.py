@@ -1,17 +1,60 @@
 import json
 import os
-import sys
-import time
+import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime
+from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from alembic import command
 from app import incident_investigation as investigation
 from app.models import Base, IncidentRecord
+
+
+def test_incident_migration_revisions_fit_postgres_version_column_offline(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    scripts = ScriptDirectory.from_config(config)
+    context = MigrationContext.configure(
+        url="postgresql://", opts={"as_sql": True, "output_buffer": StringIO()}
+    )
+    version_table = context.impl.version_table_impl(
+        version_table="alembic_version",
+        version_table_schema=None,
+        version_table_pk=True,
+    )
+    capacity = version_table.c.version_num.type.length
+    assert capacity == 32
+    assert all(
+        len(revision.revision) <= capacity for revision in scripts.walk_revisions()
+    )
+    assert scripts.get_current_head() == "0005_incident_summary"
+
+    upgrade = StringIO()
+    config.output_buffer = upgrade
+    command.upgrade(config, "head", sql=True)
+    assert "VARCHAR(32)" in upgrade.getvalue()
+    assert "ADD COLUMN investigation_summary TEXT" in upgrade.getvalue()
+    assert "'0005_incident_summary'" in upgrade.getvalue()
+
+    downgrade = StringIO()
+    config.output_buffer = downgrade
+    command.downgrade(config, "head:0004_incident_records", sql=True)
+    assert "DROP COLUMN investigation_summary" in downgrade.getvalue()
+    assert "'0004_incident_records'" in downgrade.getvalue()
+
+
+def _usage():
+    return investigation.CopilotUsage("gpt-6-luna", 1, 1, 87207000, 15005, 75)
 
 
 def _evidence(status="complete"):
@@ -75,7 +118,7 @@ def _record(evidence=None, status="complete"):
 class FakeProvider:
     def __init__(self, response=None, capabilities=None):
         self.response = response or investigation.ProviderResponse(
-            "gpt-6-luna", "gpt-6-luna", "API returned 503 responses."
+            "gpt-6-luna", "gpt-6-luna", "API returned 503 responses.", _usage()
         )
         self.capabilities = capabilities or investigation.CapabilityVerification(
             True, True, True, True
@@ -214,7 +257,11 @@ def test_input_with_sentinel_is_rejected_not_forwarded():
         b"not-json",
         b'{"type":"assistant.message","data":{"content":"ok","model":"other"}}',
         b'{"type":"assistant.message","data":{"content":"unsafe","model":"gpt-6-luna","toolRequests":[{"name":"shell"}]}}',
+        b'{"type":"assistant.message","data":{"content":"unsafe","model":"gpt-6-luna","serverTools":[{"name":"shell"}]}}',
         b'{"type":"tool.execution_start"}',
+        b'{"type":null}',
+        b'{"data":{}}',
+        b'{"type":"model.call_start","type":"assistant.message"}',
     ],
 )
 def test_cli_event_parser_rejects_malformed_tool_or_model_events(raw):
@@ -224,11 +271,17 @@ def test_cli_event_parser_rejects_malformed_tool_or_model_events(raw):
 
 def test_cli_event_parser_reads_selected_and_effective_model_metadata():
     events = [
-        {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+        {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
         {
             "type": "assistant.message",
-            "data": {"content": "Summary.", "model": "gpt-6-luna"},
+            "data": {
+                "content": "Summary.",
+                "model": "gpt-6-luna",
+                "serverTools": [],
+                "toolRequests": [],
+            },
         },
+        {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
     ]
     result = investigation._parse_cli_events(
         "\n".join(json.dumps(event) for event in events).encode()
@@ -244,30 +297,59 @@ def test_cli_event_parser_reads_selected_and_effective_model_metadata():
         [
             {
                 "type": "assistant.message",
-                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+                "data": {
+                    "content": "Summary.",
+                    "model": "gpt-6-luna",
+                    "serverTools": [],
+                },
             }
         ],
         [
-            {"type": "session.start", "data": {"model": "unknown"}},
+            {"type": "model.call_start", "data": {"model": "unknown"}},
             {
                 "type": "assistant.message",
-                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+                "data": {
+                    "content": "Summary.",
+                    "model": "gpt-6-luna",
+                    "serverTools": [],
+                },
             },
+            {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
         ],
         [
-            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+            {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
             {
                 "type": "assistant.message",
-                "data": {"content": "Summary.", "model": "unknown"},
+                "data": {
+                    "content": "Summary.",
+                    "model": "unknown",
+                    "serverTools": [],
+                },
             },
+            {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
         ],
         [
-            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+            {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
             {
                 "type": "assistant.message",
-                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+                "data": {
+                    "content": "Summary.",
+                    "model": "gpt-6-luna",
+                    "serverTools": [],
+                },
             },
-            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+            {"type": "model.call_final_result", "data": {"model": "unknown"}},
+        ],
+        [
+            {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Summary.",
+                    "model": "gpt-6-luna",
+                    "serverTools": [],
+                },
+            },
         ],
     ],
 )
@@ -277,56 +359,303 @@ def test_cli_event_parser_requires_explicit_matching_model_metadata(events):
         investigation._parse_cli_events(raw)
 
 
-def test_copilot_cli_flags_are_not_proof_of_effective_policy(monkeypatch):
-    calls = []
-
-    def fake_run(args, cwd, timeout):
-        calls.append(args)
-        return (
-            (
-                b"--model --available-tools=none --deny-tool=* --deny-url=* "
-                b"--disable-builtin-mcps"
-            ),
-            b"",
+@pytest.mark.parametrize("tool_requests", [None, "", {}, False, [None]])
+def test_cli_event_parser_rejects_malformed_or_nonempty_tool_requests(tool_requests):
+    events = [
+        {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
+        {
+            "type": "assistant.message",
+            "data": {
+                "model": "gpt-6-luna",
+                "content": "Summary.",
+                "serverTools": [],
+                "toolRequests": tool_requests,
+            },
+        },
+        {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
+    ]
+    with pytest.raises(investigation.InvestigationRejected, match="unsafe"):
+        investigation._parse_cli_events(
+            "\n".join(json.dumps(event) for event in events).encode()
         )
 
+
+@pytest.mark.parametrize("server_tools", [None, "", {}, False, ["read_file"]])
+def test_cli_event_parser_requires_empty_server_tool_list(server_tools):
+    raw = json.dumps(
+        {
+            "type": "assistant.message",
+            "data": {
+                "model": "gpt-6-luna",
+                "content": "Summary.",
+                "serverTools": server_tools,
+            },
+        }
+    ).encode()
+    with pytest.raises(investigation.InvestigationRejected, match="exposed tools"):
+        investigation._parse_cli_events(raw)
+
+
+def test_cli_event_parser_distinguishes_selected_and_effective_model_errors():
+    message = {
+        "type": "assistant.message",
+        "data": {"model": "gpt-6-luna", "content": "ok", "serverTools": []},
+    }
+    events = [
+        {"type": "model.call_start", "data": {"model": "other"}},
+        message,
+        {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
+    ]
+    with pytest.raises(investigation.InvestigationRejected, match="selected model"):
+        investigation._parse_cli_events(
+            "\n".join(json.dumps(event) for event in events).encode()
+        )
+    events[0]["data"]["model"] = "gpt-6-luna"
+    events[2]["data"]["model"] = "other"
+    with pytest.raises(investigation.InvestigationRejected, match="effective model"):
+        investigation._parse_cli_events(
+            "\n".join(json.dumps(event) for event in events).encode()
+        )
+
+
+def test_copilot_cli_preflight_never_promotes_help_token_or_opt_in_to_proof(
+    monkeypatch,
+):
+    calls = []
+    output_limits = []
+    help_output = (
+        b"--model --available-tools --disable-builtin-mcps "
+        b"--no-custom-instructions --no-ask-user --max-ai-credits "
+        b"--output-format --prompt --secret-env-vars --sync-session "
+        b"--usage-output-file"
+    )
+
+    def fake_run(args, cwd, timeout, output_limit):
+        calls.append(args)
+        output_limits.append(output_limit)
+        if "--help" in args:
+            return help_output, b""
+        if "permissions" in args:
+            return (
+                b"--available-tools do not expose tools filtered\n  out by the list",
+                b"",
+            )
+        return b"GitHub Copilot CLI 1.0.81", b""
+
     monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
-    provider = investigation.CopilotCLIProvider("copilot")
+    monkeypatch.setenv("GH_TOKEN", "arbitrary-token-not-entitlement")
+    provider = investigation.CopilotCLIProvider("copilot", costs_authorized=True)
     result = provider.verify_capabilities()
-    assert not result.permits_invocation
-    assert not result.model_flag_accepted
+
+    assert result.model_flag_accepted
+    assert result.empty_tool_allowlist_argument_accepted
+    assert result.tool_controls_documented
     assert not result.tool_restrictions_verified
-    assert not result.existing_entitlement_verified
-    assert not result.usage_cost_limit_verified
+    assert not result.existing_auth_credential_available
+    assert not result.usage_cost_authorized
+    assert not result.permits_invocation
     assert result.blocker == investigation.CLI_INVOCATION_BLOCKER
-    assert calls == []
-    with pytest.raises(investigation.InvestigationBlocked, match="disabled"):
-        provider.invoke(investigation._make_prompt(_evidence(), "complete"))
-    assert calls == []
-
-
-def test_copilot_cli_args_use_an_empty_tool_allowlist_and_node_loader(tmp_path):
-    shim = tmp_path / "copilot.ps1"
-    shim.touch()
-    loader = tmp_path / "node_modules" / "@github" / "copilot" / "npm-loader.js"
-    loader.parent.mkdir(parents=True)
-    loader.touch()
-    node = tmp_path / "node.exe"
-    node.touch()
-
-    args = investigation._build_cli_args(str(shim), "sanitized prompt")
-
-    assert args[:2] == [str(node), str(loader)]
-    assert args[2:4] == ["--model=gpt-6-luna", "--prompt"]
-    assert args[4] == "sanitized prompt"
-    assert args[5:] == [
-        "--output-format=json",
-        "--available-tools",
+    with pytest.raises(investigation.InvestigationBlocked, match="entitlement"):
+        provider.invoke("anything")
+    assert len(calls) == 3
+    assert calls[0][1:] == [
+        "--model=gpt-6-luna",
+        "--help",
+    ]
+    assert calls[1][1:] == [
+        "--model=gpt-6-luna",
+        "help",
+        "permissions",
+    ]
+    version_args = calls[2][1:]
+    assert version_args[:6] == [
+        "--model=gpt-6-luna",
+        "--available-tools=",
         "--disable-builtin-mcps",
         "--no-custom-instructions",
         "--no-ask-user",
-        "--no-auto-update",
+        "--max-ai-credits=30",
     ]
+    assert version_args[6].startswith("--usage-output-file=")
+    assert version_args[7:] == [
+        "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
+        "--sync-session=off",
+        "--output-format=json",
+        "--version",
+    ]
+    assert all(sum(arg.startswith("--model=") for arg in args) == 1 for args in calls)
+    assert all("--allow-all-tools" not in args for args in calls)
+    assert output_limits == [investigation.CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES] * 3
+
+
+def test_copilot_cli_preflight_requires_successful_empty_allowlist_parse(monkeypatch):
+    calls = []
+
+    def fake_run(args, cwd, timeout, output_limit):
+        calls.append(args)
+        if "--help" in args:
+            help_output = (
+                b"--model --available-tools --disable-builtin-mcps "
+                b"--no-custom-instructions --no-ask-user --max-ai-credits "
+                b"--output-format --prompt --secret-env-vars --sync-session "
+                b"--usage-output-file"
+            )
+            return help_output, b""
+        if "permissions" in args:
+            return (
+                b"--available-tools do not expose tools filtered out by the list",
+                b"",
+            )
+        raise investigation.InvestigationBlocked("CLI exited unsuccessfully")
+
+    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
+    result = investigation.CopilotCLIProvider("copilot").verify_capabilities()
+
+    assert not result.model_flag_accepted
+    assert not result.empty_tool_allowlist_argument_accepted
+    assert not result.permits_invocation
+    assert result.blocker == investigation.CLI_PREFLIGHT_BLOCKER
+    assert len(calls) == 3
+
+
+def test_copilot_cli_preflight_fails_closed_when_help_lacks_required_flags(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_run(args, cwd, timeout, output_limit):
+        calls.append(args)
+        return b"--model", b""
+
+    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
+    result = investigation.CopilotCLIProvider("copilot").verify_capabilities()
+
+    assert not result.model_flag_accepted
+    assert not result.empty_tool_allowlist_argument_accepted
+    assert not result.permits_invocation
+    assert result.blocker == investigation.CLI_PREFLIGHT_BLOCKER
+    assert len(calls) == 1
+
+
+def test_copilot_cli_args_use_pinned_model_empty_tools_and_usage_capture(tmp_path):
+    shim = tmp_path / "copilot.ps1"
+    shim.touch()
+
+    args = investigation._build_cli_args(
+        str(shim), "sanitized prompt", tmp_path / "usage.json"
+    )
+
+    if os.name == "nt":
+        assert "powershell.exe" in args[0].lower()
+        assert args[1:7] == [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(shim),
+        ]
+        cli_args = args[7:]
+    else:
+        assert args[0] == str(shim)
+        cli_args = args[1:]
+    assert cli_args[:2] == ["--model=gpt-6-luna", "--prompt"]
+    assert cli_args[2] == "sanitized prompt"
+    assert cli_args[3:] == [
+        "--output-format=json",
+        "--available-tools=",
+        "--disable-builtin-mcps",
+        "--no-custom-instructions",
+        "--no-ask-user",
+        "--max-ai-credits=30",
+        f"--usage-output-file={tmp_path / 'usage.json'}",
+        "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
+        "--sync-session=off",
+    ]
+
+
+def test_cli_usage_parser_accepts_only_one_verified_luna_request(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(
+        json.dumps(
+            {
+                "currentModel": "gpt-6-luna",
+                "totalUserRequests": 1,
+                "totalPremiumRequestCost": 1,
+                "totalNanoAiu": 87207000,
+                "lastCallInputTokens": 15005,
+                "lastCallOutputTokens": 75,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    usage = investigation._parse_cli_usage(usage_file)
+
+    assert usage.current_model == "gpt-6-luna"
+    assert usage.total_user_requests == 1
+    assert usage.total_premium_request_cost == 1
+    assert usage.total_nano_aiu == 87207000
+    assert usage.last_call_input_tokens == 15005
+    assert usage.last_call_output_tokens == 75
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {
+            "currentModel": "other",
+            "totalUserRequests": 1,
+            "totalPremiumRequestCost": 1,
+            "totalNanoAiu": 1,
+            "lastCallInputTokens": 1,
+            "lastCallOutputTokens": 1,
+        },
+        {
+            "currentModel": "gpt-6-luna",
+            "totalUserRequests": 2,
+            "totalPremiumRequestCost": 1,
+            "totalNanoAiu": 1,
+            "lastCallInputTokens": 1,
+            "lastCallOutputTokens": 1,
+        },
+        {
+            "currentModel": "gpt-6-luna",
+            "totalUserRequests": 1,
+            "totalPremiumRequestCost": 0,
+            "totalNanoAiu": 0,
+            "lastCallInputTokens": 1,
+            "lastCallOutputTokens": 1,
+        },
+        {
+            "currentModel": "gpt-6-luna",
+            "totalUserRequests": True,
+            "totalPremiumRequestCost": 1,
+            "totalNanoAiu": 1,
+            "lastCallInputTokens": 1,
+            "lastCallOutputTokens": 1,
+        },
+    ],
+)
+def test_cli_usage_parser_rejects_mismatched_or_unverified_usage(tmp_path, value):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(investigation.InvestigationRejected, match="usage"):
+        investigation._parse_cli_usage(usage_file)
+
+
+def test_cli_usage_parser_rejects_oversized_usage_file(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_bytes(b" " * (investigation.CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES + 1))
+
+    with pytest.raises(investigation.InvestigationRejected, match="exceeded its limit"):
+        investigation._parse_cli_usage(usage_file)
+
+
+def test_cli_usage_parser_rejects_missing_file(tmp_path):
+    with pytest.raises(investigation.InvestigationRejected, match="usage"):
+        investigation._parse_cli_usage(tmp_path / "missing-usage.json")
 
 
 def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
@@ -334,7 +663,7 @@ def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
 ):
     calls = []
 
-    def fake_run(args, cwd, timeout):
+    def fake_run(args, cwd, timeout, output_limit=investigation.CLI_OUTPUT_LIMIT_BYTES):
         calls.append(args)
         return b"", b""
 
@@ -343,75 +672,34 @@ def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
     with pytest.raises(investigation.InvestigationBlocked):
         provider.invoke("SYNTHETIC_SECRET_SENTINEL")
     assert not provider.verify_capabilities().permits_invocation
+    provider._verified = True  # A stale or forged flag must not bypass the gate.
     with pytest.raises(investigation.InvestigationBlocked):
         provider.invoke("SYNTHETIC_SECRET_SENTINEL")
-    assert calls == []
+    assert calls == [["copilot", "--model=gpt-6-luna", "--help"]]
 
 
-def test_process_tree_cleanup_removes_descendant_on_normal_completion(tmp_path):
-    marker = tmp_path / "child-still-running"
-    child_script = (
-        "import pathlib,time; time.sleep(.25); "
-        f"pathlib.Path({str(marker)!r}).write_text('alive')"
-    )
-    parent_script = (
-        "import subprocess,sys; "
-        f"child=subprocess.Popen([sys.executable,'-c',{child_script!r}]); "
-        "print(child.pid,flush=True)"
-    )
-    stdout, _ = investigation._run_cli_process(
-        [sys.executable, "-c", parent_script], tmp_path, timeout=5
-    )
-    assert stdout.decode().strip().isdigit()
-    time.sleep(0.3)
-    assert not marker.exists()
+def test_real_provider_blocked_without_storing_summary(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'blocked.sqlite'}")
+    Base.metadata.create_all(engine)
+    calls = []
 
+    def fake_run(args, cwd, timeout, output_limit):
+        calls.append(args)
+        return b"--model", b""
 
-def test_timeout_cleans_up_controlled_child_process_tree(tmp_path):
-    marker = tmp_path / "timeout-child-still-running"
-    child_script = (
-        "import pathlib,time; time.sleep(.25); "
-        f"pathlib.Path({str(marker)!r}).write_text('alive')"
+    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
+    monkeypatch.setenv("GH_TOKEN", "arbitrary-token")
+    with Session(engine) as session:
+        record = _database_record(session)
+        provider = investigation.CopilotCLIProvider("copilot", costs_authorized=True)
+        with pytest.raises(investigation.InvestigationBlocked):
+            investigation.investigate_and_store(session, record.id, provider)
+        session.refresh(record)
+        assert record.investigation_summary is None
+    engine.dispose()
+    assert all(
+        "--prompt" not in args and "--allow-all-tools" not in args for args in calls
     )
-    parent_script = (
-        "import subprocess,sys,time; "
-        f"subprocess.Popen([sys.executable,'-c',{child_script!r}]); "
-        "time.sleep(30)"
-    )
-    with pytest.raises(TimeoutError):
-        investigation._run_cli_process(
-            [sys.executable, "-c", parent_script], tmp_path, timeout=0.1
-        )
-    time.sleep(0.3)
-    assert not marker.exists()
-
-
-def test_force_kills_descendant_that_ignores_graceful_shutdown(tmp_path, monkeypatch):
-    marker = tmp_path / "forced-child-still-running"
-    if os.name == "nt":
-        child_script = (
-            "import pathlib,signal,time; signal.signal(signal.SIGBREAK,signal.SIG_IGN); "
-            "time.sleep(.25); "
-            f"pathlib.Path({str(marker)!r}).write_text('alive')"
-        )
-    else:
-        child_script = (
-            "import pathlib,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-            "time.sleep(.25); "
-            f"pathlib.Path({str(marker)!r}).write_text('alive')"
-        )
-    parent_script = (
-        "import subprocess,sys,time; "
-        f"subprocess.Popen([sys.executable,'-c',{child_script!r}]); "
-        "time.sleep(30)"
-    )
-    monkeypatch.setattr(investigation, "GRACEFUL_SHUTDOWN_SECONDS", 0.1)
-    with pytest.raises(TimeoutError):
-        investigation._run_cli_process(
-            [sys.executable, "-c", parent_script], tmp_path, timeout=0.1
-        )
-    time.sleep(0.3)
-    assert not marker.exists()
 
 
 def _database_record(session):
@@ -429,6 +717,61 @@ def _database_record(session):
     session.add(record)
     session.commit()
     return record
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {},
+        replace(_usage(), current_model="other"),
+        replace(_usage(), total_user_requests=True),
+        replace(_usage(), total_user_requests=2),
+        replace(_usage(), total_premium_request_cost=True),
+        replace(_usage(), total_premium_request_cost=float("nan")),
+        replace(_usage(), total_premium_request_cost=0, total_nano_aiu=0),
+        replace(_usage(), last_call_input_tokens=True),
+        replace(_usage(), last_call_input_tokens=0),
+        replace(_usage(), last_call_output_tokens=-1),
+    ],
+)
+def test_missing_or_invalid_usage_is_not_stored(tmp_path, usage):
+    engine = create_engine(f"sqlite:///{tmp_path / 'invalid-usage.sqlite'}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        record = _database_record(session)
+        provider = FakeProvider(
+            investigation.ProviderResponse("gpt-6-luna", "gpt-6-luna", "ok", usage)
+        )
+        with pytest.raises(investigation.InvestigationRejected, match="usage"):
+            investigation.investigate_and_store(session, record.id, provider)
+        session.refresh(record)
+        assert record.investigation_summary is None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("platform", ["posix", "nt", "unsupported"])
+def test_process_creation_is_blocked_on_all_platforms(tmp_path, monkeypatch, platform):
+    def forbidden(*args, **kwargs):
+        pytest.fail("subprocess creation must not be attempted")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(os, "name", platform)
+    with pytest.raises(investigation.InvestigationBlocked, match="process"):
+        investigation._run_cli_process(["unused"], tmp_path, timeout=60)
+
+
+def test_real_preflight_reports_process_blocker_without_starting_cli(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("subprocess creation must not be attempted")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    provider = investigation.CopilotCLIProvider("copilot", costs_authorized=True)
+    result = provider.verify_capabilities()
+    assert not result.permits_invocation
+    assert result.blocker == investigation.CLI_PROCESS_BLOCKER
+    with pytest.raises(investigation.InvestigationBlocked):
+        provider.invoke("unused")
 
 
 def test_successful_investigation_stores_only_bounded_summary(tmp_path):

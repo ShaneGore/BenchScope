@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import ctypes
 import json
 import math
 import os
 import re
 import shutil
-import signal
-import subprocess
 import tempfile
-import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,12 +22,21 @@ from app.models import IncidentRecord
 MODEL = "gpt-6-luna"
 EVIDENCE_LIMIT_BYTES = 64 * 1024
 SUMMARY_LIMIT_BYTES = 4 * 1024
-CLI_OUTPUT_LIMIT_BYTES = 16 * 1024
-INVOCATION_TIMEOUT_SECONDS = 60
-GRACEFUL_SHUTDOWN_SECONDS = 5
+CLI_OUTPUT_LIMIT_BYTES = 256 * 1024
+CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES = 64 * 1024
+CLI_PREFLIGHT_TIMEOUT_SECONDS = 10
+CLI_MAX_AI_CREDITS = 30
 CLI_INVOCATION_BLOCKER = (
-    "Copilot CLI invocation disabled: effective tool restrictions, existing "
-    "entitlement, usage/cost limits, and model identity are not verifiable"
+    "Copilot CLI invocation disabled: runtime tool restrictions, existing Copilot "
+    "entitlement, and applicable usage/cost limits are not verified before request"
+)
+CLI_PREFLIGHT_BLOCKER = (
+    "Copilot CLI preflight could not verify the required flags; invocation remains "
+    "disabled"
+)
+CLI_PROCESS_BLOCKER = (
+    "process creation disabled: complete containment, cancellation cleanup, "
+    "and total deadline are not verified on this platform"
 )
 
 _TIMESTAMP = re.compile(
@@ -60,9 +64,11 @@ class CapabilityVerification:
 
     model_flag_accepted: bool
     tool_restrictions_verified: bool
-    existing_entitlement_verified: bool
-    usage_cost_limit_verified: bool
+    existing_auth_credential_available: bool
+    usage_cost_authorized: bool
     blocker: str | None = None
+    empty_tool_allowlist_argument_accepted: bool = False
+    tool_controls_documented: bool = False
 
     @property
     def permits_invocation(self) -> bool:
@@ -70,10 +76,20 @@ class CapabilityVerification:
             (
                 self.model_flag_accepted,
                 self.tool_restrictions_verified,
-                self.existing_entitlement_verified,
-                self.usage_cost_limit_verified,
+                self.existing_auth_credential_available,
+                self.usage_cost_authorized,
             )
         )
+
+
+@dataclass(frozen=True)
+class CopilotUsage:
+    current_model: str
+    total_user_requests: int
+    total_premium_request_cost: int | float
+    total_nano_aiu: int | float
+    last_call_input_tokens: int
+    last_call_output_tokens: int
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,7 @@ class ProviderResponse:
     selected_model: str
     effective_model: str
     summary: str
+    usage: CopilotUsage | None = None
 
 
 class InvestigationProvider(Protocol):
@@ -357,7 +374,9 @@ def investigate_record(record: IncidentRecord, provider: InvestigationProvider) 
     response = provider.invoke(_make_prompt(evidence, record.evidence_status))
     if response.selected_model != MODEL or response.effective_model != MODEL:
         raise InvestigationRejected("selected or effective model is not gpt-6-luna")
-    return _validate_summary(response.summary)
+    summary = _validate_summary(response.summary)
+    _validate_cli_usage(response.usage)
+    return summary
 
 
 def investigate_and_store(
@@ -377,283 +396,13 @@ def investigate_and_store(
     return summary
 
 
-def _read_bounded(
-    pipe, limit: int, captured: list[bytes], overflow: threading.Event
-) -> None:
-    chunks: list[bytes] = []
-    size = 0
-    while True:
-        chunk = pipe.read(1024)
-        if not chunk:
-            break
-        size += len(chunk)
-        if size > limit:
-            overflow.set()
-            break
-        chunks.append(chunk)
-    captured.append(b"".join(chunks))
-
-
-def _signal_process_group(pid: int, signum: int) -> None:
-    try:
-        os.killpg(pid, signum)
-    except ProcessLookupError:
-        pass
-
-
-def _start_windows_job(args: list[str], cwd: Path) -> subprocess.Popen:
-    from ctypes import wintypes
-
-    class IoCounters(ctypes.Structure):
-        _fields_ = [
-            (name, ctypes.c_ulonglong)
-            for name in (
-                "ReadOperationCount",
-                "WriteOperationCount",
-                "OtherOperationCount",
-                "ReadTransferCount",
-                "WriteTransferCount",
-                "OtherTransferCount",
-            )
-        ]
-
-    class BasicLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_longlong),
-            ("PerJobUserTimeLimit", ctypes.c_longlong),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class ExtendedLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", BasicLimitInformation),
-            ("IoInfo", IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    class ThreadEntry32(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ThreadID", wintypes.DWORD),
-            ("th32OwnerProcessID", wintypes.DWORD),
-            ("tpBasePri", ctypes.c_long),
-            ("tpDeltaPri", ctypes.c_long),
-            ("dwFlags", wintypes.DWORD),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel32.SetInformationJobObject.argtypes = [
-        wintypes.HANDLE,
-        ctypes.c_int,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-    ]
-    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    kernel32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry32)]
-    kernel32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry32)]
-    kernel32.Thread32First.restype = wintypes.BOOL
-    kernel32.Thread32Next.restype = wintypes.BOOL
-    kernel32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenThread.restype = wintypes.HANDLE
-    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
-    kernel32.ResumeThread.restype = wintypes.DWORD
-    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.SetInformationJobObject.restype = wintypes.BOOL
-    kernel32.QueryInformationJobObject.argtypes = [
-        wintypes.HANDLE,
-        ctypes.c_int,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD),
-    ]
-    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
-    kernel32.TerminateJobObject.restype = wintypes.BOOL
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        raise InvestigationBlocked("could not create process cleanup job")
-    limits = ExtendedLimitInformation()
-    limits.BasicLimitInformation.LimitFlags = (
-        0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    )
-    if not kernel32.SetInformationJobObject(
-        job, 9, ctypes.byref(limits), ctypes.sizeof(limits)
-    ):
-        kernel32.CloseHandle(job)
-        raise InvestigationBlocked("could not configure process cleanup job")
-
-    process = subprocess.Popen(
-        args,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=False,
-        close_fds=True,
-        creationflags=0x00000200 | 0x00000004,  # new group; initially suspended
-    )
-    if not kernel32.AssignProcessToJobObject(job, process._handle):
-        process.kill()
-        process.wait()
-        kernel32.CloseHandle(job)
-        raise InvestigationBlocked("could not assign CLI process to cleanup job")
-
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000004, 0)
-    resumed = False
-    if snapshot and snapshot != wintypes.HANDLE(-1).value:
-        entry = ThreadEntry32()
-        entry.dwSize = ctypes.sizeof(entry)
-        has_thread = kernel32.Thread32First(snapshot, ctypes.byref(entry))
-        while has_thread:
-            if entry.th32OwnerProcessID == process.pid:
-                thread = kernel32.OpenThread(0x0002, False, entry.th32ThreadID)
-                if thread:
-                    resumed = kernel32.ResumeThread(thread) != 0xFFFFFFFF
-                    kernel32.CloseHandle(thread)
-                    if resumed:
-                        break
-            has_thread = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
-        kernel32.CloseHandle(snapshot)
-    if not resumed:
-        kernel32.TerminateJobObject(job, 1)
-        process.wait()
-        kernel32.CloseHandle(job)
-        raise InvestigationBlocked("could not safely resume CLI process")
-    process._benchscope_job = (kernel32, job, wintypes)
-    return process
-
-
-def _cleanup_windows_job(process: subprocess.Popen, graceful: bool) -> None:
-    kernel32, job, _wintypes = process._benchscope_job
-    try:
-        if graceful:
-            try:
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            except (OSError, ValueError):
-                pass
-        deadline = time.monotonic() + GRACEFUL_SHUTDOWN_SECONDS
-        info_buffer = ctypes.create_string_buffer(64)
-        active_count = ctypes.c_uint32(1)
-        while time.monotonic() < deadline:
-            if not kernel32.QueryInformationJobObject(
-                job, 1, info_buffer, len(info_buffer), None
-            ):
-                break
-            # JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.ActiveProcesses is its seventh DWORD.
-            active_count = ctypes.c_uint32.from_buffer(info_buffer, 40)
-            if active_count.value == 0:
-                break
-            time.sleep(0.05)
-        if active_count.value or process.poll() is None:
-            kernel32.TerminateJobObject(job, 1)
-        try:
-            process.wait(timeout=GRACEFUL_SHUTDOWN_SECONDS)
-        except subprocess.TimeoutExpired:
-            kernel32.TerminateJobObject(job, 1)
-            process.wait(timeout=GRACEFUL_SHUTDOWN_SECONDS)
-    finally:
-        kernel32.CloseHandle(job)
-
-
-def _cleanup_process_group(pid: int, process: subprocess.Popen, graceful: bool) -> None:
-    if os.name == "nt":
-        _cleanup_windows_job(process, graceful)
-        return
-    if os.name != "posix":
-        raise InvestigationBlocked(
-            "process-tree cleanup is not verified on this platform"
-        )
-    if graceful:
-        _signal_process_group(pid, signal.SIGTERM)
-    deadline = time.monotonic() + GRACEFUL_SHUTDOWN_SECONDS
-    while time.monotonic() < deadline:
-        try:
-            os.killpg(pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.05)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=GRACEFUL_SHUTDOWN_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-
-
-def _run_cli_process(args: list[str], cwd: Path, timeout: int) -> tuple[bytes, bytes]:
-    if os.name == "nt":
-        process = _start_windows_job(args, cwd)
-    elif os.name == "posix":
-        process = subprocess.Popen(
-            args,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            close_fds=True,
-            start_new_session=True,
-        )
-    else:
-        raise InvestigationBlocked(
-            "process-tree cleanup is not verified on this platform"
-        )
-    stdout: list[bytes] = []
-    stderr: list[bytes] = []
-    overflow = threading.Event()
-    out_reader = threading.Thread(
-        target=_read_bounded,
-        args=(process.stdout, CLI_OUTPUT_LIMIT_BYTES, stdout, overflow),
-        daemon=True,
-    )
-    err_reader = threading.Thread(
-        target=_read_bounded,
-        args=(process.stderr, CLI_OUTPUT_LIMIT_BYTES, stderr, overflow),
-        daemon=True,
-    )
-    out_reader.start()
-    err_reader.start()
-    deadline = time.monotonic() + timeout
-    try:
-        while process.poll() is None and not overflow.is_set():
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Copilot CLI timed out")
-            time.sleep(0.02)
-        if overflow.is_set():
-            raise InvestigationRejected("Copilot CLI output exceeded its capture limit")
-        return_code = process.wait()
-        if return_code != 0:
-            raise InvestigationBlocked("Copilot CLI exited unsuccessfully")
-    finally:
-        _cleanup_process_group(process.pid, process, graceful=True)
-        out_reader.join(timeout=GRACEFUL_SHUTDOWN_SECONDS)
-        err_reader.join(timeout=GRACEFUL_SHUTDOWN_SECONDS)
-        if out_reader.is_alive() or err_reader.is_alive():
-            raise InvestigationBlocked("Copilot CLI output pipes did not close")
-        process.stdout.close()
-        process.stderr.close()
-    if overflow.is_set() or not stdout:
-        raise InvestigationRejected("Copilot CLI output is invalid")
-    return stdout[0], stderr[0] if stderr else b""
+def _run_cli_process(
+    args: list[str],
+    cwd: Path,
+    timeout: int,
+    output_limit: int = CLI_OUTPUT_LIMIT_BYTES,
+) -> tuple[bytes, bytes]:
+    raise InvestigationBlocked(CLI_PROCESS_BLOCKER)
 
 
 def _parse_cli_events(raw: bytes) -> ProviderResponse:
@@ -667,97 +416,276 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
     except (UnicodeError, json.JSONDecodeError, InvestigationRejected, RecursionError):
         raise InvestigationRejected("invalid Copilot CLI event output") from None
     selected_models = []
+    final_models = []
+    effective_models = []
     messages = []
     for event in events:
-        if not isinstance(event, dict):
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
             raise InvestigationRejected("invalid Copilot CLI event")
-        if event.get("type") == "session.start":
+        if event.get("type") == "model.call_start":
             data = event.get("data")
             if not isinstance(data, dict):
                 raise InvestigationRejected("selected model metadata unavailable")
             selected_models.append(data.get("model"))
+        elif event.get("type") == "model.call_final_result":
+            data = event.get("data")
+            if not isinstance(data, dict):
+                raise InvestigationRejected("effective model metadata unavailable")
+            final_models.append(data.get("model"))
         elif event.get("type") == "assistant.message":
             data = event.get("data")
             if (
                 not isinstance(data, dict)
                 or not isinstance(data.get("content"), str)
+                or not isinstance(data.get("toolRequests", []), list)
                 or data.get("toolRequests", [])
+                or "serverTools" not in data
             ):
                 raise InvestigationRejected("unsafe Copilot CLI response")
+            server_tools = data.get("serverTools", [])
+            if not isinstance(server_tools, list) or server_tools:
+                raise InvestigationRejected("Copilot CLI exposed tools to the model")
+            effective_models.append(data.get("model"))
             messages.append((data.get("model"), data["content"]))
-        elif isinstance(event.get("type"), str) and event["type"].startswith("tool."):
+        elif event["type"].startswith("tool."):
             raise InvestigationRejected("Copilot CLI attempted a tool call")
-    if not messages or any(model != MODEL for model, _ in messages):
+    if len(selected_models) != 1 or selected_models[0] != MODEL:
+        raise InvestigationRejected("selected model identity unavailable or mismatched")
+    if (
+        len(messages) != 1
+        or len(final_models) != 1
+        or any(model != MODEL for model in effective_models)
+        or final_models[0] != MODEL
+    ):
         raise InvestigationRejected(
             "effective model identity unavailable or mismatched"
         )
-    if len(selected_models) != 1 or selected_models[0] != MODEL:
-        raise InvestigationRejected("selected model identity unavailable or mismatched")
     return ProviderResponse(
-        selected_models[0],
+        MODEL,
         messages[0][0],
         "\n".join(content for _, content in messages),
     )
 
 
 class CopilotCLIProvider:
-    """Explicitly gated Copilot CLI adapter. No live request is enabled by default."""
+    """Local Copilot CLI adapter; live invocation is currently blocked."""
 
     def __init__(
         self,
         executable: str | None = None,
+        *,
+        costs_authorized: bool = False,
     ) -> None:
         self.executable = executable or shutil.which("copilot")
-        self._verified = False
+        self.costs_authorized = costs_authorized
 
     def verify_capabilities(self) -> CapabilityVerification:
-        """Fail closed until the CLI's effective policy and authorization are verifiable."""
-        self._verified = False
+        """Inspect non-requesting CLI documentation, without treating it as proof."""
+        if not self.executable:
+            return CapabilityVerification(
+                False, False, False, False, "Copilot CLI is not installed"
+            )
+
+        model_flag_accepted = False
+        empty_tool_allowlist_argument_accepted = False
+        tool_controls_documented = False
+        try:
+            launcher = _cli_launcher(self.executable)
+            with tempfile.TemporaryDirectory(
+                prefix="benchscope-luna-preflight-"
+            ) as cwd:
+                help_output, help_error = _run_cli_process(
+                    [
+                        *launcher,
+                        f"--model={MODEL}",
+                        "--help",
+                    ],
+                    Path(cwd),
+                    timeout=CLI_PREFLIGHT_TIMEOUT_SECONDS,
+                    output_limit=CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES,
+                )
+                help_text = (help_output + help_error).decode("utf-8", errors="replace")
+                model_flag_documented = "--model" in help_text
+                tool_control_documented = "--available-tools" in help_text
+                other_flags_documented = all(
+                    flag in help_text
+                    for flag in (
+                        "--disable-builtin-mcps",
+                        "--no-custom-instructions",
+                        "--no-ask-user",
+                        "--max-ai-credits",
+                        "--output-format",
+                        "--prompt",
+                        "--secret-env-vars",
+                        "--sync-session",
+                        "--usage-output-file",
+                    )
+                )
+                if not (
+                    model_flag_documented
+                    and tool_control_documented
+                    and other_flags_documented
+                ):
+                    return CapabilityVerification(
+                        False,
+                        False,
+                        False,
+                        False,
+                        CLI_PREFLIGHT_BLOCKER,
+                    )
+
+                permissions_output, permissions_error = _run_cli_process(
+                    [*launcher, f"--model={MODEL}", "help", "permissions"],
+                    Path(cwd),
+                    timeout=CLI_PREFLIGHT_TIMEOUT_SECONDS,
+                    output_limit=CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES,
+                )
+                permissions_text = (permissions_output + permissions_error).decode(
+                    "utf-8", errors="replace"
+                )
+                normalized_permissions = " ".join(permissions_text.lower().split())
+                tool_controls_documented = (
+                    "--available-tools" in normalized_permissions
+                    and "do not expose tools filtered out by" in normalized_permissions
+                )
+
+                usage_file = Path(cwd) / "preflight-usage.json"
+                version_output, _ = _run_cli_process(
+                    [
+                        *launcher,
+                        f"--model={MODEL}",
+                        "--available-tools=",
+                        "--disable-builtin-mcps",
+                        "--no-custom-instructions",
+                        "--no-ask-user",
+                        f"--max-ai-credits={CLI_MAX_AI_CREDITS}",
+                        f"--usage-output-file={usage_file}",
+                        "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
+                        "--sync-session=off",
+                        "--output-format=json",
+                        "--version",
+                    ],
+                    Path(cwd),
+                    timeout=CLI_PREFLIGHT_TIMEOUT_SECONDS,
+                    output_limit=CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES,
+                )
+                empty_tool_allowlist_argument_accepted = bool(
+                    re.search(rb"GitHub Copilot CLI \d+\.\d+\.\d+", version_output)
+                )
+                model_flag_accepted = empty_tool_allowlist_argument_accepted
+        except (
+            InvestigationBlocked,
+            InvestigationRejected,
+            OSError,
+            TimeoutError,
+        ) as e:
+            return CapabilityVerification(
+                model_flag_accepted,
+                False,
+                False,
+                False,
+                CLI_PROCESS_BLOCKER
+                if str(e) == CLI_PROCESS_BLOCKER
+                else CLI_PREFLIGHT_BLOCKER,
+                empty_tool_allowlist_argument_accepted,
+                tool_controls_documented,
+            )
+
         return CapabilityVerification(
-            False, False, False, False, CLI_INVOCATION_BLOCKER
+            model_flag_accepted=model_flag_accepted,
+            tool_restrictions_verified=False,
+            existing_auth_credential_available=False,
+            usage_cost_authorized=False,
+            blocker=(
+                CLI_INVOCATION_BLOCKER
+                if empty_tool_allowlist_argument_accepted
+                else CLI_PREFLIGHT_BLOCKER
+            ),
+            empty_tool_allowlist_argument_accepted=empty_tool_allowlist_argument_accepted,
+            tool_controls_documented=tool_controls_documented,
         )
 
     def invoke(self, prompt: str) -> ProviderResponse:
-        if not self._verified:
-            raise InvestigationBlocked(CLI_INVOCATION_BLOCKER)
-        self._verified = False
-        _validate_prompt(prompt)
-        if not self.executable:
-            raise InvestigationBlocked("Copilot CLI is not installed")
-        args = _build_cli_args(self.executable, prompt)
-        with tempfile.TemporaryDirectory(prefix="benchscope-luna-") as temp_dir:
-            output, _ = _run_cli_process(
-                args,
-                Path(temp_dir),
-                timeout=INVOCATION_TIMEOUT_SECONDS,
-            )
-        return _parse_cli_events(output)
+        raise InvestigationBlocked(CLI_INVOCATION_BLOCKER)
 
 
-def _build_cli_args(executable: str, prompt: str) -> list[str]:
-    path = Path(executable)
-    if path.suffix.lower() in {".bat", ".cmd", ".ps1"}:
-        node = path.parent / "node.exe"
-        if not node.is_file():
-            resolved_node = shutil.which("node")
-            if not resolved_node:
-                raise InvestigationBlocked("Copilot CLI Node runtime is unavailable")
-            node = Path(resolved_node)
-        loader = path.parent / "node_modules" / "@github" / "copilot" / "npm-loader.js"
-        if not loader.is_file():
-            raise InvestigationBlocked("Copilot CLI npm loader is unavailable")
-        command = [str(node), str(loader)]
-    else:
-        command = [executable]
+def _validate_cli_usage(usage: Any) -> CopilotUsage:
+    if not isinstance(usage, CopilotUsage):
+        raise InvestigationRejected("Copilot CLI usage could not be verified")
+    costs = (usage.total_premium_request_cost, usage.total_nano_aiu)
+    if (
+        usage.current_model != MODEL
+        or type(usage.total_user_requests) is not int
+        or usage.total_user_requests != 1
+        or any(not _nonnegative_number(cost) for cost in costs)
+        or not any(cost > 0 for cost in costs)
+        or type(usage.last_call_input_tokens) is not int
+        or usage.last_call_input_tokens <= 0
+        or type(usage.last_call_output_tokens) is not int
+        or usage.last_call_output_tokens < 0
+    ):
+        raise InvestigationRejected("Copilot CLI usage could not be verified")
+    return usage
+
+
+def _parse_cli_usage(path: Path) -> CopilotUsage:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        raise InvestigationRejected("Copilot CLI usage output is invalid") from None
+    if size > CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES:
+        raise InvestigationRejected("Copilot CLI usage output exceeded its limit")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_object)
+    except (OSError, UnicodeError, json.JSONDecodeError, InvestigationRejected):
+        raise InvestigationRejected("Copilot CLI usage output is invalid") from None
+    if not isinstance(value, dict):
+        raise InvestigationRejected("Copilot CLI usage output is invalid")
+
+    return _validate_cli_usage(
+        CopilotUsage(
+            current_model=value.get("currentModel"),
+            total_user_requests=value.get("totalUserRequests"),
+            total_premium_request_cost=value.get("totalPremiumRequestCost"),
+            total_nano_aiu=value.get("totalNanoAiu"),
+            last_call_input_tokens=value.get("lastCallInputTokens"),
+            last_call_output_tokens=value.get("lastCallOutputTokens"),
+        )
+    )
+
+
+def _build_cli_args(executable: str, prompt: str, usage_output_file: Path) -> list[str]:
     return [
-        *command,
+        *_cli_launcher(executable),
         f"--model={MODEL}",
         "--prompt",
         prompt,
         "--output-format=json",
-        "--available-tools",
+        "--available-tools=",
         "--disable-builtin-mcps",
         "--no-custom-instructions",
         "--no-ask-user",
-        "--no-auto-update",
+        f"--max-ai-credits={CLI_MAX_AI_CREDITS}",
+        f"--usage-output-file={usage_output_file}",
+        "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
+        "--sync-session=off",
     ]
+
+
+def _cli_launcher(executable: str) -> list[str]:
+    path = Path(executable)
+    if path.suffix.lower() in {".ps1", ".cmd", ".bat"} and os.name == "nt":
+        script = path.with_suffix(".ps1")
+        if not script.is_file():
+            script = path
+        powershell = shutil.which("powershell.exe") or "powershell.exe"
+        return [
+            powershell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+        ]
+    return [executable]
