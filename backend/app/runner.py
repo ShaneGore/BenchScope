@@ -14,7 +14,7 @@ from app.database import get_session
 from app.models import BenchmarkRun, ModelProfile
 from app.run_history import RunMetricsResponse
 
-RunStatus = Literal["running", "completed", "failed", "interrupted"]
+RunStatus = Literal["running", "completed", "failed", "interrupted", "cancelled"]
 router = APIRouter()
 
 
@@ -83,6 +83,15 @@ def _consume_task_exception(task: asyncio.Task[None]) -> None:
         task.exception()
 
 
+def _run_task_finished(
+    request: Request, run_id: UUID, task: asyncio.Task[None]
+) -> None:
+    if request.app.state.benchmark_tasks.get(run_id) is task:
+        del request.app.state.benchmark_tasks[run_id]
+    _consume_task_exception(task)
+    request.app.state.benchmark_lock.release()
+
+
 async def _launch(
     request: Request,
     owner_id: str,
@@ -117,18 +126,20 @@ async def _launch(
         task = asyncio.create_task(
             _execute(request, adapter, run.id, owner_id, profile_snapshot, config_id)
         )
-        request.app.state.benchmark_tasks.add(task)
-        task.add_done_callback(request.app.state.benchmark_tasks.discard)
-        task.add_done_callback(_consume_task_exception)
+        request.app.state.benchmark_tasks[run.id] = task
+        task.add_done_callback(
+            lambda completed: _run_task_finished(request, run.id, completed)
+        )
         session.add(run)
         session.commit()
+        await asyncio.sleep(0)
         return run
     except Exception:
         session.rollback()
-        if task is not None:
-            request.app.state.benchmark_tasks.discard(task)
+        if task is None:
+            lock.release()
+        else:
             task.cancel()
-        lock.release()
         raise
 
 
@@ -142,53 +153,60 @@ async def _execute(
 ) -> None:
     started = asyncio.get_running_loop().time()
     try:
-        try:
-            result = await asyncio.wait_for(
-                adapter.run(profile_snapshot, config_id),
-                timeout=request.app.state.settings.benchmark_timeout_seconds,
-            )
-            if not isinstance(result, RunResult):
-                raise TypeError
-        except TimeoutError:
-            _finish_run(
-                request.app.state.session_factory,
-                run_id,
-                owner_id,
-                "failed",
-                "timeout",
-                "Benchmark execution timed out.",
-                started,
-            )
-        except Exception:  # noqa: BLE001 - adapter failures must stay sanitized
-            _finish_run(
-                request.app.state.session_factory,
-                run_id,
-                owner_id,
-                "failed",
-                "adapter_error",
-                "Benchmark adapter failed.",
-                started,
-            )
-        else:
-            _finish_run(
-                request.app.state.session_factory,
-                run_id,
-                owner_id,
-                "completed",
-                None,
-                None,
-                started,
-                asdict(result),
-            )
-    finally:
-        request.app.state.benchmark_lock.release()
+        result = await asyncio.wait_for(
+            adapter.run(profile_snapshot, config_id),
+            timeout=request.app.state.settings.benchmark_timeout_seconds,
+        )
+        if not isinstance(result, RunResult):
+            raise TypeError
+    except asyncio.CancelledError:
+        _finish_run(
+            request.app.state.session_factory,
+            run_id,
+            owner_id,
+            "cancelled",
+            None,
+            None,
+            started,
+        )
+    except TimeoutError:
+        _finish_run(
+            request.app.state.session_factory,
+            run_id,
+            owner_id,
+            "failed",
+            "timeout",
+            "Benchmark execution timed out.",
+            started,
+        )
+    except Exception:  # noqa: BLE001 - adapter failures must stay sanitized
+        _finish_run(
+            request.app.state.session_factory,
+            run_id,
+            owner_id,
+            "failed",
+            "adapter_error",
+            "Benchmark adapter failed.",
+            started,
+        )
+    else:
+        _finish_run(
+            request.app.state.session_factory,
+            run_id,
+            owner_id,
+            "completed",
+            None,
+            None,
+            started,
+            asdict(result),
+        )
 
 
 def _finish_run(
     factory: sessionmaker[Session] | None,
     run_id: UUID,
     owner_id: str,
-    run_status: Literal["completed", "failed"],
+    run_status: Literal["completed", "failed", "cancelled"],
     error_category: str | None,
     error_message: str | None,
     started: float,
@@ -199,10 +217,13 @@ def _finish_run(
     values: dict[str, object] = {
         "status": run_status,
         "completed_at": datetime.now(UTC),
-        "elapsed_ms": round((asyncio.get_running_loop().time() - started) * 1000),
         "error_category": error_category,
         "error_message_sanitised": error_message,
     }
+    if run_status != "cancelled":
+        values["elapsed_ms"] = round(
+            (asyncio.get_running_loop().time() - started) * 1000
+        )
     if metrics is not None:
         values.update(metrics)
     with factory() as session:
@@ -300,6 +321,32 @@ def get_run_status(
     )
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    return _status_response(run)
+
+
+@router.post("/benchmark/runs/{id}/cancel", response_model=RunStatusResponse)
+async def cancel_run(
+    id: UUID,
+    request: Request,
+    owner_id: Annotated[str, Depends(current_owner)],
+    session: Annotated[Session, Depends(get_session)],
+) -> RunStatusResponse:
+    run = session.scalar(
+        select(BenchmarkRun).where(
+            BenchmarkRun.id == id,
+            BenchmarkRun.owner_id == owner_id,
+            BenchmarkRun.source == "launched",
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status == "running":
+        task: asyncio.Task[None] | None = request.app.state.benchmark_tasks.get(id)
+        if task is not None and not task.done():
+            if not task.cancelling():
+                task.cancel()
+            await asyncio.shield(task)
+        session.refresh(run)
     return _status_response(run)
 
 

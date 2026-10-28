@@ -12,7 +12,7 @@ from app.database import get_session
 from app.models import BenchmarkRun
 from app.run_serialization import run_history_response
 
-RunStatus = Literal["running", "completed", "failed", "interrupted"]
+RunStatus = Literal["running", "completed", "failed", "interrupted", "cancelled"]
 router = APIRouter()
 
 

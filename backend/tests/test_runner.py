@@ -1,9 +1,11 @@
 import asyncio
+import concurrent.futures
 import os
 import threading
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -403,3 +405,154 @@ def test_runner_routes_are_absent_when_disabled_or_hosted() -> None:
             ).status_code
             == 404
         )
+
+
+@pytest.fixture
+def sqlite_runner_context(
+    tmp_path: Path,
+) -> Iterator[tuple[FastAPI, Engine, FakeAdapter]]:
+    adapter = FakeAdapter()
+    database_url = (
+        f"sqlite:///{(tmp_path / 'runner.sqlite3').as_posix()}?check_same_thread=false"
+    )
+    app = create_app(
+        Settings(
+            database_url=SecretStr(database_url),
+            app_env="development",
+            local_auth_bypass=True,
+            benchmark_enabled=True,
+            benchmark_timeout_seconds=1,
+        ),
+        benchmark_adapter=adapter,
+    )
+    engine = app.state.engine
+    assert engine is not None
+    Base.metadata.create_all(engine)
+    yield app, engine, adapter
+    engine.dispose()
+
+
+def test_cancel_waits_for_cleanup_and_is_idempotent(
+    sqlite_runner_context: tuple[FastAPI, Engine, FakeAdapter],
+) -> None:
+    app, engine, _ = sqlite_runner_context
+    cleanup_started = threading.Event()
+    allow_cleanup = threading.Event()
+
+    class CleanupAdapter:
+        cleanup_count = 0
+
+        async def run(
+            self, profile: dict[str, str | None], config_id: UUID
+        ) -> RunResult:
+            try:
+                await asyncio.Future()
+            finally:
+                self.cleanup_count += 1
+                cleanup_started.set()
+                await asyncio.to_thread(allow_cleanup.wait, 3)
+
+    adapter = CleanupAdapter()
+    app.state.benchmark_adapter = adapter
+    second_cancel_received = threading.Event()
+    cancel_request_count = 0
+
+    @app.middleware("http")
+    async def observe_repeated_cancel(request, call_next):
+        nonlocal cancel_request_count
+        if request.url.path.endswith("/cancel"):
+            cancel_request_count += 1
+            if cancel_request_count == 2:
+                second_cancel_received.set()
+        return await call_next(request)
+
+    with (
+        TestClient(app) as client,
+        concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        profile_id = _create_profile(client)
+        payload = {"profile_id": str(profile_id), "config_id": str(uuid4())}
+        started = client.post("/api/v1/benchmark/runs", json=payload)
+        assert started.status_code == 202
+        run_id = UUID(started.json()["id"])
+        cancel_path = f"/api/v1/benchmark/runs/{run_id}/cancel"
+
+        first_cancel = executor.submit(client.post, cancel_path)
+        try:
+            assert cleanup_started.wait(2)
+            assert (
+                client.get(f"/api/v1/benchmark/runs/{run_id}").json()["status"]
+                == "running"
+            )
+            assert (
+                client.post("/api/v1/benchmark/runs", json=payload).status_code == 409
+            )
+            second_cancel = executor.submit(client.post, cancel_path)
+            assert second_cancel_received.wait(2)
+            assert not first_cancel.done()
+            assert not second_cancel.done()
+            assert adapter.cleanup_count == 1
+        finally:
+            allow_cleanup.set()
+
+        first = first_cancel.result(timeout=3)
+        second = second_cancel.result(timeout=3)
+        assert first.status_code == second.status_code == 200
+        assert first.json()["status"] == second.json()["status"] == "cancelled"
+        assert first.json()["error_category"] is None
+        assert all(value is None for value in first.json()["metrics"].values())
+        assert adapter.cleanup_count == 1
+        assert not app.state.benchmark_lock.locked()
+        assert client.post(f"/api/v1/runs/{run_id}/retry").status_code == 409
+
+    with Session(engine) as session:
+        run = session.get(BenchmarkRun, run_id)
+        assert run is not None
+        assert run.status == "cancelled"
+        assert run.quality_score is None
+        assert run.pass_rate is None
+        assert session.scalar(select(func.count()).select_from(BenchmarkRun)) == 1
+
+
+def test_cancel_is_owner_scoped_to_launched_runs_and_preserves_terminal_status(
+    sqlite_runner_context: tuple[FastAPI, Engine, FakeAdapter],
+) -> None:
+    app, engine, _ = sqlite_runner_context
+    with Session(engine) as session:
+        foreign = BenchmarkRun(
+            owner_id="other-owner",
+            source="launched",
+            status="running",
+            profile_snapshot={"name": "foreign", "model_name": "test/model"},
+            started_at=datetime.now(UTC),
+        )
+        imported = BenchmarkRun(
+            owner_id="local",
+            source="imported",
+            status="completed",
+            profile_snapshot={"name": "imported", "model_name": "test/model"},
+            started_at=datetime.now(UTC),
+        )
+        completed = BenchmarkRun(
+            owner_id="local",
+            source="launched",
+            status="completed",
+            profile_snapshot={"name": "finished", "model_name": "test/model"},
+            started_at=datetime.now(UTC),
+        )
+        session.add_all([foreign, imported, completed])
+        session.commit()
+        foreign_id, imported_id, completed_id = foreign.id, imported.id, completed.id
+
+    with TestClient(app) as client:
+        assert (
+            client.post(f"/api/v1/benchmark/runs/{foreign_id}/cancel").status_code
+            == 404
+        )
+        assert (
+            client.post(f"/api/v1/benchmark/runs/{imported_id}/cancel").status_code
+            == 404
+        )
+        terminal = client.post(f"/api/v1/benchmark/runs/{completed_id}/cancel")
+        assert terminal.status_code == 200
+        assert terminal.json()["status"] == "completed"

@@ -28,7 +28,7 @@ One attempt (imported or launched). Owned.
 - `id` (uuid, pk)
 - `owner_id` (string, indexed)
 - `source` (enum: `imported` | `launched`)
-- `status` (enum: `running` | `completed` | `failed` | `interrupted`)
+- `status` (enum: `running` | `completed` | `failed` | `interrupted` | `cancelled`)
 - `profile_id` (fk → ModelProfile, nullable) — snapshot taken at run time
 - `profile_snapshot` (json) — model/hardware/config captured to preserve historical meaning
 - `benchmark_config` (json, nullable) — allowlisted summary config for imported runs
@@ -87,7 +87,7 @@ All metric fields are nullable. Missing is distinct from zero; UI renders "unava
 
 ## Migrations
 
-Alembic; one migration per change; reviewed. No destructive changes without a rollback migration. Integration tests run against Postgres to avoid dialect drift.
+Alembic; one migration per change; reviewed. No destructive changes without a rollback migration. Integration tests run against Postgres to avoid dialect drift. Downgrading revision `0005_cancelled_run_status` first checks for `cancelled` rows and aborts before changing the status constraint if any exist; it never remaps them. Resolve those rows explicitly before retrying the downgrade. The precondition is included in offline downgrade SQL as well.
 
 ## PostgreSQL baseline
 

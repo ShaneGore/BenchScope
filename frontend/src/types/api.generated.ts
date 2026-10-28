@@ -889,6 +889,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/benchmark/runs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a launched run after cooperative cleanup (local mode only)
+         * @description Cancellation waits for the synthetic adapter coroutine cleanup before returning. Repeated requests do not interrupt cleanup again; cancellation creates no run or metrics.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Existing run status after cancellation or an already-terminal status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunStatusResponse"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/demo/runs": {
         parameters: {
             query?: never;
@@ -985,7 +1042,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        RunStatus: "running" | "completed" | "failed" | "interrupted";
+        RunStatus: "running" | "completed" | "failed" | "interrupted" | "cancelled";
         /** @enum {string} */
         ErrorCategory: "OOM" | "TIMEOUT" | "MODEL_ERROR" | "INFER_FRAMEWORK" | "HOST_RESTART" | "UNKNOWN" | "timeout" | "adapter_error" | "interrupted";
         HardwareSnapshot: {
