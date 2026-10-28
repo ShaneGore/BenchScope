@@ -724,17 +724,7 @@ class CopilotCLIProvider:
         _validate_prompt(prompt)
         if not self.executable:
             raise InvestigationBlocked("Copilot CLI is not installed")
-        args = [
-            self.executable,
-            f"--model={MODEL}",
-            "--prompt",
-            prompt,
-            "--output-format=json",
-            "--available-tools=none",
-            "--deny-tool=*",
-            "--deny-url=*",
-            "--disable-builtin-mcps",
-        ]
+        args = _build_cli_args(self.executable, prompt)
         with tempfile.TemporaryDirectory(prefix="benchscope-luna-") as temp_dir:
             output, _ = _run_cli_process(
                 args,
@@ -742,3 +732,32 @@ class CopilotCLIProvider:
                 timeout=INVOCATION_TIMEOUT_SECONDS,
             )
         return _parse_cli_events(output)
+
+
+def _build_cli_args(executable: str, prompt: str) -> list[str]:
+    path = Path(executable)
+    if path.suffix.lower() in {".bat", ".cmd", ".ps1"}:
+        node = path.parent / "node.exe"
+        if not node.is_file():
+            resolved_node = shutil.which("node")
+            if not resolved_node:
+                raise InvestigationBlocked("Copilot CLI Node runtime is unavailable")
+            node = Path(resolved_node)
+        loader = path.parent / "node_modules" / "@github" / "copilot" / "npm-loader.js"
+        if not loader.is_file():
+            raise InvestigationBlocked("Copilot CLI npm loader is unavailable")
+        command = [str(node), str(loader)]
+    else:
+        command = [executable]
+    return [
+        *command,
+        f"--model={MODEL}",
+        "--prompt",
+        prompt,
+        "--output-format=json",
+        "--available-tools",
+        "--disable-builtin-mcps",
+        "--no-custom-instructions",
+        "--no-ask-user",
+        "--no-auto-update",
+    ]

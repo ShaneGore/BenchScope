@@ -305,6 +305,30 @@ def test_copilot_cli_flags_are_not_proof_of_effective_policy(monkeypatch):
     assert calls == []
 
 
+def test_copilot_cli_args_use_an_empty_tool_allowlist_and_node_loader(tmp_path):
+    shim = tmp_path / "copilot.ps1"
+    shim.touch()
+    loader = tmp_path / "node_modules" / "@github" / "copilot" / "npm-loader.js"
+    loader.parent.mkdir(parents=True)
+    loader.touch()
+    node = tmp_path / "node.exe"
+    node.touch()
+
+    args = investigation._build_cli_args(str(shim), "sanitized prompt")
+
+    assert args[:2] == [str(node), str(loader)]
+    assert args[2:4] == ["--model=gpt-6-luna", "--prompt"]
+    assert args[4] == "sanitized prompt"
+    assert args[5:] == [
+        "--output-format=json",
+        "--available-tools",
+        "--disable-builtin-mcps",
+        "--no-custom-instructions",
+        "--no-ask-user",
+        "--no-auto-update",
+    ]
+
+
 def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
     monkeypatch,
 ):
