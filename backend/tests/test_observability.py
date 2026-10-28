@@ -119,6 +119,34 @@ def test_journey_telemetry_is_correlated_and_payload_free(tmp_path) -> None:
     )
 
 
+def test_request_metric_exposes_exact_trace_as_openmetrics_exemplar(tmp_path) -> None:
+    spans = InMemorySpanExporter()
+    telemetry = Telemetry(trace_exporter=spans)
+
+    with _client(tmp_path, telemetry) as client:
+        response = client.get(
+            "/api/v1/runs",
+            headers={"traceparent": f"00-{TRACE_ID}-{SPAN_ID}-01"},
+        )
+        metrics = client.get(
+            "/metrics",
+            headers={"Accept": "application/openmetrics-text; version=1.0.0"},
+        ).text
+
+    assert response.status_code == 200
+    metric_sample = next(
+        line
+        for line in metrics.splitlines()
+        if line.startswith("benchscope_http_server_requests_total{")
+        and 'http_route="/api/v1/runs"' in line
+    )
+    assert f'# {{trace_id="{TRACE_ID}"}}' in metric_sample
+    assert "trace_id" not in metric_sample.split("} ", maxsplit=1)[0]
+    assert [f"{span.context.trace_id:032x}" for span in spans.get_finished_spans()] == [
+        TRACE_ID
+    ]
+
+
 class _BrokenSpanExporter(SpanExporter):
     def export(self, spans):
         raise RuntimeError("exporter is unavailable")
