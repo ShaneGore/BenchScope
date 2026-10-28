@@ -18,3 +18,4 @@ private-benchmark
 benchmarks/private
 benchmark-artifacts
 raw-benchmark-artifacts
+v2_fixture.json
