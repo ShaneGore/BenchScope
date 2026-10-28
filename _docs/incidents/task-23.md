@@ -328,3 +328,29 @@ subprocess, prove full-tree containment and interruption-safe cleanup, including
 startup and the total deadline, on that platform. Effective live model identity,
 tool-policy enforcement, and authorization/usage limits also remain unverified.
 Stage 2 stays incomplete.
+
+### Windows process-containment investigation
+
+A future local host worker may read persisted sanitized records, but it is not
+implemented and must not invoke the CLI until all safety gates are verified.
+Windows job objects alone are not sufficient evidence for containment.
+Microsoft documents that a job member can use an alternate process parent,
+whose job is inherited, and that WMI-created processes are not associated with
+the caller's job. A local synthetic probe assigned a waiting Python child to a
+job without breakaway flags, then let that child create a short-lived synthetic
+process using an external parent handle with `PROCESS_CREATE_PROCESS`. The
+created process was not in the child's job; it was explicitly terminated by
+its own process handle and the termination wait succeeded. It was not an OS
+descendant of the original child because the parent was changed. This probe
+demonstrates a job-containment gap for processes caused by a member, not
+comprehensive adversarial testing.
+
+The documented Windows `PROC_THREAD_ATTRIBUTE_JOB_LIST` is a possible way to
+associate the initial child at creation, but atomic assignment, startup and
+cancellation cleanup, and a 60-second total deadline have not been verified.
+No implementation or platform was enabled, and no CLI or model was invoked.
+An effective solution must also prevent or account for out-of-job process
+creation without adding unsafe permissions or relying solely on job membership.
+
+References: [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+and [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
