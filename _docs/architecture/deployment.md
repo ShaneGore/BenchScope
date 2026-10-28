@@ -45,6 +45,11 @@ a successful deployment.
   `VITE_API_URL` and Clerk publishable keys are not secrets. Never put API
   credentials, Clerk secret keys, database URLs, private endpoints, or other
   secrets in `VITE_*` variables, static files, or frontend build logs.
+- `.github/workflows/pages-deploy.yml` is manual-only and deploys only from
+  `main`. It requires repository variables `VITE_API_URL` (a public HTTPS API
+  URL) and `VITE_CLERK_PUBLISHABLE_KEY`; the workflow checks these before
+  building. It publishes only the static frontend and does not provision or
+  deploy the API.
 - Hosted backend configuration currently requires `APP_MODE=hosted`, `HOST`,
   `DATABASE_URL`, `CORS_ORIGINS`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, and
   `CLERK_AUDIENCE`. Configure `HOST` as the provider-required public bind
