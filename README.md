@@ -308,8 +308,10 @@ project/database. All Compose-published endpoints are loopback-only.
 The authenticated Alertmanager delivery procedure added for issue #32 is
 documented in [`_docs/incidents/task-23.md`](./_docs/incidents/task-23.md)
 under “Issue #32 — Stage 1 alert intake”. It uses its own ignored synthetic
-configuration and Compose project; the earlier Task 23 result above does not
-claim that alert delivery was exercised.
+configuration and Compose project with alternate loopback ports (API `18000`,
+OTLP `14318`, Prometheus `19090`, Loki `13100`, Tempo `13200`, Grafana `13000`,
+PostgreSQL `15442`) and preflights each before startup. The earlier Task 23
+result above does not claim that alert delivery was exercised.
 
 Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
 the repository's `compose.yaml` and `observability/` files. The required host

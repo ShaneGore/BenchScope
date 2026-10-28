@@ -64,19 +64,19 @@ Use synthetic data only. Do not use the repository `.env`, hosted services,
 real user data, private benchmark material, external notification targets, or
 a mock receiver.
 
-The environment in which this procedure was added had all fixed published
-ports (`8000`, `4318`, `9090`, `3100`, `3200`, `3000`) occupied and did not
-have `prom/alertmanager:v0.28.1` cached. The integration was therefore not
-run; no service was stopped, no image was pulled, and real alert delivery is
-not claimed. Run the steps below only after the local-only preflight passes
-and every required image is already present.
+The default published ports (`8000`, `4318`, `9090`, `3100`, `3200`, `3000`)
+were occupied, so this disposable project uses alternate loopback ports:
+API `18000`, OTLP `14318`, Prometheus `19090`, Loki `13100`, Tempo `13200`,
+Grafana `13000`, and PostgreSQL `15442`. A listener-only check found these
+alternates free, but recheck immediately before startup. The
+`prom/alertmanager:v0.28.1` image is not cached, so E2E was not run; no service
+was stopped and no image was pulled. Do not run E2E until the image is locally
+available and explicitly authorized.
 
 From the repository root in a clean PowerShell session, confirm the Docker
 context is local, the exact disposable project does not already exist, and
-the fixed service ports plus a PostgreSQL host port are free. If a fixed port
-or a required image is unavailable, stop here without changing anything.
-Choose an unused PostgreSQL host port if `5432` is occupied; never stop or
-alter another listener.
+all seven alternate TCP ports are free. If any is occupied or the listener
+check is uncertain, abort without stopping or changing anything.
 
 ```powershell
 $project = "benchscope-incident-response-disposable"
@@ -88,23 +88,18 @@ if (@(docker ps -aq --filter "label=com.docker.compose.project=$project").Count 
   throw "The disposable Compose project already exists; inspect it and abort."
 }
 
-$fixedPorts = 8000, 4318, 9090, 3100, 3200, 3000
+$requiredPorts = 18000, 14318, 19090, 13100, 13200, 13000, 15442
 try {
   $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
 } catch {
   throw "Port check failed or is uncertain; abort without starting Compose."
 }
-if (@($listeners | Where-Object { $fixedPorts -contains $_.Port }).Count -gt 0) {
-  throw "A required fixed port is occupied; abort without changing its listener."
+$busyPorts = @($listeners | Where-Object { $requiredPorts -contains $_.Port })
+if ($busyPorts.Count -gt 0) {
+  $busyPorts | Sort-Object Port, Address | Format-Table Address, Port
+  throw "A required alternate port is occupied; abort without changing its listener."
 }
-$dbPort = 5432
-if (@($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0) {
-  $dbPort = 15441
-  while (@($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0 -and $dbPort -lt 15500) { $dbPort++ }
-}
-if ($dbPort -ge 15500 -or @($listeners | Where-Object { $_.Port -eq $dbPort }).Count -gt 0) {
-  throw "No verified-free PostgreSQL host port; abort."
-}
+$dbPort = 15442
 
 $requiredImages = @(
   "postgres:17-alpine",
@@ -146,7 +141,12 @@ POSTGRES_DB=benchscope_incident
 POSTGRES_USER=incident
 POSTGRES_PASSWORD=$dbPassword
 POSTGRES_PORT=$dbPort
-API_PORT=8000
+API_PORT=18000
+OTLP_PORT=14318
+PROMETHEUS_PORT=19090
+LOKI_PORT=13100
+TEMPO_PORT=13200
+GRAFANA_PORT=13000
 ALERT_RECEIVER_SECRET_FILE=./secrets/alert-receiver-bearer
 APP_MODE=local
 APP_ENV=development
@@ -156,24 +156,40 @@ BENCHMARK_ENABLED=false
 Remove-Variable dbPassword, bearer
 
 docker compose --env-file .env.incident-response-disposable -p $project config --quiet
+try {
+  $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+} catch {
+  throw "Final port check failed; abort without starting Compose."
+}
+if (@($listeners | Where-Object { $requiredPorts -contains $_.Port }).Count -gt 0) {
+  throw "An alternate port became occupied; abort without changing its listener."
+}
+# Run only after explicit authorization and confirmation that every image is cached.
 docker compose --env-file .env.incident-response-disposable -p $project up --build --pull never --wait --detach
 docker compose --env-file .env.incident-response-disposable -p $project ps
 ```
 
 Do not substitute `.env` or start the default Compose project. The Alertmanager
-and receiver have no published host ports; the API, Prometheus, and other
-existing development services retain their loopback-only ports.
+and receiver have no published host ports. This project publishes its API,
+OTLP, Prometheus, Loki, Tempo, Grafana, and database only on the alternate
+loopback ports above; the normal Compose defaults remain unchanged.
 
-Verify that the API is ready, Prometheus is healthy, `up{job="api"}` is `1`,
-the alert is clear, and no existing incident record is being mistaken for
-this exercise. Then stop only the API in this exact project and wait long
-enough for the one-minute rule and Alertmanager delivery:
+Verify the API, Prometheus, Loki, Tempo, and Grafana health URLs; confirm
+`up{job="api"}` is `1`, the alert is clear, and no existing incident record
+is being mistaken for this exercise. Then stop only this project's API and
+wait long enough for the one-minute rule and Alertmanager delivery:
 
 ```powershell
+Invoke-RestMethod http://127.0.0.1:18000/ready
+Invoke-RestMethod http://127.0.0.1:19090/-/healthy
+Invoke-RestMethod http://127.0.0.1:13100/ready
+Invoke-RestMethod http://127.0.0.1:13200/ready
+Invoke-RestMethod http://127.0.0.1:13000/api/health
+curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
 docker compose --env-file .env.incident-response-disposable -p $project stop api
 Start-Sleep -Seconds 100
-Invoke-RestMethod "http://127.0.0.1:9090/api/v1/alerts"
-curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%2Calertstate%3D%22firing%22%7D'
+Invoke-RestMethod "http://127.0.0.1:19090/api/v1/alerts"
+curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%2Calertstate%3D%22firing%22%7D'
 docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
 ```
 
@@ -189,10 +205,10 @@ resolve; then confirm the same incident row is resolved rather than duplicated:
 
 ```powershell
 docker compose --env-file .env.incident-response-disposable -p $project start api
-Invoke-RestMethod http://127.0.0.1:8000/ready
+Invoke-RestMethod http://127.0.0.1:18000/ready
 Start-Sleep -Seconds 30
-curl.exe --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
-Invoke-RestMethod http://127.0.0.1:9090/api/v1/alerts
+curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
+Invoke-RestMethod http://127.0.0.1:19090/api/v1/alerts
 docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
 ```
 

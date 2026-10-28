@@ -45,7 +45,7 @@ services:
       retries: 10
       start_period: 10s
     ports:
-      - "127.0.0.1:${API_PORT:?Set API_PORT in .env}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
 
   alert-receiver:
     build:
@@ -102,7 +102,7 @@ services:
       tempo:
         condition: service_started
     ports:
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:${OTLP_PORT:-4318}:4318"
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -125,7 +125,7 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
 
   loki:
     image: grafana/loki:3.5.3
@@ -139,7 +139,7 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "127.0.0.1:3100:3100"
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
 
   tempo:
     image: grafana/tempo:2.8.1
@@ -153,7 +153,7 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "127.0.0.1:3200:3200"
+      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
 
   grafana:
     image: grafana/grafana:12.1.1
@@ -179,7 +179,7 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
 
 volumes:
   postgres-data:
