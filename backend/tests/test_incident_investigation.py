@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from app import incident_investigation as investigation
-from app.models import Base, IncidentRecord
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+from app import incident_investigation as investigation
+from app.models import Base, IncidentRecord
 
 
 def _evidence(status="complete"):
