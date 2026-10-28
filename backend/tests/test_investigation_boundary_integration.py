@@ -1,17 +1,14 @@
-import os
 import socket
 import threading
 import time
-from pathlib import Path
 from uuid import uuid4
 
 import uvicorn
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app import investigation_boundary as boundary
-from app.models import Base, IncidentRecord
+from app.models import Base
 from tests.test_incident_investigation import _database_record
 
 

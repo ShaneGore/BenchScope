@@ -1,6 +1,5 @@
 import json
 import os
-import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
