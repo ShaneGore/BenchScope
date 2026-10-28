@@ -30,6 +30,7 @@
       "targets": [
         {
           "expr": "sum by (http_route, http_response_status_code) (rate(benchscope_http_server_requests_total[$__rate_interval]))",
+          "exemplar": true,
           "legendFormat": "{{http_route}} · {{http_response_status_code}}",
           "refId": "A"
         }

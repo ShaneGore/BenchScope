@@ -23,7 +23,11 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import Span, Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from prometheus_client import CollectorRegistry, make_asgi_app
+from prometheus_client import (
+    CollectorRegistry,
+    make_asgi_app,
+)
+from prometheus_client import Counter as PrometheusCounter
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").rstrip("/")
@@ -61,6 +65,12 @@ class Telemetry:
     ) -> None:
         self.enabled = enabled
         self.registry = CollectorRegistry()
+        self.requests = PrometheusCounter(
+            "benchscope_http_server_requests",
+            "HTTP requests for the observed import and run-view journey",
+            ("http_route", "http_request_method", "http_response_status_code"),
+            registry=self.registry,
+        )
         reader = PrometheusMetricReader(
             disable_target_info=True,
             scope_info_enabled=False,
@@ -101,10 +111,6 @@ class Telemetry:
 
         self.tracer = self.trace_provider.get_tracer("benchscope.api")
         meter = self.meter_provider.get_meter("benchscope.api")
-        self.requests = meter.create_counter(
-            "benchscope_http_server_requests",
-            description="HTTP requests for the observed import and run-view journey",
-        )
         self.duration = meter.create_histogram(
             "benchscope_http_server_request_duration_seconds",
             unit="s",
@@ -127,7 +133,18 @@ class Telemetry:
             "http.response.status_code": status_code,
         }
         try:
-            self.requests.add(1, attributes)
+            metric_labels = {
+                "http_route": route,
+                "http_request_method": method,
+                "http_response_status_code": str(status_code),
+            }
+            span_context = span.get_span_context()
+            if span_context.is_valid:
+                self.requests.labels(**metric_labels).inc(
+                    exemplar={"trace_id": f"{span_context.trace_id:032x}"}
+                )
+            else:
+                self.requests.labels(**metric_labels).inc()
             self.duration.record(elapsed, attributes)
             if status_code >= 400:
                 span.set_status(Status(StatusCode.ERROR))
