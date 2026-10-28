@@ -4,54 +4,52 @@ BenchScope is a local-first web application for recording, comparing, and unders
 
 ## Problem
 
-Developers running local language models often produce one-off benchmark results that are hard to compare across model versions, quantisations, inference settings, hardware configurations, and time. BenchScope provides a persistent observatory for those results: import an existing result or launch a benchmark against a configured local model endpoint, inspect the outcome, compare it with earlier runs, and recover from failed or interrupted attempts without losing history.
+Developers running local language models often produce one-off benchmark results that are hard to compare across model versions, quantisations, inference settings, hardware configurations, and time. BenchScope provides a persistent observatory for those results: import an existing result, inspect it, and compare it with earlier results.
 
 ## What the system does
 
-- Records benchmark attempts with model/profile snapshots, configuration, timestamps, status, metrics, hardware information, and sanitised diagnostics.
-- Tracks persisted run lifecycle states: `running`, `completed`, `failed`, and `interrupted`. Cancellation is deferred to #25.
-- Keeps failed and interrupted attempts in history without presenting them as successful results.
+- Imports supported JSON result files, validates required fields, normalises metrics, reports errors, and avoids duplicates where a stable ID or fingerprint is available.
+- Persists imported results and supports history, run detail, filtering, and comparison.
 - Distinguishes missing metrics from zero values.
 - Supports model profiles with name, version, quantisation, endpoint, hardware notes, and benchmark settings.
-- Imports supported JSON result files, validates required fields, normalises metrics, reports errors, and avoids duplicates where a stable ID or fingerprint is available.
-- Filters runs by model, status, and date.
-- Compares completed runs through history tables and charts.
 - Provides a read-only synthetic demo for unauthenticated visitors.
 - Supports personal authenticated workspaces in hosted mode, with backend-enforced ownership isolation.
-- Runs benchmarks only in local/private mode; hosted mode imports results instead.
+- Real benchmark launch and cancellation are not implemented; both remain tracked by #25. Hosted mode imports results and never runs benchmarks.
 
 ## Operating modes
 
 ### Local/private mode
 
-- Full workflow, including launching the private benchmark against a configured local model endpoint.
+- Local result import, persistence, history, detail, and comparison.
 - Service binds to the loopback interface by default.
-- Local model endpoints, private benchmark paths, and private artifacts remain local and are not exposed.
+- Real benchmark launch and cancellation are unavailable and tracked by #25.
+- Local model endpoints, private benchmark paths, and private artifacts are not exposed.
 
 ### Hosted multi-user mode
 
 - Individual users sign in and maintain private profiles and result history.
 - Unauthenticated visitors can explore a read-only demo populated with synthetic results.
 - Hosted mode does not connect to model endpoints on a user's computer and does not run the private benchmark.
-- Benchmark results can be produced locally and imported into hosted workspaces.
+- Independently produced benchmark result files can be imported into hosted workspaces.
 - Hosted import processing extracts only allowlisted, non-confidential metrics and metadata and discards the uploaded raw payload.
 
 ## Current implementation status
 
 This repository currently contains:
 
-- A React/Vite/TypeScript frontend with pages for Dashboard, Runs, Run Detail, Compare, Import, Profiles, and Benchmark.
-- A FastAPI backend with local profile, import, run-history, demo, and benchmark-capability API routes plus `/health` and `/ready`.
+- A React/Vite/TypeScript frontend with Dashboard, Runs, Run Detail, Compare, Import, Profiles, and Benchmark pages.
+- A FastAPI backend with local profile, import, persisted run-history/comparison, demo, and benchmark-capability API routes plus `/health` and `/ready`. Benchmark capability discovery is not benchmark execution.
 - A hand-authored OpenAPI contract at `openapi.yaml`, derived from the frontend service interface.
 - Generated typed frontend contract artifacts at `frontend/src/types/api.generated.ts`.
 - Contract tests in `frontend/src/contract/` and `backend/tests/test_contract.py`.
 - Environment-selected API services for local/hosted personal data, an anonymous read-only demo service, and mock fixtures for tests.
-- Docker Compose support for local backend, PostgreSQL, and OpenTelemetry/Prometheus/Loki/Tempo/Grafana.
+- Docker Compose support for the static frontend, backend, PostgreSQL, and OpenTelemetry/Prometheus/Loki/Tempo/Grafana.
 
-Backend domain routes are implemented under `/api/v1` for profiles, imports,
-run history/comparison, the synthetic demo, and mode-gated benchmark
-capabilities. See `backend/app/main.py` and the routers under `backend/app/`;
-the route and behavior tests are under `backend/tests/`.
+The results observatory is implemented: supported results can be imported and
+persisted, then viewed in history and detail or compared. Real benchmark
+launch and cancellation are unavailable and tracked by #25. Backend domain
+routes are under `/api/v1`; see `backend/app/main.py` and the routers under
+`backend/app/`.
 
 ## Expected behavior
 
@@ -59,12 +57,8 @@ the route and behavior tests are under `backend/tests/`.
 - Valid result files can be imported and remain available after restart.
 - Malformed imports produce clear errors and do not create partial records.
 - Duplicate imports are identified when a stable source ID or fingerprint is available.
-- A user can select a configured profile and launch a benchmark without blocking the interface.
-- Completed runs display available metrics and appear in history.
+- Imported results display available metrics in history and detail and can be compared.
 - Missing metrics are shown as unavailable, never zero.
-- Failed or interrupted runs are recorded with useful, sanitised diagnostics.
-- A new attempt can follow a failed attempt without overwriting the earlier record.
-- History can be filtered and completed runs compared using a meaningful chart.
 - Hosted users can only read, alter, or delete their own records.
 - Anonymous visitors can use the read-only synthetic demo without an account.
 - No proprietary benchmark code, confidential evaluation material, credentials, or private artifacts are committed or publicly served.
@@ -76,7 +70,7 @@ backend/          FastAPI backend and tests
 frontend/         React/Vite frontend and tests
 openapi.yaml      Initial API contract
 _docs/            Product plan, architecture, task tracker, process docs
-compose.yaml      Local backend and PostgreSQL stack
+compose.yaml      Local full application and observability stack
 ```
 
 ## Frontend
@@ -85,11 +79,30 @@ From `frontend/`:
 
 ```sh
 corepack pnpm install --frozen-lockfile
-corepack pnpm dev
 corepack pnpm test
 corepack pnpm build
 corepack pnpm gen:api
 corepack pnpm check:api
+```
+
+For Vite/HMR, keep the configured local CORS origins on port 5173. If the
+Compose stack is running, stop only its frontend service before starting Vite;
+the API and observability services can remain up:
+
+```powershell
+docker compose stop frontend
+$env:VITE_API_URL = "http://127.0.0.1:8000"
+$env:VITE_OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318/v1/traces"
+corepack pnpm exec vite --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open <http://127.0.0.1:5173>. Stop Vite before restoring the static frontend
+with `docker compose start frontend`. Alternatively, use the Compose static
+frontend directly without starting Vite. Clear the shell environment variables
+when done:
+
+```powershell
+Remove-Item Env:VITE_API_URL, Env:VITE_OTEL_EXPORTER_OTLP_ENDPOINT
 ```
 
 ## Backend
@@ -162,49 +175,80 @@ Remove-Item Env:TEST_DATABASE_URL
 - Check generated types for drift: `cd frontend && pnpm check:api`.
 - FastAPI-generated OpenAPI becomes authoritative after backend feature work; reconcile `openapi.yaml` before integrating the real API client.
 
-## Local API and PostgreSQL with Compose
+## Local application stack with Compose
 
-Prerequisites: Docker Engine or Docker Desktop with Compose v2.
+Prerequisites: Docker Engine or Docker Desktop with Compose v2. The host ports
+5173 (frontend), 8000 (API), 4318 (OTLP), 9090 (Prometheus), 3100 (Loki),
+3200 (Tempo), 3000 (Grafana), and 5432 (PostgreSQL by default) must be
+available. Compose publishes them on `127.0.0.1` only.
 
-Compose builds the backend from `backend/` and runs PostgreSQL in a private Compose network. PostgreSQL and the backend ports are published only on `127.0.0.1` for local development and host-run database tests. Private benchmark, model endpoints, and raw artifacts remain on the host and are not mounted or packaged.
+Copy `.env.example` to `.env` and replace the password placeholder with a
+local URL-safe password (`Copy-Item .env.example .env` in PowerShell, or
+`cp .env.example .env` elsewhere). For offline local API use, set
+`LOCAL_AUTH_BYPASS=true`; it is disabled by default and only accepted in
+development/local mode. Never enable the bypass in a hosted deployment.
 
-1. Copy the example environment file and replace its password placeholder with a local URL-safe password:
+The alert receiver reads its bearer secret from a Compose secret file; Grafana
+provisioning reads the same value from `.env`. Generate the secret without
+printing or committing it:
 
-   ```sh
-   cp .env.example .env
-   ```
+```powershell
+New-Item -ItemType Directory -Force secrets | Out-Null
+$bytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
+[IO.File]::WriteAllText("secrets/alert-receiver-bearer", $secret, [Text.Encoding]::ASCII)
+$envFile = [IO.File]::ReadAllText(".env")
+$envFile = [regex]::Replace($envFile, '(?m)^ALERT_RECEIVER_BEARER=.*$', "ALERT_RECEIVER_BEARER=$secret")
+[IO.File]::WriteAllText(".env", $envFile)
+[Array]::Clear($bytes, 0, $bytes.Length)
+$rng.Dispose()
+Remove-Variable secret
+```
 
-   Compose requires `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `API_PORT`. `POSTGRES_PORT` defaults to 5432.
-   The auth bypass is intentionally disabled by default; for offline local API
-   work, explicitly set `LOCAL_AUTH_BYPASS=true` in `.env`. Compose passes
-   `APP_ENV` and the bypass flag to the backend, which rejects any non-development,
-   non-local, or non-loopback combination.
+Before starting Compose, confirm the selected Docker context points to a local
+engine. In PowerShell:
 
-2. Build and start services:
+```powershell
+$context = docker context show
+$endpoint = docker context inspect $context --format '{{.Endpoints.docker.Host}}'
+if ($endpoint -notmatch '^(npipe:|unix://)') { throw "Not a local Docker context; abort." }
+```
 
-   ```sh
-   docker compose up --build --wait
-   ```
+Start the full application and observability stack with one command:
 
-3. Verify:
+```powershell
+docker compose up --build --wait --detach
+```
 
-   ```sh
-   docker compose ps
-   curl http://127.0.0.1:8000/health
-   curl http://127.0.0.1:8000/ready
-   ```
+The frontend is built as a static site with API and OTLP URLs pointing to the
+loopback-published services. The API applies database migrations before it
+becomes healthy.
 
-4. Stop while retaining data:
+| Service | URL |
+| --- | --- |
+| BenchScope | <http://127.0.0.1:5173> |
+| API health / readiness | <http://127.0.0.1:8000/health> / <http://127.0.0.1:8000/ready> |
+| Grafana | <http://127.0.0.1:3000> |
+| Prometheus | <http://127.0.0.1:9090> |
+| Loki | <http://127.0.0.1:3100> |
+| Tempo | <http://127.0.0.1:3200> |
 
-   ```sh
-   docker compose down
-   ```
+`API_PORT` can change the API's host port; rebuild the frontend when changing
+it because `VITE_API_URL` is embedded at build time. `POSTGRES_PORT` changes
+the PostgreSQL host port and defaults to 5432. The API still connects to the
+database over the private Compose network.
 
-   Delete the PostgreSQL volume too:
+Stop safely while keeping PostgreSQL and observability data:
 
-   ```sh
-   docker compose down --volumes
-   ```
+```sh
+docker compose down
+```
+
+This removes containers and the Compose network but retains named volumes.
+Only use `docker compose down --volumes` when intentionally deleting that
+persistent data.
 
 ### PostgreSQL migrations and integration tests
 
@@ -229,59 +273,35 @@ browser traces to the local OTLP collector. Compose binds every service to
 loopback; no hosted telemetry endpoint or external notification receiver is
 configured. Local authentication bypass is only for a developer workstation.
 
-1. Copy `.env.example` to `.env`, set a local URL-safe `POSTGRES_PASSWORD`, and
-   set `LOCAL_AUTH_BYPASS=true` (keep `APP_MODE=local` and
-   `APP_ENV=development`):
+The Playwright journey starts its own Vite server on port 5173, so do not start
+Compose's `frontend` service at the same time. First copy `.env.example` to
+`.env` and configure its password and local auth bypass as described above.
 
-   ```powershell
-   Copy-Item .env.example .env
-   # Edit .env locally; do not commit it.
-   ```
+Start only the API and observability services required by the journey. The
+Compose API container applies its Alembic migrations before serving requests:
 
-   Generate the receiver bearer secret. The receiver reads the Compose secret
-   file; Grafana provisioning reads the same value from the ignored local
-   `.env`. Do not print or commit it:
+```powershell
+docker compose up --build --wait --detach db api alert-receiver otel-collector prometheus loki tempo grafana
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/ready
+Invoke-WebRequest http://127.0.0.1:8000/metrics
+Invoke-RestMethod http://127.0.0.1:9090/-/healthy
+Invoke-RestMethod http://127.0.0.1:3100/ready
+Invoke-RestMethod http://127.0.0.1:3200/ready
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+```
 
-   ```powershell
-   New-Item -ItemType Directory -Force secrets | Out-Null
-   $bytes = New-Object byte[] 32
-   $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-   $rng.GetBytes($bytes)
-   $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', 'x').Replace('/', 'y')
-   [IO.File]::WriteAllText("secrets/alert-receiver-bearer", $secret, [Text.Encoding]::ASCII)
-   $envFile = [IO.File]::ReadAllText(".env")
-   $envFile = [regex]::Replace($envFile, '(?m)^ALERT_RECEIVER_BEARER=.*$', "ALERT_RECEIVER_BEARER=$secret")
-   [IO.File]::WriteAllText(".env", $envFile)
-   [Array]::Clear($bytes, 0, $bytes.Length)
-   $rng.Dispose()
-   Remove-Variable secret
-   ```
+Install and run the real-UI journey from `frontend/`. Playwright starts Vite
+with `VITE_API_URL=http://127.0.0.1:8000` and
+`VITE_OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318/v1/traces`:
 
-2. Start the stack. The Compose API container applies its Alembic migrations
-   before serving requests:
-
-   ```powershell
-   docker compose up --build --wait --detach
-   docker compose ps
-   Invoke-RestMethod http://127.0.0.1:8000/ready
-   Invoke-WebRequest http://127.0.0.1:8000/metrics
-   Invoke-RestMethod http://127.0.0.1:9090/-/healthy
-   Invoke-RestMethod http://127.0.0.1:3100/ready
-   Invoke-RestMethod http://127.0.0.1:3200/ready
-   Invoke-RestMethod http://127.0.0.1:3000/api/health
-   ```
-
-3. Install and run the real-UI journey from `frontend/`. Playwright starts Vite
-   with `VITE_API_URL=http://127.0.0.1:8000` and
-   `VITE_OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318/v1/traces`:
-
-   ```powershell
-   Push-Location frontend
-   corepack pnpm install --frozen-lockfile
-   corepack pnpm exec playwright install chromium
-   corepack pnpm test:journey
-   Pop-Location
-   ```
+```powershell
+Push-Location frontend
+corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm test:journey
+Pop-Location
+```
 
 The journey imports one synthetic valid run, views it in history and detail,
 and submits an invalid import. Browser request spans and FastAPI spans carry
@@ -323,8 +343,9 @@ result above does not claim that alert delivery was exercised.
 
 Prerequisites: Docker Engine/Compose v2 with a **local** Docker context, and
 the repository's `compose.yaml` and `observability/` files. The required host
-TCP ports are `8000` (API), `4318` (OTLP), `9090` (Prometheus), `3100`
-(Loki), `3200` (Tempo), `3000` (Grafana), and one PostgreSQL host port. Keep
+TCP ports are `5173` (frontend), `8000` (API), `4318` (OTLP), `9090`
+(Prometheus), `3100` (Loki), `3200` (Tempo), `3000` (Grafana), and one
+PostgreSQL host port. Keep
 the fixed API/observability ports unchanged. Use PostgreSQL host port `5432`
 when free; if it is occupied, choose a verified-free alternate (for example
 `15441`) through `POSTGRES_PORT`. Compose still connects the API to the DB at
@@ -338,7 +359,7 @@ $context = docker context show
 $endpoint = docker context inspect $context --format '{{.Endpoints.docker.Host}}'
 if ($endpoint -notmatch '^(npipe:|unix://)') { throw "Not a local Docker context; abort." }
 
-$fixedPorts = 8000, 4318, 9090, 3100, 3200, 3000
+$fixedPorts = 5173, 8000, 4318, 9090, 3100, 3200, 3000
 try {
   $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
 } catch {

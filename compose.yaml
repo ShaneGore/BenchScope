@@ -81,6 +81,24 @@ services:
     secrets:
       - alert-receiver-bearer
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://127.0.0.1:${API_PORT:?Set API_PORT in .env}
+        VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318/v1/traces
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "127.0.0.1:5173:80"
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.136.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
