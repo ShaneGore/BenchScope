@@ -7,6 +7,7 @@ Revises: 0004_incident_records
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0005_incident_investigation_summary"
