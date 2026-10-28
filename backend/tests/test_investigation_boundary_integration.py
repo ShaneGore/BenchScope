@@ -84,7 +84,9 @@ def test_boundary_real_http_rejects_auth_and_bad_ids(tmp_path):
                 assert exc.code in (401, 404)
 
         bad_url = f"http://127.0.0.1:{port}/v1/incidents/not-a-uuid/evidence"
-        request = urllib.request.Request(bad_url, headers={"Authorization": "Bearer boundary-secret"})
+        request = urllib.request.Request(
+            bad_url, headers={"Authorization": "Bearer boundary-secret"}
+        )
         try:
             urllib.request.urlopen(request, timeout=5)
             raise AssertionError("expected HTTP error")
@@ -110,7 +112,9 @@ def test_boundary_real_http_missing_record_returns_404(tmp_path):
 
         missing = uuid4()
         url = f"http://127.0.0.1:{port}/v1/incidents/{missing}/evidence"
-        request = urllib.request.Request(url, headers={"Authorization": "Bearer boundary-secret"})
+        request = urllib.request.Request(
+            url, headers={"Authorization": "Bearer boundary-secret"}
+        )
         try:
             urllib.request.urlopen(request, timeout=5)
             raise AssertionError("expected HTTP error")
@@ -139,6 +143,8 @@ def test_boundary_real_http_redacts_sensitive_values(tmp_path):
         payload = boundary.fetch_persisted_evidence(
             f"http://127.0.0.1:{port}", record_id, "boundary-secret", timeout=5
         )
-        assert payload["evidence"].get("secret") == "[redacted]" or "SYNTHETIC_SECRET_SENTINEL" not in str(payload)
+        assert payload["evidence"].get(
+            "secret"
+        ) == "[redacted]" or "SYNTHETIC_SECRET_SENTINEL" not in str(payload)
     finally:
         _stop_server(server, thread)

@@ -25,5 +25,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("incident_records", "investigation_summary")
-
-

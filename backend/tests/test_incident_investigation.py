@@ -687,7 +687,9 @@ def test_process_runner_executes_controlled_child(tmp_path):
 
 def test_process_runner_rejects_missing_executable(tmp_path):
     with pytest.raises(investigation.InvestigationBlocked, match="executable"):
-        investigation._run_cli_process(["definitely-missing-executable"], tmp_path, timeout=10)
+        investigation._run_cli_process(
+            ["definitely-missing-executable"], tmp_path, timeout=10
+        )
 
 
 def test_real_preflight_no_longer_reports_process_blocker(monkeypatch):
@@ -733,6 +735,8 @@ def test_failed_investigation_does_not_store_summary_or_log_sentinels(tmp_path, 
         assert record.investigation_summary is None
         assert "SYNTHETIC_SECRET_SENTINEL" not in caplog.text
     engine.dispose()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
 def test_windows_process_tree_terminated_on_timeout(tmp_path):
     (tmp_path / "grandchild.py").write_text(
@@ -745,7 +749,9 @@ def test_windows_process_tree_terminated_on_timeout(tmp_path):
     )
     pidfile = tmp_path / "grandchild.pid"
     with pytest.raises(investigation.InvestigationBlocked, match="timed out"):
-        investigation._run_cli_process(["python", "parent.py", str(pidfile)], tmp_path, 1, 1000)
+        investigation._run_cli_process(
+            ["python", "parent.py", str(pidfile)], tmp_path, 1, 1000
+        )
     import time
 
     time.sleep(1)
@@ -762,15 +768,23 @@ def test_windows_missing_executable_fails_closed(tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
 def test_windows_nonzero_exit_fails_closed(tmp_path):
-    with pytest.raises(investigation.InvestigationBlocked, match="exited unsuccessfully"):
-        investigation._run_cli_process(["python", "-c", "raise SystemExit(3)"], tmp_path, 10)
+    with pytest.raises(
+        investigation.InvestigationBlocked, match="exited unsuccessfully"
+    ):
+        investigation._run_cli_process(
+            ["python", "-c", "raise SystemExit(3)"], tmp_path, 10
+        )
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
 def test_windows_output_limit_terminates_tree(tmp_path):
     with pytest.raises(investigation.InvestigationBlocked, match="output exceeded"):
         investigation._run_cli_process(
-            ["python", "-c", "import sys; sys.stdout.write('x' * 1000000); sys.stdout.flush()"],
+            [
+                "python",
+                "-c",
+                "import sys; sys.stdout.write('x' * 1000000); sys.stdout.flush()",
+            ],
             tmp_path,
             10,
             1000,
@@ -786,7 +800,9 @@ def test_windows_job_setup_failure_fails_closed(tmp_path, monkeypatch):
             return 0
 
     monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: FakeKernel())
-    with pytest.raises(investigation.InvestigationBlocked, match="containment could not be created"):
+    with pytest.raises(
+        investigation.InvestigationBlocked, match="containment could not be created"
+    ):
         investigation._run_cli_process(["python", "-c", "print(1)"], tmp_path, 10)
 
 
@@ -803,11 +819,7 @@ def test_windows_deadline_includes_startup(tmp_path, monkeypatch):
     monkeypatch.setattr(investigation.shutil, "which", slow_which)
     start = time.monotonic()
     with pytest.raises(investigation.InvestigationBlocked, match="timed out"):
-        investigation._run_cli_process(["python", "-c", "import time; time.sleep(30)"], tmp_path, 1, 1000)
+        investigation._run_cli_process(
+            ["python", "-c", "import time; time.sleep(30)"], tmp_path, 1, 1000
+        )
     assert time.monotonic() - start < 1.2
-
-
-
-
-
-
