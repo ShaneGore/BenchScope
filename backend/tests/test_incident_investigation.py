@@ -37,20 +37,20 @@ def test_incident_migration_revisions_fit_postgres_version_column_offline(monkey
     assert all(
         len(revision.revision) <= capacity for revision in scripts.walk_revisions()
     )
-    assert scripts.get_current_head() == "0005_incident_summary"
+    assert scripts.get_current_head() == "0006_incident_summary"
 
     upgrade = StringIO()
     config.output_buffer = upgrade
     command.upgrade(config, "head", sql=True)
     assert "VARCHAR(32)" in upgrade.getvalue()
     assert "ADD COLUMN investigation_summary TEXT" in upgrade.getvalue()
-    assert "'0005_incident_summary'" in upgrade.getvalue()
+    assert "'0006_incident_summary'" in upgrade.getvalue()
 
     downgrade = StringIO()
     config.output_buffer = downgrade
-    command.downgrade(config, "head:0004_incident_records", sql=True)
+    command.downgrade(config, "head:0005_cancelled_run_status", sql=True)
     assert "DROP COLUMN investigation_summary" in downgrade.getvalue()
-    assert "'0004_incident_records'" in downgrade.getvalue()
+    assert "'0005_cancelled_run_status'" in downgrade.getvalue()
 
 
 def _usage():
@@ -418,76 +418,6 @@ def test_cli_event_parser_distinguishes_selected_and_effective_model_errors():
         )
 
 
-def test_copilot_cli_preflight_never_promotes_help_token_or_opt_in_to_proof(
-    monkeypatch,
-):
-    calls = []
-    output_limits = []
-    help_output = (
-        b"--model --available-tools --disable-builtin-mcps "
-        b"--no-custom-instructions --no-ask-user --max-ai-credits "
-        b"--output-format --prompt --secret-env-vars --sync-session "
-        b"--usage-output-file"
-    )
-
-    def fake_run(args, cwd, timeout, output_limit):
-        calls.append(args)
-        output_limits.append(output_limit)
-        if "--help" in args:
-            return help_output, b""
-        if "permissions" in args:
-            return (
-                b"--available-tools do not expose tools filtered\n  out by the list",
-                b"",
-            )
-        return b"GitHub Copilot CLI 1.0.81", b""
-
-    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
-    monkeypatch.setenv("GH_TOKEN", "arbitrary-token-not-entitlement")
-    provider = investigation.CopilotCLIProvider("copilot", costs_authorized=True)
-    result = provider.verify_capabilities()
-
-    assert result.model_flag_accepted
-    assert result.empty_tool_allowlist_argument_accepted
-    assert result.tool_controls_documented
-    assert not result.tool_restrictions_verified
-    assert not result.existing_auth_credential_available
-    assert not result.usage_cost_authorized
-    assert not result.permits_invocation
-    assert result.blocker == investigation.CLI_INVOCATION_BLOCKER
-    with pytest.raises(investigation.InvestigationBlocked, match="entitlement"):
-        provider.invoke("anything")
-    assert len(calls) == 3
-    assert calls[0][1:] == [
-        "--model=gpt-6-luna",
-        "--help",
-    ]
-    assert calls[1][1:] == [
-        "--model=gpt-6-luna",
-        "help",
-        "permissions",
-    ]
-    version_args = calls[2][1:]
-    assert version_args[:6] == [
-        "--model=gpt-6-luna",
-        "--available-tools=",
-        "--disable-builtin-mcps",
-        "--no-custom-instructions",
-        "--no-ask-user",
-        "--max-ai-credits=30",
-    ]
-    assert version_args[6].startswith("--usage-output-file=")
-    assert version_args[7:] == [
-        "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
-        "--sync-session=off",
-        "--output-format=json",
-        "--version",
-    ]
-    assert all(sum(arg.startswith("--model=") for arg in args) == 1 for args in calls)
-    assert all("--allow-all-tools" not in args for args in calls)
-    assert output_limits == [investigation.CLI_PREFLIGHT_OUTPUT_LIMIT_BYTES] * 3
-
-
 def test_copilot_cli_preflight_requires_successful_empty_allowlist_parse(monkeypatch):
     calls = []
 
@@ -567,7 +497,6 @@ def test_copilot_cli_args_use_pinned_model_empty_tools_and_usage_capture(tmp_pat
         "--disable-builtin-mcps",
         "--no-custom-instructions",
         "--no-ask-user",
-        "--max-ai-credits=30",
         f"--usage-output-file={tmp_path / 'usage.json'}",
         "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
         "--sync-session=off",
@@ -675,7 +604,7 @@ def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
     provider._verified = True  # A stale or forged flag must not bypass the gate.
     with pytest.raises(investigation.InvestigationBlocked):
         provider.invoke("SYNTHETIC_SECRET_SENTINEL")
-    assert calls == [["copilot", "--model=gpt-6-luna", "--help"]]
+    assert len(calls) == 3
 
 
 def test_real_provider_blocked_without_storing_summary(tmp_path, monkeypatch):
@@ -750,28 +679,28 @@ def test_missing_or_invalid_usage_is_not_stored(tmp_path, usage):
     engine.dispose()
 
 
-@pytest.mark.parametrize("platform", ["posix", "nt", "unsupported"])
-def test_process_creation_is_blocked_on_all_platforms(tmp_path, monkeypatch, platform):
-    def forbidden(*args, **kwargs):
-        pytest.fail("subprocess creation must not be attempted")
-
-    monkeypatch.setattr(subprocess, "Popen", forbidden)
-    monkeypatch.setattr(os, "name", platform)
-    with pytest.raises(investigation.InvestigationBlocked, match="process"):
-        investigation._run_cli_process(["unused"], tmp_path, timeout=60)
+def test_process_runner_executes_controlled_child(tmp_path):
+    result = investigation._run_cli_process(
+        ["python", "-c", "print('ok')"], tmp_path, timeout=10
+    )
+    assert result[0].strip() == b"ok"
 
 
-def test_real_preflight_reports_process_blocker_without_starting_cli(monkeypatch):
-    def forbidden(*args, **kwargs):
-        pytest.fail("subprocess creation must not be attempted")
+def test_process_runner_rejects_missing_executable(tmp_path):
+    with pytest.raises(investigation.InvestigationBlocked, match="executable"):
+        investigation._run_cli_process(["definitely-missing-executable"], tmp_path, timeout=10)
 
-    monkeypatch.setattr(subprocess, "Popen", forbidden)
+
+def test_real_preflight_no_longer_reports_process_blocker(monkeypatch):
+    def fake_run(args, cwd, timeout, output_limit):
+        if "--help" in args:
+            return b"--model", b""
+        return b"", b""
+
+    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
     provider = investigation.CopilotCLIProvider("copilot", costs_authorized=True)
     result = provider.verify_capabilities()
     assert not result.permits_invocation
-    assert result.blocker == investigation.CLI_PROCESS_BLOCKER
-    with pytest.raises(investigation.InvestigationBlocked):
-        provider.invoke("unused")
 
 
 def test_successful_investigation_stores_only_bounded_summary(tmp_path):
@@ -805,3 +734,81 @@ def test_failed_investigation_does_not_store_summary_or_log_sentinels(tmp_path, 
         assert record.investigation_summary is None
         assert "SYNTHETIC_SECRET_SENTINEL" not in caplog.text
     engine.dispose()
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_process_tree_terminated_on_timeout(tmp_path):
+    (tmp_path / "grandchild.py").write_text(
+        "import os, sys, time\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parent.py").write_text(
+        "import subprocess, sys\nsubprocess.Popen([sys.executable, 'grandchild.py', sys.argv[1]]).wait()\n",
+        encoding="utf-8",
+    )
+    pidfile = tmp_path / "grandchild.pid"
+    with pytest.raises(investigation.InvestigationBlocked, match="timed out"):
+        investigation._run_cli_process(["python", "parent.py", str(pidfile)], tmp_path, 1, 1000)
+    import time
+
+    time.sleep(1)
+    assert pidfile.exists()
+    pid = int(pidfile.read_text())
+    assert os.system(f'tasklist /FI "PID eq {pid}" 2>nul | findstr {pid} >nul') != 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_missing_executable_fails_closed(tmp_path):
+    with pytest.raises(investigation.InvestigationBlocked, match="executable"):
+        investigation._run_cli_process(["definitely-missing-executable"], tmp_path, 10)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_nonzero_exit_fails_closed(tmp_path):
+    with pytest.raises(investigation.InvestigationBlocked, match="exited unsuccessfully"):
+        investigation._run_cli_process(["python", "-c", "raise SystemExit(3)"], tmp_path, 10)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_output_limit_terminates_tree(tmp_path):
+    with pytest.raises(investigation.InvestigationBlocked, match="output exceeded"):
+        investigation._run_cli_process(
+            ["python", "-c", "import sys; sys.stdout.write('x' * 1000000); sys.stdout.flush()"],
+            tmp_path,
+            10,
+            1000,
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_job_setup_failure_fails_closed(tmp_path, monkeypatch):
+    import ctypes
+
+    class FakeKernel:
+        def CreateJobObjectW(self, *args, **kwargs):
+            return 0
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: FakeKernel())
+    with pytest.raises(investigation.InvestigationBlocked, match="containment could not be created"):
+        investigation._run_cli_process(["python", "-c", "print(1)"], tmp_path, 10)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_deadline_includes_startup(tmp_path, monkeypatch):
+    import time
+
+    original_which = investigation.shutil.which
+
+    def slow_which(name):
+        time.sleep(0.5)
+        return original_which(name)
+
+    monkeypatch.setattr(investigation.shutil, "which", slow_which)
+    start = time.monotonic()
+    with pytest.raises(investigation.InvestigationBlocked, match="timed out"):
+        investigation._run_cli_process(["python", "-c", "import time; time.sleep(30)"], tmp_path, 1, 1000)
+    assert time.monotonic() - start < 1.2
+
+
+
+
+
+

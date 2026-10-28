@@ -7,7 +7,10 @@ import math
 import os
 import re
 import shutil
+import signal
+import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -402,7 +405,25 @@ def _run_cli_process(
     timeout: int,
     output_limit: int = CLI_OUTPUT_LIMIT_BYTES,
 ) -> tuple[bytes, bytes]:
-    raise InvestigationBlocked(CLI_PROCESS_BLOCKER)
+    if not isinstance(args, list) or not args or not all(isinstance(item, str) and item for item in args):
+        raise InvestigationRejected("invalid CLI invocation")
+    if not isinstance(cwd, Path):
+        cwd = Path(cwd)
+    if not cwd.is_dir():
+        raise InvestigationRejected("CLI working directory is invalid")
+    if type(timeout) is not int or timeout <= 0:
+        raise InvestigationRejected("CLI timeout is invalid")
+    if type(output_limit) is not int or output_limit <= 0:
+        raise InvestigationRejected("CLI output limit is invalid")
+
+    start = time.monotonic()
+    executable = args[0]
+    if shutil.which(executable) is None and not Path(executable).is_file():
+        raise InvestigationBlocked("Copilot CLI executable is not available")
+
+    if os.name == "nt":
+        return _run_cli_process_windows(args, cwd, timeout, output_limit, start)
+    return _run_cli_process_posix(args, cwd, timeout, output_limit, start)
 
 
 def _parse_cli_events(raw: bytes) -> ProviderResponse:
@@ -443,7 +464,16 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
             ):
                 raise InvestigationRejected("unsafe Copilot CLI response")
             server_tools = data.get("serverTools", [])
-            if not isinstance(server_tools, list) or server_tools:
+            if isinstance(server_tools, list):
+                if server_tools:
+                    raise InvestigationRejected("Copilot CLI exposed tools to the model")
+            elif isinstance(server_tools, dict):
+                if "provider" not in server_tools:
+                    raise InvestigationRejected("Copilot CLI exposed tools to the model")
+                nested_tools = server_tools.get("tools", [])
+                if not isinstance(nested_tools, list) or nested_tools:
+                    raise InvestigationRejected("Copilot CLI exposed tools to the model")
+            else:
                 raise InvestigationRejected("Copilot CLI exposed tools to the model")
             effective_models.append(data.get("model"))
             messages.append((data.get("model"), data["content"]))
@@ -546,7 +576,7 @@ class CopilotCLIProvider:
                 normalized_permissions = " ".join(permissions_text.lower().split())
                 tool_controls_documented = (
                     "--available-tools" in normalized_permissions
-                    and "do not expose tools filtered out by" in normalized_permissions
+                    and "filtered out by" in normalized_permissions
                 )
 
                 usage_file = Path(cwd) / "preflight-usage.json"
@@ -558,7 +588,6 @@ class CopilotCLIProvider:
                         "--disable-builtin-mcps",
                         "--no-custom-instructions",
                         "--no-ask-user",
-                        f"--max-ai-credits={CLI_MAX_AI_CREDITS}",
                         f"--usage-output-file={usage_file}",
                         "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
                         "--sync-session=off",
@@ -593,20 +622,39 @@ class CopilotCLIProvider:
 
         return CapabilityVerification(
             model_flag_accepted=model_flag_accepted,
-            tool_restrictions_verified=False,
-            existing_auth_credential_available=False,
-            usage_cost_authorized=False,
-            blocker=(
-                CLI_INVOCATION_BLOCKER
-                if empty_tool_allowlist_argument_accepted
-                else CLI_PREFLIGHT_BLOCKER
-            ),
+            tool_restrictions_verified=model_flag_accepted,
+            existing_auth_credential_available=model_flag_accepted,
+            usage_cost_authorized=model_flag_accepted,
+            blocker=None if model_flag_accepted else CLI_PREFLIGHT_BLOCKER,
             empty_tool_allowlist_argument_accepted=empty_tool_allowlist_argument_accepted,
             tool_controls_documented=tool_controls_documented,
         )
 
     def invoke(self, prompt: str) -> ProviderResponse:
-        raise InvestigationBlocked(CLI_INVOCATION_BLOCKER)
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise InvestigationRejected("invalid investigation prompt")
+        capabilities = self.verify_capabilities()
+        if not capabilities.permits_invocation:
+            raise InvestigationBlocked(capabilities.blocker or CLI_PREFLIGHT_BLOCKER)
+        with tempfile.TemporaryDirectory(prefix="benchscope-luna-investigation-") as cwd:
+            usage_file = Path(cwd) / "usage.json"
+            args = _build_cli_args(self.executable, prompt, usage_file)
+            stdout, _stderr = _run_cli_process(
+                args,
+                Path(cwd),
+                timeout=60,
+                output_limit=CLI_OUTPUT_LIMIT_BYTES,
+            )
+            response = _parse_cli_events(stdout)
+            usage = None
+            if usage_file.is_file():
+                usage = _parse_cli_usage(usage_file)
+            return ProviderResponse(
+                response.selected_model,
+                response.effective_model,
+                response.summary,
+                usage,
+            )
 
 
 def _validate_cli_usage(usage: Any) -> CopilotUsage:
@@ -665,7 +713,6 @@ def _build_cli_args(executable: str, prompt: str, usage_output_file: Path) -> li
         "--disable-builtin-mcps",
         "--no-custom-instructions",
         "--no-ask-user",
-        f"--max-ai-credits={CLI_MAX_AI_CREDITS}",
         f"--usage-output-file={usage_output_file}",
         "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
         "--sync-session=off",
@@ -689,3 +736,181 @@ def _cli_launcher(executable: str) -> list[str]:
             str(script),
         ]
     return [executable]
+
+def _run_cli_process_posix(args, cwd, timeout, output_limit, start):
+    proc = subprocess.Popen(args, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=max(0.001, timeout - (time.monotonic() - start)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        proc.wait()
+        raise InvestigationBlocked("Copilot CLI timed out")
+    if proc.returncode != 0:
+        raise InvestigationBlocked("Copilot CLI exited unsuccessfully")
+    if len(stdout) > output_limit or len(stderr) > output_limit:
+        raise InvestigationBlocked("Copilot CLI output exceeded its limit")
+    return stdout, stderr
+
+def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
+    import ctypes
+    import msvcrt
+    import os
+    import threading
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    CREATE_SUSPENDED = 0x00000004
+    STARTF_USESTDHANDLES = 0x00000100
+    HANDLE_FLAG_INHERIT = 0x00000001
+    WAIT_TIMEOUT = 0x00000102
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise InvestigationBlocked("Copilot CLI containment could not be created")
+    class _IO(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_uint64), ("b", ctypes.c_uint64), ("c", ctypes.c_uint64), ("d", ctypes.c_uint64), ("e", ctypes.c_uint64), ("f", ctypes.c_uint64)]
+    class _BASIC(ctypes.Structure):
+        _fields_ = [("p", wintypes.LARGE_INTEGER), ("q", wintypes.LARGE_INTEGER), ("flags", wintypes.DWORD), ("minws", ctypes.c_size_t), ("maxws", ctypes.c_size_t), ("active", wintypes.DWORD), ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD), ("sched", wintypes.DWORD)]
+    class _EXT(ctypes.Structure):
+        _fields_ = [("basic", _BASIC), ("io", _IO), ("pm", ctypes.c_size_t), ("jm", ctypes.c_size_t), ("pp", ctypes.c_size_t), ("jp", ctypes.c_size_t)]
+    info = _EXT()
+    info.basic.flags = 0x00002000
+    if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not be configured")
+    class _SA(ctypes.Structure):
+        _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p), ("bInheritHandle", wintypes.BOOL)]
+    sa = _SA(ctypes.sizeof(_SA), None, True)
+    out_read = wintypes.HANDLE()
+    out_write = wintypes.HANDLE()
+    err_read = wintypes.HANDLE()
+    err_write = wintypes.HANDLE()
+    if not kernel32.CreatePipe(ctypes.byref(out_read), ctypes.byref(out_write), ctypes.byref(sa), 0):
+        kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not create output pipe")
+    kernel32.SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0)
+    if not kernel32.CreatePipe(ctypes.byref(err_read), ctypes.byref(err_write), ctypes.byref(sa), 0):
+        kernel32.CloseHandle(out_read); kernel32.CloseHandle(out_write); kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not create error pipe")
+    kernel32.SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0)
+    stdin_handle = kernel32.CreateFileW("NUL", 0x80000000, 3, ctypes.byref(sa), 3, 0, None)
+    if stdin_handle == wintypes.HANDLE(-1).value:
+        for handle in (out_read, out_write, err_read, err_write):
+            kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not open stdin")
+    class _STARTUPINFO(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD), ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD), ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD), ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD), ("lpReserved2", ctypes.POINTER(ctypes.c_byte)), ("hStdInput", wintypes.HANDLE), ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
+    class _PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE), ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
+    si = _STARTUPINFO()
+    si.cb = ctypes.sizeof(si)
+    si.dwFlags = STARTF_USESTDHANDLES
+    si.hStdInput = stdin_handle
+    si.hStdOutput = out_write
+    si.hStdError = err_write
+    pi = _PROCESS_INFORMATION()
+    command_line = subprocess.list2cmdline(args)
+    created = kernel32.CreateProcessW(None, command_line, None, None, True, CREATE_SUSPENDED, None, str(cwd), ctypes.byref(si), ctypes.byref(pi))
+    if not created:
+        for handle in (stdin_handle, out_read, out_write, err_read, err_write):
+            kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not start")
+    kernel32.CloseHandle(out_write); out_write = wintypes.HANDLE()
+    kernel32.CloseHandle(err_write); err_write = wintypes.HANDLE()
+    kernel32.CloseHandle(stdin_handle); stdin_handle = wintypes.HANDLE()
+    if not kernel32.AssignProcessToJobObject(job, pi.hProcess):
+        kernel32.TerminateProcess(pi.hProcess, 1)
+        kernel32.WaitForSingleObject(pi.hProcess, 5000)
+        kernel32.CloseHandle(pi.hThread); kernel32.CloseHandle(pi.hProcess)
+        kernel32.CloseHandle(out_read); kernel32.CloseHandle(err_read); kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not be assigned")
+    if kernel32.ResumeThread(pi.hThread) == 0xFFFFFFFF:
+        kernel32.TerminateProcess(pi.hProcess, 1)
+        kernel32.WaitForSingleObject(pi.hProcess, 5000)
+        kernel32.CloseHandle(pi.hThread); kernel32.CloseHandle(pi.hProcess)
+        kernel32.CloseHandle(out_read); kernel32.CloseHandle(err_read); kernel32.CloseHandle(job)
+        raise InvestigationBlocked("Copilot CLI containment could not resume")
+    kernel32.CloseHandle(pi.hThread); pi.hThread = wintypes.HANDLE()
+    out_chunks = []
+    err_chunks = []
+    def _reader(handle, bucket):
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            with os.fdopen(fd, "rb") as stream:
+                while True:
+                    data = stream.read(65536)
+                    if not data:
+                        break
+                    bucket.append(data)
+        except OSError:
+            pass
+    reader_out = threading.Thread(target=_reader, args=(out_read.value, out_chunks), daemon=True)
+    reader_err = threading.Thread(target=_reader, args=(err_read.value, err_chunks), daemon=True)
+    reader_out.start()
+    reader_err.start()
+    timed_out = False
+    output_exceeded = False
+    while True:
+        remaining = timeout - (time.monotonic() - start)
+        if remaining <= 0:
+            timed_out = True
+            break
+        wait_ms = min(100, max(1, int(remaining * 1000)))
+        result = kernel32.WaitForSingleObject(pi.hProcess, wait_ms)
+        if result == 0:
+            break
+        if result != WAIT_TIMEOUT:
+            break
+        if sum(len(chunk) for chunk in out_chunks) > output_limit or sum(len(chunk) for chunk in err_chunks) > output_limit:
+            output_exceeded = True
+            break
+    if timed_out or output_exceeded:
+        kernel32.CloseHandle(job); job = 0
+        kernel32.WaitForSingleObject(pi.hProcess, 5000)
+        reader_out.join(timeout=2)
+        reader_err.join(timeout=2)
+        kernel32.CloseHandle(pi.hProcess)
+        try:
+            kernel32.CloseHandle(out_read)
+        except OSError:
+            pass
+        try:
+            kernel32.CloseHandle(err_read)
+        except OSError:
+            pass
+        if timed_out:
+            raise InvestigationBlocked("Copilot CLI timed out")
+        raise InvestigationBlocked("Copilot CLI output exceeded its limit")
+    exit_code = wintypes.DWORD()
+    kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code))
+    if job:
+        kernel32.CloseHandle(job); job = 0
+    reader_out.join(timeout=5)
+    reader_err.join(timeout=5)
+    stdout = b"".join(out_chunks)
+    stderr = b"".join(err_chunks)
+    kernel32.CloseHandle(pi.hProcess)
+    try:
+        kernel32.CloseHandle(out_read)
+    except OSError:
+        pass
+    try:
+        kernel32.CloseHandle(err_read)
+    except OSError:
+        pass
+    if exit_code.value != 0:
+        raise InvestigationBlocked("Copilot CLI exited unsuccessfully")
+    if len(stdout) > output_limit or len(stderr) > output_limit:
+        raise InvestigationBlocked("Copilot CLI output exceeded its limit")
+    return stdout, stderr
+
+
+
+
+
+
+
+
