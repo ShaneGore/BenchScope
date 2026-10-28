@@ -11,7 +11,7 @@ datasources:
     jsonData:
       exemplarTraceIdDestinations:
         - name: trace_id
-          datasourceUid: tempo
+          url: /api/datasources/proxy/uid/tempo/api/traces/${__value.raw}
           urlDisplayLabel: Trace
   - name: Loki
     uid: loki

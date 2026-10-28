@@ -22,8 +22,8 @@ Grafana version commands and the Compose image tags were checked). Prometheus
 3.5.0 negotiates OpenMetrics 1.0.0 and requires
 `--enable-feature=exemplar-storage`; the flag was observed empty before enabling
 it, and Prometheus returned no exemplars until the flag was set. Grafana's
-provisioned Prometheus data source maps the exemplar label `trace_id` to Tempo's
-data-source UID `tempo`.
+provisioned Prometheus data source maps the exemplar label `trace_id` to an
+external relative URL served by Grafana's Tempo data-source proxy.
 
 ## Reproduce in an isolated synthetic Compose project
 
@@ -38,7 +38,10 @@ file and secret, unique loopback ports, and project-scoped volumes. It never
 reads `.env`; every Compose invocation supplies the temporary env file and
 explicit project/file paths. It refuses a non-local Docker endpoint, missing
 cached images, or unavailable ports; it never pulls images or touches an
-existing Compose project. It starts only that disposable local project, runs
+existing Compose project. It uses `benchscope-issue35-api:latest` without
+rebuilding when that image is cached. If it is absent, it builds the API only
+when both Dockerfile base images are cached. Both paths use Compose's explicit
+`--pull never`. It starts only that disposable local project, runs
 `GET /api/v1/runs` with a generated W3C `traceparent`, and removes only its own
 containers and volumes afterward. The endpoint returns an empty page from the
 newly created project database; the script fails if that database contains a
@@ -56,39 +59,58 @@ IDs. A nonzero exit means the integration check did not pass; missing images or
 ports are reported before Compose starts. The images must already be present
 locally; this procedure does not download them.
 
-## Grafana 12.1.1 access limitation
+## Viewer-safe trace access and Explore limitation
 
 The issue's current Compose settings grant anonymous users only the `Viewer`
 role, disable the login form, and disallow sign-ups. Grafana's versioned
 [role-permission table for 12.1](https://grafana.com/docs/grafana/v12.1/administration/roles-and-permissions/)
 states that Viewer does **not** have **Access Explore** permission (Editor and
-organization administrator do). Therefore the anonymous Viewer can see the
-dashboard exemplar but cannot follow its Grafana **Trace** link into Explore.
-There is no sign-in path or authenticated Viewer account provisioned by this
-local Compose configuration. Creating an Editor/Admin or weakening the
-anonymous role just to make the link work would be an unsafe privilege change;
-this procedure does neither. A user who already has an authorized Grafana
-account in a separately configured local instance can sign in there and use
-the dashboard link, but that is not reproducible from this clean checkout.
-
-The exemplar's exact ID and the isolated script's direct Tempo trace lookup
-verify correlation independently of Grafana permissions. However, the
-Grafana-UI navigation criterion remains **not verified for the default local
-Viewer** until the project has a safe, explicitly authorized local-account
-provisioning path. The permission limitation is not evidence that the metric or
-trace data is incompatible.
+organization administrator do), so Viewer still cannot follow an internal link
+into Explore. The Prometheus data source instead configures the exemplar
+destination label `Trace` as the external relative URL
+`/api/datasources/proxy/uid/tempo/api/traces/${__value.raw}`. Grafana substitutes
+the exact exemplar value and proxies the request through the provisioned Tempo
+data source. This link returns the trace response directly without granting
+Explore or changing login/role settings. The isolated verifier checks the route
+anonymously for the exact generated exemplar ID and confirms the returned spans
+retain it.
 
 ## Follow-up verification evidence (2026-10-28)
 
-The focused backend observability tests pass (4 tests). The synthetic Compose
-script's preflight failed closed because the local Docker engine did not have
-`ghcr.io/astral-sh/uv:0.12.5` or `python:3.12-slim`, which are required to
-build this checkout's API image. It did not pull images, create a Compose
-project, start services, or produce a new trace ID; therefore this follow-up
-does not claim a live metric-to-Tempo integration pass. Prometheus `3.5.0`,
-Grafana `12.1.1`, Collector Contrib `0.136.0`, Loki `3.5.3`, and Tempo `2.8.1`
-images were already available locally. The Grafana Viewer/Explore limitation
-above was independently checked against Grafana's 12.1 role-permission table.
+An initial run failed closed because the local Docker engine lacked
+`ghcr.io/astral-sh/uv:0.12.5` and `python:3.12-slim`; it did not pull images or
+start a Compose project. After adding the cached API-image path, the synthetic
+E2E completed using `benchscope-issue35-api:latest` without rebuilding or
+pulling. Prometheus reported version `3.5.0`; API telemetry packages were
+`opentelemetry-sdk==1.45.1`,
+`opentelemetry-exporter-prometheus==0.66b1`, and
+`prometheus-client==0.26.0`. Compose image versions were Prometheus `3.5.0`,
+Collector Contrib `0.136.0`, Tempo `2.8.1`, Loki `3.5.3`, and PostgreSQL
+`17-alpine`.
+
+The synthetic `GET /api/v1/runs` returned an empty page. Prometheus exposed the
+`benchscope_http_server_requests_total` exemplar with `trace_id` set to
+`dc29896827f5473997f4bdf521de2486`; Tempo returned a span with the exact same
+trace ID. The trace ID was verified absent from the metric series labels. The
+run's random project was `benchscope-metric-trace-8d636c9f7e84`; after script
+cleanup, Docker reported no containers, volumes, or networks with that project
+label. The seven pre-existing `benchscope` containers retained their IDs and
+running states. This live synthetic check supplements the focused backend
+observability tests.
+
+The Viewer-safe Grafana proxy path was then verified in an isolated run using
+cached `benchscope-issue35-api:latest` and `grafana/grafana:12.1.1`, without a
+rebuild or pull. The synthetic request produced exemplar and Tempo trace ID
+`d34a2a7790c34e1da12083a82ab43a3c`. An unauthenticated GET to
+`/api/datasources/proxy/uid/tempo/api/traces/d34a2a7790c34e1da12083a82ab43a3c`
+returned a span with that exact ID. The Grafana proxy and direct Tempo lookup
+both preserved the ID. The project was
+`benchscope-metric-trace-e60f2fedad5f`; cleanup removed its containers,
+volumes, and network, while the existing root services remained running.
+Prometheus `3.5.0`, Grafana `12.1.1`, Collector Contrib `0.136.0`, Tempo
+`2.8.1`, Loki `3.5.3`, PostgreSQL `17-alpine`, and the API telemetry package
+versions above are the verified versions. Viewer-safe direct trace access now
+works; Explore remains unavailable to the default Viewer.
 
 The backend test `test_request_metric_exposes_exact_trace_as_openmetrics_exemplar`
 also sends a synthetic request to the harmless empty-run-list route and verifies

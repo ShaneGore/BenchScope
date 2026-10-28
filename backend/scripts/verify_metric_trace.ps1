@@ -5,9 +5,12 @@ $composeFile = Join-Path $repositoryRoot "compose.yaml"
 $projectName = "benchscope-metric-trace-$([guid]::NewGuid().ToString('N').Substring(0, 12))"
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) $projectName
 $environmentFile = Join-Path $temporaryDirectory "synthetic.env"
+$composeOverrideFile = Join-Path $temporaryDirectory "synthetic-api-image.yaml"
 $secretFile = Join-Path $temporaryDirectory "synthetic-alert-secret"
+$composeFiles = @("--file", $composeFile, "--file", $composeOverrideFile)
 $dockerContext = $null
 $started = $false
+$buildApiImage = $false
 $savedEnvironment = @{}
 $environmentNames = @()
 
@@ -27,7 +30,7 @@ function Invoke-Compose {
     & docker --context $dockerContext compose `
         --project-name $projectName `
         --project-directory $repositoryRoot `
-        --file $composeFile `
+        @composeFiles `
         --env-file $environmentFile `
         @ComposeArguments
     if ($LASTEXITCODE -ne 0) {
@@ -66,15 +69,16 @@ try {
         throw "The active Docker context is not a local named-pipe or Unix-socket engine."
     }
 
-    $requiredImages = @(
+    $requiredServiceImages = @(
         "postgres:17-alpine",
         "otel/opentelemetry-collector-contrib:0.136.0",
         "prom/prometheus:v3.5.0",
         "grafana/loki:3.5.3",
         "grafana/tempo:2.8.1",
-        "ghcr.io/astral-sh/uv:0.12.5",
-        "python:3.12-slim"
+        "grafana/grafana:12.1.1"
     )
+    $apiImage = "benchscope-issue35-api:latest"
+    $buildBaseImages = @("ghcr.io/astral-sh/uv:0.12.5", "python:3.12-slim")
     $availableImages = @(
         & docker --context $dockerContext image ls --format "{{.Repository}}:{{.Tag}}"
     )
@@ -82,10 +86,19 @@ try {
         throw "Could not inspect local Docker images."
     }
     $missingImages = @(
-        $requiredImages | Where-Object { $availableImages -notcontains $_ }
+        $requiredServiceImages | Where-Object { $availableImages -notcontains $_ }
     )
     if ($missingImages.Count -gt 0) {
         throw "Required images are not already local; no pull was attempted: $($missingImages -join ', ')"
+    }
+    $buildApiImage = $availableImages -notcontains $apiImage
+    if ($buildApiImage) {
+        $missingBuildBases = @(
+            $buildBaseImages | Where-Object { $availableImages -notcontains $_ }
+        )
+        if ($missingBuildBases.Count -gt 0) {
+            throw "Cached API image $apiImage is absent and build bases are not all local; no pull was attempted: $($missingBuildBases -join ', ')"
+        }
     }
 
     $ports = @{}
@@ -105,6 +118,11 @@ try {
     }
 
     New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+    [IO.File]::WriteAllText(
+        $composeOverrideFile,
+        "services:`n  api:`n    image: $apiImage`n",
+        [Text.UTF8Encoding]::new($false)
+    )
     $postgresPassword = [guid]::NewGuid().ToString("N")
     $alertBearer = [guid]::NewGuid().ToString("N")
     [IO.File]::WriteAllText(
@@ -155,7 +173,7 @@ try {
         & docker --context $dockerContext compose `
             --project-name $projectName `
             --project-directory $repositoryRoot `
-            --file $composeFile `
+            @composeFiles `
             --env-file $environmentFile ps --all --quiet
     )
     if ($LASTEXITCODE -ne 0 -or $existingContainers.Count -gt 0) {
@@ -163,18 +181,27 @@ try {
     }
 
     Write-Output "Starting isolated project $projectName on checked loopback ports."
+    if ($buildApiImage) {
+        Write-Output "Cached API image $apiImage is absent; building locally from cached bases only."
+        $apiBuildOption = "--build"
+    } else {
+        Write-Output "Using cached API image $apiImage without rebuilding."
+        $apiBuildOption = "--no-build"
+    }
     $started = $true
     Invoke-Compose -ComposeArguments @(
-        "up", "--detach", "--build", "--pull", "never",
-        "api", "prometheus", "otel-collector"
+        "up", "--detach", $apiBuildOption, "--pull", "never",
+        "api", "prometheus", "otel-collector", "grafana"
     )
 
     $apiUri = "http://127.0.0.1:$($ports.API_PORT)"
     $prometheusUri = "http://127.0.0.1:$($ports.PROMETHEUS_PORT)"
     $tempoUri = "http://127.0.0.1:$($ports.TEMPO_PORT)"
+    $grafanaUri = "http://127.0.0.1:$($ports.GRAFANA_PORT)"
     Wait-ForHttp -Uri "$apiUri/ready" | Out-Null
     Wait-ForHttp -Uri "$prometheusUri/-/ready" | Out-Null
     Wait-ForHttp -Uri "$tempoUri/ready" | Out-Null
+    Wait-ForHttp -Uri "$grafanaUri/api/health" | Out-Null
 
     $traceId = [guid]::NewGuid().ToString("N")
     $parentSpanId = [guid]::NewGuid().ToString("N").Substring(0, 16)
@@ -248,6 +275,23 @@ try {
     if ($null -eq $tempoTrace) {
         throw "Tempo did not return a span with the exact synthetic trace ID $traceId."
     }
+    $grafanaTrace = Invoke-RestMethod `
+        -Uri "$grafanaUri/api/datasources/proxy/uid/tempo/api/traces/$traceId" `
+        -TimeoutSec 10
+    $grafanaTraceIds = @(
+        foreach ($batch in $grafanaTrace.batches) {
+            foreach ($scope in $batch.scopeSpans) {
+                foreach ($span in $scope.spans) {
+                    ([BitConverter]::ToString(
+                        [Convert]::FromBase64String($span.traceId)
+                    )).Replace("-", "").ToLowerInvariant()
+                }
+            }
+        }
+    )
+    if ($grafanaTraceIds -notcontains $traceId) {
+        throw "Anonymous Grafana Tempo proxy did not return a span with the exact synthetic trace ID $traceId."
+    }
 
     $buildInfo = Invoke-RestMethod `
         -Uri "$prometheusUri/api/v1/status/buildinfo" `
@@ -256,7 +300,7 @@ try {
     $pythonVersions = & docker --context $dockerContext compose `
         --project-name $projectName `
         --project-directory $repositoryRoot `
-        --file $composeFile `
+        @composeFiles `
         --env-file $environmentFile `
         exec --no-TTY api uv run --no-sync python -c $versionCode
     if ($LASTEXITCODE -ne 0) {
@@ -264,11 +308,13 @@ try {
    }
 
     Write-Output "Prometheus version: $($buildInfo.data.version)"
-    Write-Output "Compose image versions: Prometheus 3.5.0; Collector 0.136.0; Tempo 2.8.1; Loki 3.5.3; PostgreSQL 17-alpine."
+    Write-Output "Compose image versions: Prometheus 3.5.0; Grafana 12.1.1; Collector 0.136.0; Tempo 2.8.1; Loki 3.5.3; PostgreSQL 17-alpine."
     Write-Output "API telemetry packages: $pythonVersions"
     Write-Output "Metric exemplar trace_id: $($exemplar.labels.trace_id)"
     Write-Output "Tempo trace IDs: $($tempoTraceIds -join ', ')"
+    Write-Output "Anonymous Grafana Tempo proxy trace IDs: $($grafanaTraceIds -join ', ')"
     Write-Output "Verified exact metric-exemplar-to-Tempo trace match: $traceId"
+    Write-Output "Verified anonymous Grafana Trace URL returns exact trace: $traceId"
 } finally {
     if ($started) {
         try {
