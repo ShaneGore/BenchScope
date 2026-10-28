@@ -162,11 +162,8 @@ def parse_grafana_webhook(body: bytes) -> dict[str, Any]:
         or payload["truncatedAlerts"] != 0
         or type(payload["orgId"]) is not int
         or payload["orgId"] < 1
-        or payload["state"]
-        != ("alerting" if payload["status"] == "firing" else "ok")
-        or any(
-            len(payload[key]) > MAX_BODY_BYTES for key in ("title", "message")
-        )
+        or payload["state"] != ("alerting" if payload["status"] == "firing" else "ok")
+        or any(len(payload[key]) > MAX_BODY_BYTES for key in ("title", "message"))
     ):
         raise InvalidWebhook
     _string_map(payload["groupLabels"])
@@ -191,7 +188,13 @@ def parse_grafana_webhook(body: bytes) -> dict[str, Any]:
     )
     labels = _string_map(alert["labels"])
     _string_map(alert["annotations"])
-    for key in ("generatorURL", "silenceURL", "dashboardURL", "panelURL", "valueString"):
+    for key in (
+        "generatorURL",
+        "silenceURL",
+        "dashboardURL",
+        "panelURL",
+        "valueString",
+    ):
         if key in alert and (
             not isinstance(alert[key], str) or len(alert[key]) > MAX_BODY_BYTES
         ):

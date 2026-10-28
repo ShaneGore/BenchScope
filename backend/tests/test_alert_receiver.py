@@ -59,11 +59,7 @@ def _webhook(
                 "labels": {"alertname": name, "severity": "warning"},
                 "annotations": {"summary": "synthetic local alert"},
                 "startsAt": starts_at,
-                "endsAt": (
-                    ends_at
-                    if status == "resolved"
-                    else "0001-01-01T00:00:00Z"
-                ),
+                "endsAt": (ends_at if status == "resolved" else "0001-01-01T00:00:00Z"),
                 "generatorURL": "http://prometheus:9090/graph",
                 "fingerprint": fingerprint,
                 "orgId": 1,
