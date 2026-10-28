@@ -7,11 +7,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-
 from app import incident_investigation as investigation
 from app.models import Base, IncidentRecord
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 
 def _evidence(status="complete"):
@@ -222,63 +221,87 @@ def test_cli_event_parser_rejects_malformed_tool_or_model_events(raw):
         investigation._parse_cli_events(raw)
 
 
-def test_cli_event_parser_uses_effective_model_metadata_only():
-    event = {
-        "type": "assistant.message",
-        "data": {"content": "Summary.", "model": "gpt-6-luna"},
-    }
-    result = investigation._parse_cli_events(json.dumps(event).encode())
+def test_cli_event_parser_reads_selected_and_effective_model_metadata():
+    events = [
+        {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+        {
+            "type": "assistant.message",
+            "data": {"content": "Summary.", "model": "gpt-6-luna"},
+        },
+    ]
+    result = investigation._parse_cli_events(
+        "\n".join(json.dumps(event) for event in events).encode()
+    )
     assert result.selected_model == "gpt-6-luna"
     assert result.effective_model == "gpt-6-luna"
     assert result.summary == "Summary."
 
 
-def test_copilot_cli_uses_exact_model_and_explicit_restriction_flags(monkeypatch):
+@pytest.mark.parametrize(
+    "events",
+    [
+        [
+            {
+                "type": "assistant.message",
+                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+            }
+        ],
+        [
+            {"type": "session.start", "data": {"model": "unknown"}},
+            {
+                "type": "assistant.message",
+                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+            },
+        ],
+        [
+            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+            {
+                "type": "assistant.message",
+                "data": {"content": "Summary.", "model": "unknown"},
+            },
+        ],
+        [
+            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+            {
+                "type": "assistant.message",
+                "data": {"content": "Summary.", "model": "gpt-6-luna"},
+            },
+            {"type": "session.start", "data": {"model": "gpt-6-luna"}},
+        ],
+    ],
+)
+def test_cli_event_parser_requires_explicit_matching_model_metadata(events):
+    raw = "\n".join(json.dumps(event) for event in events).encode()
+    with pytest.raises(investigation.InvestigationRejected, match="model"):
+        investigation._parse_cli_events(raw)
+
+
+def test_copilot_cli_flags_are_not_proof_of_effective_policy(monkeypatch):
     calls = []
 
     def fake_run(args, cwd, timeout):
-        calls.append((args, cwd, timeout))
-        if args[-1] == "--help":
-            return (
-                (
-                    b"--model --available-tools --deny-tool --deny-url "
-                    b"--disable-builtin-mcps"
-                ),
-                b"",
-            )
-        event = {
-            "type": "assistant.message",
-            "data": {"content": "Synthetic summary.", "model": "gpt-6-luna"},
-        }
-        return json.dumps(event).encode(), b""
+        calls.append(args)
+        return (
+            (
+                b"--model --available-tools=none --deny-tool=* --deny-url=* "
+                b"--disable-builtin-mcps"
+            ),
+            b"",
+        )
 
     monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
-    provider = investigation.CopilotCLIProvider(
-        "copilot",
-        entitlement_check=lambda: True,
-        usage_cost_check=lambda: True,
-        tool_policy_check=lambda: True,
-    )
-    assert provider.verify_capabilities().permits_invocation
-    response = provider.invoke(investigation._make_prompt(_evidence(), "complete"))
-    assert response.effective_model == "gpt-6-luna"
-    assert len(calls) == 2
-    for args, _cwd, _timeout in calls:
-        assert args.count("--model=gpt-6-luna") == 1
-        assert not any(
-            arg.startswith("--model=") and arg != "--model=gpt-6-luna" for arg in args
-        )
-    invocation_args = calls[1][0]
-    assert "--available-tools=none" in invocation_args
-    assert "--deny-tool=*" in invocation_args
-    assert "--deny-url=*" in invocation_args
-    assert "--disable-builtin-mcps" in invocation_args
-    assert investigation.INVOCATION_TIMEOUT_SECONDS == 60
-
-
-def test_copilot_cli_is_blocked_without_auth_cost_and_tool_verifiers():
     provider = investigation.CopilotCLIProvider("copilot")
-    assert not provider.verify_capabilities().permits_invocation
+    result = provider.verify_capabilities()
+    assert not result.permits_invocation
+    assert not result.model_flag_accepted
+    assert not result.tool_restrictions_verified
+    assert not result.existing_entitlement_verified
+    assert not result.usage_cost_limit_verified
+    assert result.blocker == investigation.CLI_INVOCATION_BLOCKER
+    assert calls == []
+    with pytest.raises(investigation.InvestigationBlocked, match="disabled"):
+        provider.invoke(investigation._make_prompt(_evidence(), "complete"))
+    assert calls == []
 
 
 def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
@@ -288,24 +311,16 @@ def test_direct_cli_call_requires_verified_capabilities_and_sanitized_prompt(
 
     def fake_run(args, cwd, timeout):
         calls.append(args)
-        return (
-            b"--model --available-tools --deny-tool --deny-url --disable-builtin-mcps",
-            b"",
-        )
+        return b"", b""
 
     monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
-    provider = investigation.CopilotCLIProvider(
-        "copilot",
-        entitlement_check=lambda: True,
-        usage_cost_check=lambda: True,
-        tool_policy_check=lambda: True,
-    )
+    provider = investigation.CopilotCLIProvider("copilot")
     with pytest.raises(investigation.InvestigationBlocked):
         provider.invoke("SYNTHETIC_SECRET_SENTINEL")
-    assert provider.verify_capabilities().permits_invocation
-    with pytest.raises(investigation.InvestigationRejected):
+    assert not provider.verify_capabilities().permits_invocation
+    with pytest.raises(investigation.InvestigationBlocked):
         provider.invoke("SYNTHETIC_SECRET_SENTINEL")
-    assert len(calls) == 1
+    assert calls == []
 
 
 def test_process_tree_cleanup_removes_descendant_on_normal_completion(tmp_path):

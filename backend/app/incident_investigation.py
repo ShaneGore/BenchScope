@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +30,10 @@ SUMMARY_LIMIT_BYTES = 4 * 1024
 CLI_OUTPUT_LIMIT_BYTES = 16 * 1024
 INVOCATION_TIMEOUT_SECONDS = 60
 GRACEFUL_SHUTDOWN_SECONDS = 5
+CLI_INVOCATION_BLOCKER = (
+    "Copilot CLI invocation disabled: effective tool restrictions, existing "
+    "entitlement, usage/cost limits, and model identity are not verifiable"
+)
 
 _TIMESTAMP = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\Z"
@@ -59,6 +62,7 @@ class CapabilityVerification:
     tool_restrictions_verified: bool
     existing_entitlement_verified: bool
     usage_cost_limit_verified: bool
+    blocker: str | None = None
 
     @property
     def permits_invocation(self) -> bool:
@@ -349,9 +353,7 @@ def investigate_record(record: IncidentRecord, provider: InvestigationProvider) 
     evidence = _check_evidence_schema(record.evidence, record.evidence_status)
     capabilities = provider.verify_capabilities()
     if not capabilities.permits_invocation:
-        raise InvestigationBlocked(
-            "CLI authorization, cost, model, or tool policy unverified"
-        )
+        raise InvestigationBlocked(capabilities.blocker or CLI_INVOCATION_BLOCKER)
     response = provider.invoke(_make_prompt(evidence, record.evidence_status))
     if response.selected_model != MODEL or response.effective_model != MODEL:
         raise InvestigationRejected("selected or effective model is not gpt-6-luna")
@@ -664,11 +666,17 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
         ]
     except (UnicodeError, json.JSONDecodeError, InvestigationRejected, RecursionError):
         raise InvestigationRejected("invalid Copilot CLI event output") from None
+    selected_models = []
     messages = []
     for event in events:
         if not isinstance(event, dict):
             raise InvestigationRejected("invalid Copilot CLI event")
-        if event.get("type") == "assistant.message":
+        if event.get("type") == "session.start":
+            data = event.get("data")
+            if not isinstance(data, dict):
+                raise InvestigationRejected("selected model metadata unavailable")
+            selected_models.append(data.get("model"))
+        elif event.get("type") == "assistant.message":
             data = event.get("data")
             if (
                 not isinstance(data, dict)
@@ -683,7 +691,13 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
         raise InvestigationRejected(
             "effective model identity unavailable or mismatched"
         )
-    return ProviderResponse(MODEL, MODEL, "\n".join(content for _, content in messages))
+    if len(selected_models) != 1 or selected_models[0] != MODEL:
+        raise InvestigationRejected("selected model identity unavailable or mismatched")
+    return ProviderResponse(
+        selected_models[0],
+        messages[0][0],
+        "\n".join(content for _, content in messages),
+    )
 
 
 class CopilotCLIProvider:
@@ -692,57 +706,20 @@ class CopilotCLIProvider:
     def __init__(
         self,
         executable: str | None = None,
-        *,
-        entitlement_check: Callable[[], bool] | None = None,
-        usage_cost_check: Callable[[], bool] | None = None,
-        tool_policy_check: Callable[[], bool] | None = None,
     ) -> None:
         self.executable = executable or shutil.which("copilot")
-        self.entitlement_check = entitlement_check
-        self.usage_cost_check = usage_cost_check
-        self.tool_policy_check = tool_policy_check
         self._verified = False
 
     def verify_capabilities(self) -> CapabilityVerification:
+        """Fail closed until the CLI's effective policy and authorization are verifiable."""
         self._verified = False
-        if not self.executable:
-            return CapabilityVerification(False, False, False, False)
-        auth_ok = bool(self.entitlement_check and self.entitlement_check())
-        cost_ok = bool(self.usage_cost_check and self.usage_cost_check())
-        tools_ok = bool(self.tool_policy_check and self.tool_policy_check())
-        if not (auth_ok and cost_ok and tools_ok):
-            return CapabilityVerification(False, tools_ok, auth_ok, cost_ok)
-        with tempfile.TemporaryDirectory(prefix="benchscope-luna-") as temp_dir:
-            try:
-                output, _ = _run_cli_process(
-                    [self.executable, f"--model={MODEL}", "--help"],
-                    Path(temp_dir),
-                    timeout=10,
-                )
-            except (InvestigationBlocked, InvestigationRejected, TimeoutError, OSError):
-                return CapabilityVerification(False, False, auth_ok, cost_ok)
-        help_text = output.decode("utf-8", errors="replace")
-        controls = (
-            "--model",
-            "--available-tools",
-            "--deny-tool",
-            "--deny-url",
-            "--disable-builtin-mcps",
+        return CapabilityVerification(
+            False, False, False, False, CLI_INVOCATION_BLOCKER
         )
-        result = CapabilityVerification(
-            all(option in help_text for option in controls),
-            tools_ok,
-            auth_ok,
-            cost_ok,
-        )
-        self._verified = result.permits_invocation
-        return result
 
     def invoke(self, prompt: str) -> ProviderResponse:
         if not self._verified:
-            raise InvestigationBlocked(
-                "Copilot CLI capabilities have not been verified"
-            )
+            raise InvestigationBlocked(CLI_INVOCATION_BLOCKER)
         self._verified = False
         _validate_prompt(prompt)
         if not self.executable:
