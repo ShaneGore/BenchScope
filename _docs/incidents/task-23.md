@@ -240,3 +240,117 @@ docker volume ls --filter "label=com.docker.compose.project=$project"
 This exercise demonstrates only authenticated local alert delivery, persistent
 deduplication, and bounded sanitized evidence. It does not demonstrate AI
 investigation, recovery automation, or completion of the course criterion.
+
+## Issue #33 — Stage 2 read-only investigation
+
+The local `app.incident_investigation` runner accepts only a persisted
+`IncidentRecord` with a schema-valid Stage 1 evidence bundle in `complete` or
+`partial` state, serialized at no more than 64 KiB. It sends only the
+allowlisted evidence, completion status, and truncation flags in the prompt.
+It stores a summary only after capability checks, selected/effective model
+checks, model-specific usage validation, UTF-8/4 KiB bounds, and sentinel checks
+pass. Post-call usage is not proof of pre-request authorization or a cost limit.
+It adds no recovery or benchmark operation.
+
+The unmerged Stage 2 migration uses revision `0005_incident_summary`, short
+enough for Alembic's default PostgreSQL `VARCHAR(32)` version column. The
+previous 35-character revision was replaced based on the report that it had
+not been applied to PostgreSQL; no database was inspected or modified here.
+If any database has the old revision, inspect its state and reconcile it
+explicitly before upgrading; do not blindly stamp it. Open PR #38 has a
+separate `0005_cancelled_run_status` migration with the same
+`0004_incident_records` parent. If PR #38 merges first, reconcile the Stage 2
+migration history with the merged head before applying it.
+
+The adapter is **blocked from making model requests**, including direct calls
+to `invoke`. Its candidate arguments retain exactly `--model=gpt-6-luna`, an
+empty `--available-tools=` filter and disabled built-in MCPs; they do not
+grant `--allow-all-tools`. They are not claimed to enforce a safe runtime
+policy. Read-only flags alone do not rule out read or network tools.
+The preflight is designed to inspect only `--help`, permissions help, and
+`--version`, but actual subprocess creation is currently blocked on all
+platforms, including for preflight. Mocked preflight normalizes wrapped
+permissions text. Such documentation can describe the
+intended filter, and version parsing can show argument acceptance, but neither
+establishes that the runtime exposes no tools before a request. Even an empty
+`serverTools` list in a response is post-call evidence, not pre-request proof.
+The CLI's requirement for a non-interactive tool permission remains unresolved
+without a broad grant.
+
+An arbitrary GitHub token is not proof of an existing Copilot entitlement.
+Likewise a caller's cost opt-in, a soft credit cap, and post-session usage
+metadata do not verify applicable usage limits before a request. The provider
+therefore reports tool restrictions, entitlement, and usage/cost as unverified
+regardless of token or opt-in. The output parsers remain available for mocked
+validation, not as authorization to invoke.
+
+Earlier local checks reported Copilot CLI 1.0.103 with automatic updates
+enabled, while a separate check with `--no-auto-update` used bundled 1.0.81.
+The current provider arguments do **not** include `--no-auto-update`, and no
+current runtime version is asserted. The bundled 1.0.81 did not accept flags such as
+`--disable-client-telemetry`, `--max-ai-credits`, or
+`--usage-output-file`; those flags were rejected before a model request. The
+1.0.103 help documents `--usage-output-file` as final, post-session usage and
+`--max-ai-credits` as a minimum-30-credit **soft cap** that may be exceeded by
+a response. Neither provides a pre-request authorization or usage check.
+
+After adding the required `--allow-all-tools` permission flag while retaining
+the empty `--available-tools=` filter, a bounded synthetic probe used the
+production model and prompt flags under the then-existing Windows Job Object
+cleanup, whose interruption and complete containment were not proven.
+The CLI process log records a successful model-call event, but its captured
+JSON event output exceeded both 16 KiB and a diagnostic 64 KiB bound. The
+runner therefore could not parse selected/effective model metadata or a
+sanitized summary, and no summary was stored. Usage was not captured; the
+attempt may have consumed Copilot usage. No fallback model, OAuth flow, new
+entitlement, benchmark, or hosted service was used. The live acceptance
+criterion remains unmet.
+
+Stage 1's `app.alert_receiver` collects and persists evidence; it neither imports
+nor calls the investigator. No alert-receiver endpoint, callback, or background
+task triggers investigation. The runner exposes Python functions requiring an
+explicit caller, database session, record ID, and provider; no automatic
+integration or host-side command is provided. Compose runs the receiver in a
+backend container; the backend image does not install Copilot CLI or bridge it
+to the host. A host CLI and its credentials are not automatically available
+inside that container. No container-to-host execution path has been implemented
+or verified.
+
+The automated tests use fake providers and mocked CLI preflight output. They
+exercise validation and fail-closed gates, including process-creation guards;
+they are **not evidence that a live investigation works**. A POSIX process
+group cannot contain descendants that escape it, and the former Windows
+implementation did not protect the entire startup and cancellation lifecycle.
+No platform currently has verified complete containment, cancellation cleanup,
+or a 60-second total deadline. The former process launcher and cleanup code
+were removed; no cleanup or timeout coverage is claimed. Before enabling any
+subprocess, prove full-tree containment and interruption-safe cleanup, including
+startup and the total deadline, on that platform. Effective live model identity,
+tool-policy enforcement, and authorization/usage limits also remain unverified.
+Stage 2 stays incomplete.
+
+### Windows process-containment investigation
+
+A future local host worker may read persisted sanitized records, but it is not
+implemented and must not invoke the CLI until all safety gates are verified.
+Windows job objects alone are not sufficient evidence for containment.
+Microsoft documents that a job member can use an alternate process parent,
+whose job is inherited, and that WMI-created processes are not associated with
+the caller's job. A local synthetic probe assigned a waiting Python child to a
+job without breakaway flags, then let that child create a short-lived synthetic
+process using an external parent handle with `PROCESS_CREATE_PROCESS`. The
+created process was not in the child's job; it was explicitly terminated by
+its own process handle and the termination wait succeeded. It was not an OS
+descendant of the original child because the parent was changed. This probe
+demonstrates a job-containment gap for processes caused by a member, not
+comprehensive adversarial testing.
+
+The documented Windows `PROC_THREAD_ATTRIBUTE_JOB_LIST` is a possible way to
+associate the initial child at creation, but atomic assignment, startup and
+cancellation cleanup, and a 60-second total deadline have not been verified.
+No implementation or platform was enabled, and no CLI or model was invoked.
+An effective solution must also prevent or account for out-of-job process
+creation without adding unsafe permissions or relying solely on job membership.
+
+References: [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+and [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
