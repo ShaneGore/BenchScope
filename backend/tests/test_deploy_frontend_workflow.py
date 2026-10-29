@@ -21,7 +21,7 @@ def test_deploy_frontend_valid_prior_main_commit_is_checked_against_main():
     assert (
         'gh api "repos/${GITHUB_REPOSITORY}/compare/${requested_ref}...main"' in content
     )
-    assert "behind|identical" in content
+    assert "ahead|identical" in content
     assert "Requested commit is not an ancestor of main" in content
 
 

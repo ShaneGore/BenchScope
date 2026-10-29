@@ -63,7 +63,7 @@ jobs:
                 exit 1
               }
               case "$compare_status" in
-                behind|identical)
+                ahead|identical)
                   selected_ref="$requested_ref"
                   ;;
                 *)
