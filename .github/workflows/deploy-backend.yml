@@ -41,14 +41,15 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          SMOKE_TEST_USER_A_ID: ${{ vars.SMOKE_TEST_USER_A_ID }}
+          SMOKE_TEST_USER_B_ID: ${{ vars.SMOKE_TEST_USER_B_ID }}
           SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
-          SMOKE_TEST_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
-          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
         run: |
-          if [ -z "$DATABASE_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ] || [ -z "$SMOKE_API_URL" ] || [ -z "$SMOKE_TEST_TOKEN" ] || [ -z "$SMOKE_OTHER_TEST_TOKEN" ] || [ -z "$SMOKE_FRONTEND_URL" ]; then
+          if [ -z "$DATABASE_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ] || [ -z "$CLERK_SECRET_KEY" ] || [ -z "$SMOKE_TEST_USER_A_ID" ] || [ -z "$SMOKE_TEST_USER_B_ID" ] || [ -z "$SMOKE_API_URL" ] || [ -z "$SMOKE_FRONTEND_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL, SMOKE_API_URL, SMOKE_TEST_TOKEN, SMOKE_OTHER_TEST_TOKEN or SMOKE_FRONTEND_URL is not configured."
+            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL, CLERK_SECRET_KEY, SMOKE_TEST_USER_A_ID, SMOKE_TEST_USER_B_ID, SMOKE_API_URL, or SMOKE_FRONTEND_URL is not configured."
             exit 0
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -99,12 +100,19 @@ jobs:
           echo "::error::Backend did not become ready."
           exit 1
 
+      - name: Generate smoke credentials
+        if: steps.config.outputs.configured == 'true'
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          SMOKE_TEST_USER_A_ID: ${{ vars.SMOKE_TEST_USER_A_ID }}
+          SMOKE_TEST_USER_B_ID: ${{ vars.SMOKE_TEST_USER_B_ID }}
+        run: |
+          python scripts/generate_smoke_tokens.py --write-github-env --expires-in 60
+
       - name: Run post-deployment smoke tests
         if: steps.config.outputs.configured == 'true'
         env:
           SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
-          SMOKE_TEST_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
-          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
         run: |
           python scripts/smoke_test.py --mode full
