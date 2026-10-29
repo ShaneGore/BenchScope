@@ -114,6 +114,19 @@ would risk unsafe process handling.
 These tests validate BenchScope's lifecycle. They are not proof that the real
 runner supports cancellation or cleanup.
 
+## Evidence references
+
+- Private runner contract: `_docs/benchmark-interface.md`
+- Runner lifecycle and cancellation mapping: `backend/app/runner.py`
+  (`RunStatus`, `_execute`, `_finish_run`, `reconcile_interrupted_runs`,
+  `cancel_run`)
+- Import schema and validation: `backend/app/imports.py`
+  (`RunImportRequest`, `RunImportV2Request`, `_fingerprint`,
+  `_fingerprint_v2`, `_import_v2`)
+- Persistence and status model: `backend/app/models.py` (`BenchmarkRun`)
+- Cancellation and owner-scope tests: `backend/tests/test_runner.py`
+- Approved cancellation mapping: `_docs/benchmark-interface.md`
+
 ## Remaining blocker
 
 The exact missing evidence is:
@@ -140,5 +153,3 @@ The exact missing evidence is:
 9. Run migration and concurrency tests.
 
 Until these are available, Issue #25 remains blocked.
-
-external runner supports cancellation.
