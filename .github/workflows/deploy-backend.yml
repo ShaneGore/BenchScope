@@ -86,8 +86,9 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
         run: |
-          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL"
+          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL?ref=$SELECTED_REF"
 
       - name: Wait for backend readiness
         if: steps.config.outputs.configured == 'true'
@@ -112,4 +113,4 @@ jobs:
           SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
         run: |
-          python scripts/smoke_test.py
+          python scripts/smoke_test.py --mode full

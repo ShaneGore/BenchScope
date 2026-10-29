@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """Post-deployment smoke test for BenchScope.
 
@@ -82,6 +83,7 @@ def main() -> int:
     parser.add_argument("--frontend-url", default=os.environ.get("SMOKE_FRONTEND_URL"))
     parser.add_argument("--auth-token", default=os.environ.get("SMOKE_TEST_TOKEN"))
     parser.add_argument("--other-auth-token", default=os.environ.get("SMOKE_OTHER_TEST_TOKEN"))
+    parser.add_argument("--mode", choices=("health", "full"), default="full")
     args = parser.parse_args()
 
     if not args.api_url:
@@ -106,10 +108,13 @@ def main() -> int:
         status, _ = request(args.frontend_url)
         check("frontend reachable", status == 200, f"HTTP {status}")
 
-    if not args.auth_token:
-        print("SKIP: authenticated import/history/comparison checks require SMOKE_TEST_TOKEN")
+    if args.mode == "health":
+        print("PASS: health-only smoke mode completed; full Issue #21 journey was not exercised.")
         print("Smoke tests completed successfully.")
         return 0
+
+    if not args.auth_token:
+        raise SystemExit("FAIL: full smoke mode requires SMOKE_TEST_TOKEN")
 
     headers = {"Authorization": f"Bearer {args.auth_token}"}
     status, body = request(f"{api}/api/v1/profiles", headers=headers)
