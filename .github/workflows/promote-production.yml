@@ -6,6 +6,10 @@ on:
       confirm:
         description: Type "promote" to run production promotion.
         required: true
+      ref:
+        description: Git ref to promote. Must be main or an approved release tag.
+        required: false
+        default: main
 
 permissions:
   contents: read
@@ -16,10 +20,32 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Determine promotion ref
+        id: ref
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+        run: |
+          selected_ref="${INPUT_REF:-main}"
+          case "$selected_ref" in
+            main|refs/heads/main|refs/tags/*) ;;
+            *)
+              echo "::error::Production promotion is restricted to main or an approved release tag."
+              exit 1
+              ;;
+          esac
+          echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
+
       - name: Check production configuration
         id: config
+        env:
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          PRODUCTION_RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
+          PRODUCTION_SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+          PRODUCTION_SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
+          PRODUCTION_SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
+          PRODUCTION_SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
         run: |
-          if [ -z "${{ secrets.PRODUCTION_DATABASE_URL }}" ] || [ -z "${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}" ] || [ -z "${{ vars.PRODUCTION_SMOKE_API_URL }}" ]; then
+          if [ -z "$PRODUCTION_DATABASE_URL" ] || [ -z "$PRODUCTION_RENDER_DEPLOY_HOOK_URL" ] || [ -z "$PRODUCTION_SMOKE_API_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Production promotion skipped because production configuration is not complete."
             exit 0
@@ -29,6 +55,7 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.config.outputs.configured == 'true'
         with:
+          ref: ${{ steps.ref.outputs.selected_ref }}
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -55,9 +82,27 @@ jobs:
         run: |
           curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL"
 
-      - name: Run production smoke tests
+      - name: Wait for production readiness
         if: steps.config.outputs.configured == 'true'
         env:
           SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
         run: |
-          python scripts/smoke_test.py --api-url "$SMOKE_API_URL"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$SMOKE_API_URL/ready" >/dev/null; then
+              echo "Production backend is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Production backend did not become ready."
+          exit 1
+
+      - name: Run production smoke tests
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+          SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
+          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
+          SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
+        run: |
+          python scripts/smoke_test.py

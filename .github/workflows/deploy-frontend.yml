@@ -6,6 +6,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy. Must be main or an approved release tag.
+        required: false
+        default: main
 
 permissions:
   contents: read
@@ -26,10 +31,34 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Determine deployment ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            selected_ref="$WORKFLOW_SHA"
+          else
+            selected_ref="${INPUT_REF:-main}"
+            case "$selected_ref" in
+              main|refs/heads/main|refs/tags/*) ;;
+              *)
+                echo "::error::Manual frontend deployment is restricted to main or an approved release tag."
+                exit 1
+                ;;
+            esac
+          fi
+          echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
+
       - name: Check frontend deployment configuration
         id: config
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
         run: |
-          if [ -z "${{ vars.VITE_API_URL }}" ] || [ -z "${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" ]; then
+          if [ -z "$VITE_API_URL" ] || [ -z "$VITE_CLERK_PUBLISHABLE_KEY" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Frontend deployment skipped because VITE_API_URL or VITE_CLERK_PUBLISHABLE_KEY is not configured."
             exit 0
@@ -39,6 +68,7 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.config.outputs.configured == 'true'
         with:
+          ref: ${{ steps.ref.outputs.selected_ref }}
           persist-credentials: false
 
       - name: Validate public frontend configuration
@@ -46,7 +76,6 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
-          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
         run: |
           node -e '
             const { isIP } = require("node:net");
