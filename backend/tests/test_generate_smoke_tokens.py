@@ -47,6 +47,7 @@ def test_create_session_sends_expected_request(monkeypatch):
         captured["method"] = request.get_method()
         captured["url"] = request.full_url
         captured["authorization"] = request.headers.get("Authorization")
+        captured["user_agent"] = request.headers.get("User-agent")
         captured["body"] = json.loads(request.data.decode("utf-8"))
         return FakeResponse({"id": "sess_123"})
 
@@ -58,6 +59,7 @@ def test_create_session_sends_expected_request(monkeypatch):
     assert captured["method"] == "POST"
     assert captured["url"] == "https://api.clerk.com/v1/sessions"
     assert captured["authorization"] == "Bearer sk_test_secret"
+    assert captured["user_agent"] == "BenchScope smoke-token generator"
     assert captured["body"] == {"user_id": "user_abc"}
 
 

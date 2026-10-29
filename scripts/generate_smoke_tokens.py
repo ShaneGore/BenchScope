@@ -53,6 +53,7 @@ def _request(
             "Authorization": f"Bearer {secret_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "BenchScope smoke-token generator",
         },
     )
     try:
