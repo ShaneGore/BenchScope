@@ -84,6 +84,7 @@ def test_smoke_full_mode_requires_token():
     result = subprocess.run(
         [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:8000", "--mode", "full"],
         capture_output=True,
+        check=False,
         text=True,
         env={"SMOKE_FRONTEND_URL": "http://127.0.0.1:8000", "PATH": __import__("os").environ.get("PATH", "")},
     )
@@ -95,6 +96,7 @@ def test_smoke_production_mode_requires_token():
     result = subprocess.run(
         [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:8000", "--mode", "production"],
         capture_output=True,
+        check=False,
         text=True,
         env={"SMOKE_FRONTEND_URL": "http://127.0.0.1:8000", "PATH": __import__("os").environ.get("PATH", "")},
     )
@@ -107,6 +109,7 @@ def test_smoke_health_mode_does_not_require_token():
         [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:1", "--mode", "health"],
         capture_output=True,
         text=True,
+        check=False,
     )
     # The health request itself fails, but argument/configuration validation passes.
     assert "SMOKE_TEST_TOKEN" not in (result.stdout + result.stderr)
