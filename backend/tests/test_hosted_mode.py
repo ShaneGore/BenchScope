@@ -32,7 +32,7 @@ def hosted_api(
         host="0.0.0.0",
         clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
         clerk_issuer="https://clerk.example",
-        clerk_audience="benchscope",
+        clerk_authorized_parties=["https://dashboard.example"],
     )
     app = create_app(settings)
     engine = app.state.engine
@@ -311,7 +311,7 @@ def test_hosted_runner_routes_are_absent_when_enabled_and_adapter_is_never_calle
         host="0.0.0.0",
         clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
         clerk_issuer="https://clerk.example",
-        clerk_audience="benchscope",
+        clerk_authorized_parties=["https://dashboard.example"],
         benchmark_enabled=True,
     )
     adapter = CountingAdapter()

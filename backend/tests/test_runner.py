@@ -395,7 +395,7 @@ def test_runner_routes_are_absent_when_disabled_or_hosted() -> None:
             host="0.0.0.0",
             clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
             clerk_issuer="https://clerk.example",
-            clerk_audience="benchscope",
+            clerk_authorized_parties=["https://dashboard.example"],
         )
     )
     with TestClient(hosted) as client:

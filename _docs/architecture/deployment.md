@@ -52,12 +52,12 @@ a successful deployment.
   deploy the API.
 - Hosted backend configuration currently requires `APP_MODE=hosted`, `HOST`,
   `DATABASE_URL`, `CORS_ORIGINS`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, and
-  `CLERK_AUDIENCE`. Configure `HOST` as the provider-required public bind
+  `CLERK_AUTHORIZED_PARTIES`. Configure `HOST` as the provider-required public bind
   address (commonly `0.0.0.0`) and set the service port using the name the
   selected provider supports; the application setting is `PORT` (default
   `8000`). `DATABASE_URL` and any provider credentials belong only in the
-  backend host's secret configuration. Clerk issuer, audience, and JWKS URL
-  are backend-only configuration and must be provided together. Set
+  backend host's secret configuration. Clerk issuer, JWKS URL, and authorized
+  parties are backend-only configuration. `CLERK_AUDIENCE` is not used. Set
   `BENCHMARK_ENABLED=false`; the application only enables its runner when
   `APP_MODE=local`, regardless of this flag.
 - `APP_ENV` defaults to `production`; `MAX_UPLOAD_BYTES` defaults to 1 MiB.

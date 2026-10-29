@@ -31,7 +31,7 @@ from app.models import Base, BenchmarkRun
 from app.runner import RunResult
 
 ISSUER = "https://benchscope-e2e.invalid"
-AUDIENCE = "benchscope-e2e"
+AUTHORIZED_PARTIES = ["http://127.0.0.1:5173", "http://127.0.0.1:5174"]
 JWKS_PORT = 8001
 LOCAL_SUBJECTS = ("e2e-owner-a", "e2e-owner-b")
 SUCCESS_CONFIG = UUID("00000000-0000-4000-8000-000000000001")
@@ -96,7 +96,7 @@ def _settings(database_url: str, *, hosted: bool = False) -> Settings:
             else f"http://127.0.0.1:{JWKS_PORT}/.well-known/jwks.json"
         ),
         clerk_issuer=ISSUER,
-        clerk_audience=AUDIENCE,
+        clerk_authorized_parties=AUTHORIZED_PARTIES,
     )
     if settings.app_env != "test" or settings.local_auth_bypass:
         raise ValueError("E2E authentication profile must stay bypass-free")
@@ -114,7 +114,6 @@ def _credentials(path: Path) -> dict[str, Any]:
             {
                 "sub": subject,
                 "iss": ISSUER,
-                "aud": AUDIENCE,
                 "exp": int(time.time()) + 600,
             },
             private_key,
