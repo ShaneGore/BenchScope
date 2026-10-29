@@ -1,0 +1,63 @@
+name: Promote Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "promote" to run production promotion.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.event.inputs.confirm == 'promote'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check production configuration
+        id: config
+        run: |
+          if [ -z "${{ secrets.PRODUCTION_DATABASE_URL }}" ] || [ -z "${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}" ] || [ -z "${{ vars.PRODUCTION_SMOKE_API_URL }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production promotion skipped because production configuration is not complete."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Run production database migrations
+        if: steps.config.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          uv sync --locked --group dev
+          uv run alembic upgrade head
+
+      - name: Trigger production backend deployment
+        if: steps.config.outputs.configured == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Run production smoke tests
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+        run: |
+          python scripts/smoke_test.py --api-url "$SMOKE_API_URL"

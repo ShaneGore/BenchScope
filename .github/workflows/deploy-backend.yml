@@ -1,0 +1,78 @@
+name: Deploy Backend
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Check backend deployment configuration
+        id: config
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL }}" ] || [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ] || [ -z "${{ vars.SMOKE_API_URL }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL or SMOKE_API_URL is not configured."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Run database migrations
+        if: steps.config.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          uv sync --locked --group dev
+          uv run alembic upgrade head
+
+      - name: Trigger backend deployment
+        if: steps.config.outputs.configured == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Wait for backend readiness
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$SMOKE_API_URL/ready" >/dev/null; then
+              echo "Backend is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Backend did not become ready."
+          exit 1
+
+      - name: Run post-deployment smoke tests
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
+        run: |
+          python scripts/smoke_test.py --api-url "$SMOKE_API_URL"
