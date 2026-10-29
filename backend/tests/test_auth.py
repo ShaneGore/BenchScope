@@ -18,7 +18,7 @@ from app.main import create_app
 from app.models import Base, BenchmarkRun, ModelProfile
 
 ISSUER = "https://clerk.example"
-AUDIENCE = "benchscope"
+AUTHORIZED_PARTIES = ["https://dashboard.example"]
 JWKS_URL = f"{ISSUER}/.well-known/jwks.json"
 
 
@@ -46,7 +46,7 @@ def auth_api(
         host="0.0.0.0",
         clerk_jwks_url=JWKS_URL,
         clerk_issuer=ISSUER,
-        clerk_audience=AUDIENCE,
+        clerk_authorized_parties=AUTHORIZED_PARTIES,
     )
     app = create_app(settings)
     engine = app.state.engine
@@ -63,16 +63,26 @@ def _token(
     *,
     subject: str = "user-alice",
     issuer: str = ISSUER,
-    audience: str = AUDIENCE,
+    authorized_party: str | None = AUTHORIZED_PARTIES[0],
+    include_authorized_party: bool = True,
     expires: int | None = None,
+    include_expiry: bool = True,
+    include_issuer: bool = True,
+    include_subject: bool = True,
 ) -> str:
+    payload: dict[str, object] = {}
+    if include_subject:
+        payload["sub"] = subject
+    if include_issuer:
+        payload["iss"] = issuer
+    if include_expiry:
+        payload["exp"] = expires or int(time.time()) + 300
+    payload["nbf"] = int(time.time()) - 10
+    payload["iat"] = int(time.time()) - 10
+    if include_authorized_party and authorized_party is not None:
+        payload["azp"] = authorized_party
     return jwt.encode(
-        {
-            "sub": subject,
-            "iss": issuer,
-            "aud": audience,
-            "exp": expires or int(time.time()) + 300,
-        },
+        payload,
         private_key,
         algorithm="RS256",
         headers={"kid": "benchscope-test"},
@@ -89,7 +99,7 @@ def test_personal_endpoints_reject_missing_and_invalid_tokens_generically(
     client, _, private_key = auth_api
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     missing_expiry = jwt.encode(
-        {"sub": "user-alice", "iss": ISSUER, "aud": AUDIENCE},
+        {"sub": "user-alice", "iss": ISSUER, "azp": AUTHORIZED_PARTIES[0]},
         private_key,
         algorithm="RS256",
         headers={"kid": "benchscope-test"},
@@ -98,8 +108,15 @@ def test_personal_endpoints_reject_missing_and_invalid_tokens_generically(
         "malformed",
         missing_expiry,
         _token(private_key, issuer="https://wrong.example"),
-        _token(private_key, audience="other-app"),
+        _token(
+            private_key,
+            authorized_party="https://evil.example",
+            include_authorized_party=True,
+        ),
         _token(private_key, expires=int(time.time()) - 1),
+        _token(private_key, include_expiry=False),
+        _token(private_key, include_issuer=False),
+        _token(private_key, include_subject=False),
         _token(other_key),
     ]
 
@@ -272,3 +289,45 @@ def test_bad_token_never_appears_in_auth_response(
     response = client.get("/api/v1/profiles", headers=_headers(token))
     assert response.status_code == 401
     assert token not in response.text
+
+
+def test_token_without_audience_is_accepted_when_authorized_party_is_present(
+    auth_api: tuple[TestClient, Engine, rsa.RSAPrivateKey],
+) -> None:
+    client, _, private_key = auth_api
+    token = _headers(_token(private_key))
+    assert client.get("/api/v1/profiles", headers=token).status_code == 200
+
+
+def test_token_with_absent_authorized_party_is_accepted(
+    auth_api: tuple[TestClient, Engine, rsa.RSAPrivateKey],
+) -> None:
+    client, _, private_key = auth_api
+    token = _headers(_token(private_key, include_authorized_party=False))
+    assert client.get("/api/v1/profiles", headers=token).status_code == 200
+
+
+def test_token_with_disallowed_authorized_party_is_rejected(
+    auth_api: tuple[TestClient, Engine, rsa.RSAPrivateKey],
+) -> None:
+    client, _, private_key = auth_api
+    token = _headers(
+        _token(
+            private_key,
+            authorized_party="https://evil.example",
+            include_authorized_party=True,
+        )
+    )
+    assert client.get("/api/v1/profiles", headers=token).status_code == 401
+
+
+def test_missing_hosted_clerk_configuration_fails_startup() -> None:
+    with pytest.raises(ValueError, match="CLERK"):
+        Settings(
+            app_mode="hosted",
+            database_url=SecretStr("postgresql://localhost/benchscope"),
+            cors_origins=["https://dashboard.example"],
+            host="0.0.0.0",
+            clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
+            clerk_issuer="https://clerk.example",
+        )

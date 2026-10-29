@@ -20,7 +20,7 @@ def _settings(url: str, **values: object) -> Settings:
         "cors_origins": ["https://dashboard.example.invalid"],
         "clerk_jwks_url": url,
         "clerk_issuer": "https://issuer.example.invalid",
-        "clerk_audience": "benchscope-e2e",
+        "clerk_authorized_parties": ["https://dashboard.example.invalid"],
     }
     settings.update(values)
     return Settings(**settings)

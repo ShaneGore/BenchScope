@@ -104,7 +104,7 @@ def current_owner(
         or credentials.scheme.casefold() != "bearer"
         or not settings.clerk_jwks_url
         or not settings.clerk_issuer
-        or not settings.clerk_audience
+        or not settings.clerk_authorized_parties
     ):
         raise _unauthorized()
 
@@ -118,12 +118,20 @@ def current_owner(
             key.key,
             algorithms=["RS256"],
             issuer=settings.clerk_issuer,
-            audience=settings.clerk_audience,
-            options={"require": ["exp", "iss", "aud", "sub"]},
+            options={"require": ["exp", "nbf", "iat", "iss", "sub"]},
         )
         owner_id = claims.get("sub")
         if not isinstance(owner_id, str) or not owner_id.strip():
             raise _unauthorized()
+        authorized_parties = settings.clerk_authorized_parties or []
+        if "azp" in claims:
+            authorized_party = claims.get("azp")
+            if (
+                not isinstance(authorized_party, str)
+                or not authorized_party
+                or authorized_party not in authorized_parties
+            ):
+                raise _unauthorized()
         return cast(str, owner_id)
     except (PyJWTError, PyJWKClientError, OSError, TypeError, ValueError):
         raise _unauthorized() from None

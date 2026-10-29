@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     benchmark_timeout_seconds: float = Field(default=3600, gt=0, allow_inf_nan=False)
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
-    clerk_audience: str | None = None
+    clerk_authorized_parties: list[str] | None = None
 
     @field_validator("cors_origins")
     @classmethod
@@ -36,6 +36,32 @@ class Settings(BaseSettings):
             if origins
             else origins
         )
+
+    @field_validator("clerk_authorized_parties")
+    @classmethod
+    def clean_clerk_authorized_parties(
+        cls, parties: list[str] | None
+    ) -> list[str] | None:
+        if not parties:
+            return parties
+        cleaned: list[str] = []
+        for party in parties:
+            origin = party.strip()
+            if not origin:
+                continue
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme not in {"https", "http"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("CLERK_AUTHORIZED_PARTIES must contain origins only")
+            cleaned.append(f"{parsed.scheme}://{parsed.netloc}")
+        return cleaned
 
     @model_validator(mode="after")
     def validate_hosted_settings(self) -> "Settings":
@@ -64,9 +90,12 @@ class Settings(BaseSettings):
             for name, value in (
                 ("CLERK_JWKS_URL", self.clerk_jwks_url),
                 ("CLERK_ISSUER", self.clerk_issuer),
-                ("CLERK_AUDIENCE", self.clerk_audience),
+                ("CLERK_AUTHORIZED_PARTIES", self.clerk_authorized_parties),
             ):
-                if not value or not value.strip():
+                if isinstance(value, list):
+                    if not value:
+                        missing.append(name)
+                elif not value or not value.strip():
                     missing.append(name)
             if missing:
                 raise ValueError(f"Required in hosted mode: {', '.join(missing)}")
@@ -111,10 +140,12 @@ class Settings(BaseSettings):
                     "and loopback-only HOST and JWKS resolution"
                 )
         if any(
-            (self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)
-        ) and not all((self.clerk_jwks_url, self.clerk_issuer, self.clerk_audience)):
+            (self.clerk_jwks_url, self.clerk_issuer, self.clerk_authorized_parties)
+        ) and not all(
+            (self.clerk_jwks_url, self.clerk_issuer, self.clerk_authorized_parties)
+        ):
             raise ValueError(
-                "Clerk issuer, audience, and JWKS URL must be configured together"
+                "Clerk issuer, authorized parties, and JWKS URL must be configured together"
             )
         return self
 

@@ -183,7 +183,7 @@ def test_hosted_app_does_not_expose_or_export_local_telemetry() -> None:
         host="0.0.0.0",
         clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
         clerk_issuer="https://clerk.example",
-        clerk_audience="benchscope",
+        clerk_authorized_parties=["https://dashboard.example"],
     )
 
     with TestClient(create_app(settings, telemetry=telemetry)) as client:

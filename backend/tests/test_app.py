@@ -62,13 +62,14 @@ def test_hosted_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("HOST", "0.0.0.0")
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example/.well-known/jwks.json")
     monkeypatch.setenv("CLERK_ISSUER", "https://clerk.example")
-    monkeypatch.setenv("CLERK_AUDIENCE", "benchscope")
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", '["https://dashboard.example"]')
 
     settings = load_settings()
 
     assert settings.app_mode == "hosted"
     assert settings.bind_host == "0.0.0.0"
     assert settings.cors_allow_origins == ["https://dashboard.example"]
+    assert settings.clerk_authorized_parties == ["https://dashboard.example"]
 
 
 def test_hosted_configuration_rejects_wildcard_origins() -> None:
@@ -80,7 +81,7 @@ def test_hosted_configuration_rejects_wildcard_origins() -> None:
             host="0.0.0.0",
             clerk_jwks_url="https://clerk.example/.well-known/jwks.json",
             clerk_issuer="https://clerk.example",
-            clerk_audience="benchscope",
+            clerk_authorized_parties=["https://dashboard.example"],
         )
 
 
