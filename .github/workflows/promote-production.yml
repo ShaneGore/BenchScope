@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   promote:
-    if: github.event.inputs.confirm == 'promote'
+    if: github.event.inputs.confirm == 'promote' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -27,7 +27,7 @@ jobs:
         run: |
           selected_ref="${INPUT_REF:-main}"
           case "$selected_ref" in
-            main|refs/heads/main|refs/tags/*) ;;
+            main|refs/heads/main) ;;
             *)
               echo "::error::Production promotion is restricted to main or an approved release tag."
               exit 1

@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,7 +43,7 @@ jobs:
           else
             selected_ref="${INPUT_REF:-main}"
             case "$selected_ref" in
-              main|refs/heads/main|refs/tags/*) ;;
+              main|refs/heads/main) ;;
               *)
                 echo "::error::Manual frontend deployment is restricted to main or an approved release tag."
                 exit 1

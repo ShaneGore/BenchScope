@@ -24,3 +24,7 @@
 3. If backend deployment failed, roll back the backend to the previous image.
 4. If smoke tests failed, roll back frontend/backend as needed and preserve the database.
 5. Record the incident, root cause, and recovery steps in `_docs/incidents/`.
+
+## GitHub environment protection
+
+The workflows reference `staging` and `production` GitHub Environments. Required reviewers, wait timers, and branch restrictions must be configured in the repository settings before these gates are effective. The workflow files alone cannot enforce reviewer approval.
