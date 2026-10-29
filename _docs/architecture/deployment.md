@@ -62,7 +62,27 @@ a successful deployment.
   `APP_MODE=local`, regardless of this flag.
 - `APP_ENV` defaults to `production`; `MAX_UPLOAD_BYTES` defaults to 1 MiB.
   These may be explicitly set on the backend if their defaults are unsuitable.
-  No frontend or backend secret is needed by CI.
+  Backend deployment CI requires `DATABASE_URL`, `RENDER_DEPLOY_HOOK_URL`, and
+  `CLERK_SECRET_KEY` as GitHub Actions secrets, plus the smoke-test user IDs and
+  public frontend variables listed above. No secret belongs in frontend build
+  configuration.
+## Smoke-test credentials
+
+- `CLERK_SECRET_KEY` is a GitHub Actions secret used only by the backend
+  deployment workflow to mint fresh smoke-test credentials.
+- `SMOKE_TEST_USER_A_ID` and `SMOKE_TEST_USER_B_ID` are GitHub Actions
+  variables identifying the two synthetic Clerk test users.
+- `.github/workflows/deploy-backend.yml` generates fresh, short-lived Clerk
+  session tokens during deployment. The obsolete `SMOKE_TEST_TOKEN` and
+  `SMOKE_OTHER_TEST_TOKEN` secrets are no longer required.
+- The token-generation API is testing-only and requires a Clerk Development
+  instance; it must not be used with a Production instance.
+- `VITE_CLERK_PUBLISHABLE_KEY` remains a public frontend build-time variable
+  for GitHub Pages.
+- Render's runtime Clerk settings (`CLERK_JWKS_URL`, `CLERK_ISSUER`, and
+  `CLERK_AUDIENCE`) are configured separately in the Render service and are
+  not GitHub Actions secrets.
+
 
 ## Runtime, persistence, and migrations
 
