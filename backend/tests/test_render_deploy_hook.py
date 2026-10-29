@@ -55,7 +55,9 @@ def test_build_deploy_url_rejects_malformed_url():
 def test_build_deploy_url_rejects_bad_sha():
     module = _load_module()
     with pytest.raises(ValueError):
-        module.build_deploy_url("https://api.render.com/deploy/srv-123?key=secret", "not-a-sha")
+        module.build_deploy_url(
+            "https://api.render.com/deploy/srv-123?key=secret", "not-a-sha"
+        )
 
 
 def test_trigger_deploy_redacts_failures(monkeypatch):
@@ -75,18 +77,30 @@ def test_trigger_deploy_redacts_failures(monkeypatch):
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fail)
     with pytest.raises(module.DeployHookError) as exc:
-        module.trigger_deploy("https://api.render.com/deploy/srv-123?key=secret", "a" * 40)
+        module.trigger_deploy(
+            "https://api.render.com/deploy/srv-123?key=secret", "a" * 40
+        )
     assert "secret" not in str(exc.value)
     assert "api.render.com" not in str(exc.value)
 
 
 def test_smoke_full_mode_requires_token():
     result = subprocess.run(
-        [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:8000", "--mode", "full"],
+        [
+            sys.executable,
+            str(SMOKE),
+            "--api-url",
+            "http://127.0.0.1:8000",
+            "--mode",
+            "full",
+        ],
         capture_output=True,
         check=False,
         text=True,
-        env={"SMOKE_FRONTEND_URL": "http://127.0.0.1:8000", "PATH": __import__("os").environ.get("PATH", "")},
+        env={
+            "SMOKE_FRONTEND_URL": "http://127.0.0.1:8000",
+            "PATH": __import__("os").environ.get("PATH", ""),
+        },
     )
     assert result.returncode != 0
     assert "SMOKE_TEST_TOKEN" in (result.stdout + result.stderr)
@@ -94,11 +108,21 @@ def test_smoke_full_mode_requires_token():
 
 def test_smoke_production_mode_requires_token():
     result = subprocess.run(
-        [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:8000", "--mode", "production"],
+        [
+            sys.executable,
+            str(SMOKE),
+            "--api-url",
+            "http://127.0.0.1:8000",
+            "--mode",
+            "production",
+        ],
         capture_output=True,
         check=False,
         text=True,
-        env={"SMOKE_FRONTEND_URL": "http://127.0.0.1:8000", "PATH": __import__("os").environ.get("PATH", "")},
+        env={
+            "SMOKE_FRONTEND_URL": "http://127.0.0.1:8000",
+            "PATH": __import__("os").environ.get("PATH", ""),
+        },
     )
     assert result.returncode != 0
     assert "SMOKE_TEST_TOKEN" in (result.stdout + result.stderr)
@@ -106,7 +130,14 @@ def test_smoke_production_mode_requires_token():
 
 def test_smoke_health_mode_does_not_require_token():
     result = subprocess.run(
-        [sys.executable, str(SMOKE), "--api-url", "http://127.0.0.1:1", "--mode", "health"],
+        [
+            sys.executable,
+            str(SMOKE),
+            "--api-url",
+            "http://127.0.0.1:1",
+            "--mode",
+            "health",
+        ],
         capture_output=True,
         text=True,
         check=False,
