@@ -1,0 +1,104 @@
+name: Promote Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "promote" to run production promotion.
+        required: true
+      ref:
+        description: Git ref to promote. Must be main or an approved release tag.
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.event.inputs.confirm == 'promote' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Determine promotion ref
+        id: ref
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          selected_ref="$GITHUB_SHA"
+
+          echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check production configuration
+        id: config
+        env:
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          PRODUCTION_RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
+          PRODUCTION_SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+          PRODUCTION_SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
+          PRODUCTION_SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
+          PRODUCTION_SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
+        run: |
+          if [ -z "$PRODUCTION_DATABASE_URL" ] || [ -z "$PRODUCTION_RENDER_DEPLOY_HOOK_URL" ] || [ -z "$PRODUCTION_SMOKE_API_URL" ] || [ -z "$PRODUCTION_SMOKE_TEST_TOKEN" ] || [ -z "$PRODUCTION_SMOKE_FRONTEND_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production promotion skipped because production database, deploy hook, smoke API URL, smoke token or frontend URL is not configured."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+        with:
+          ref: ${{ steps.ref.outputs.selected_ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Run production database migrations
+        if: steps.config.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          uv sync --locked --group dev
+          uv run alembic upgrade head
+
+      - name: Trigger production backend deployment
+        if: steps.config.outputs.configured == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
+          SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
+        run: |
+          python scripts/render_deploy_hook.py
+
+      - name: Wait for production readiness
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$SMOKE_API_URL/ready" >/dev/null; then
+              echo "Production backend is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Production backend did not become ready."
+          exit 1
+
+      - name: Run production smoke tests
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
+          SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
+          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
+          SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
+        run: |
+          python scripts/smoke_test.py --mode production

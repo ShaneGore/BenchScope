@@ -1,0 +1,110 @@
+name: Deploy Backend
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy. Must be main or an approved release tag.
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Determine deployment ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            selected_ref="$WORKFLOW_SHA"
+          else
+            selected_ref="$GITHUB_SHA"
+          fi
+          echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check backend deployment configuration
+        id: config
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
+          SMOKE_TEST_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
+          SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ] || [ -z "$SMOKE_API_URL" ] || [ -z "$SMOKE_TEST_TOKEN" ] || [ -z "$SMOKE_OTHER_TEST_TOKEN" ] || [ -z "$SMOKE_FRONTEND_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL, SMOKE_API_URL, SMOKE_TEST_TOKEN, SMOKE_OTHER_TEST_TOKEN or SMOKE_FRONTEND_URL is not configured."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+        with:
+          ref: ${{ steps.ref.outputs.selected_ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Run database migrations
+        if: steps.config.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          uv sync --locked --group dev
+          uv run alembic upgrade head
+
+      - name: Trigger backend deployment
+        if: steps.config.outputs.configured == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
+        run: |
+          python scripts/render_deploy_hook.py
+
+      - name: Wait for backend readiness
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$SMOKE_API_URL/ready" >/dev/null; then
+              echo "Backend is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Backend did not become ready."
+          exit 1
+
+      - name: Run post-deployment smoke tests
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_API_URL: ${{ vars.SMOKE_API_URL }}
+          SMOKE_TEST_TOKEN: ${{ secrets.SMOKE_TEST_TOKEN }}
+          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
+          SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
+        run: |
+          python scripts/smoke_test.py --mode full
