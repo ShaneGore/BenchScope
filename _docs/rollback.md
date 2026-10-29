@@ -2,8 +2,14 @@
 
 ## Frontend rollback
 - GitHub Pages keeps previous deployments available through the Pages environment history.
-- To roll back, rerun the previous successful `Deploy GitHub Pages`/`deploy-frontend.yml` workflow run or deploy the last known-good commit.
+- To roll back, redeploy a known-good frontend commit using the `Deploy GitHub Pages` / `deploy-frontend.yml` workflow:
+  1. Identify the last known-good full commit SHA from `main` history and the successful Pages deployment record.
+  2. Run the workflow manually with `ref` set to that full 40-character SHA. The workflow validates that the SHA is `main` or an ancestor of `main`; arbitrary or unmerged refs are rejected.
+  3. Confirm the workflow checks out, builds, and deploys that exact SHA.
+  4. Verify `https://shanegore.github.io/BenchScope/` returns HTTP 200 and the expected build.
+- To restore the current frontend after a rollback rehearsal, rerun the workflow with `ref=main` or merge and deploy the intended commit.
 - Frontend rollback does not affect backend data or database state.
+- Automatic `workflow_run` deployments continue to use the exact SHA of the successful CI run and are not overridden by a manual `ref`.
 
 ## Backend rollback
 - Backend deployment is triggered by a Render deploy hook after migrations succeed.
