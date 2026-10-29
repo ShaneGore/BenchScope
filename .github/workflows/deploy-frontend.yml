@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to deploy. Must be main or an approved release tag.
+        description: Git ref to deploy. Use 'main' or a full 40-character commit SHA from main history.
         required: false
         default: main
 
@@ -38,11 +38,43 @@ jobs:
           INPUT_REF: ${{ github.event.inputs.ref }}
           WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
           GITHUB_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_run" ]; then
+            if [ -z "${WORKFLOW_SHA:-}" ]; then
+              echo "::error::Successful CI run did not provide a commit SHA."
+              exit 1
+            fi
             selected_ref="$WORKFLOW_SHA"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            requested_ref="${INPUT_REF:-main}"
+            requested_ref="$(printf '%s' "$requested_ref" | tr '[:upper:]' '[:lower:]')"
+            if [ "$requested_ref" = "main" ]; then
+              selected_ref="main"
+            else
+              if ! printf '%s\n' "$requested_ref" | grep -Eq '^[0-9a-f]{40}$'; then
+                echo "::error::Requested ref must be 'main' or a full 40-character commit SHA."
+                exit 1
+              fi
+              compare_status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${requested_ref}...main" --jq '.status')" || {
+                echo "::error::Requested commit is not available in ${GITHUB_REPOSITORY}."
+                exit 1
+              }
+              case "$compare_status" in
+                behind|identical)
+                  selected_ref="$requested_ref"
+                  ;;
+                *)
+                  echo "::error::Requested commit is not an ancestor of main (compare status: ${compare_status})."
+                  exit 1
+                  ;;
+              esac
+            fi
           else
-            selected_ref="$GITHUB_SHA"
+            echo "::error::Unsupported deployment event: ${EVENT_NAME}."
+            exit 1
           fi
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 

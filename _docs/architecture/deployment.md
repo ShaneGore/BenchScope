@@ -50,6 +50,13 @@ a successful deployment.
   URL) and `VITE_CLERK_PUBLISHABLE_KEY`; the workflow checks these before
   building. It publishes only the static frontend and does not provision or
   deploy the API.
+- `.github/workflows/deploy-frontend.yml` supports automatic `workflow_run`
+  deployments from successful CI and manual deployments. A manual run accepts
+  `ref=main` or a full 40-character commit SHA from `main` history; the
+  workflow verifies the SHA with GitHub's compare API before checkout. It
+  preserves HTTPS API validation, the repository Pages base path, Clerk
+  public-key configuration, environment protection, and Pages deployment
+  permissions.
 - Hosted backend configuration currently requires `APP_MODE=hosted`, `HOST`,
   `DATABASE_URL`, `CORS_ORIGINS`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, and
   `CLERK_AUTHORIZED_PARTIES`. Configure `HOST` as the provider-required public bind
