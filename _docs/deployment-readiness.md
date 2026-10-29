@@ -84,6 +84,8 @@ Source: https://docs.github.com/en/actions/deployment/targeting-different-enviro
 
 ### Repository variables
 - `VITE_API_URL`
+- `SMOKE_TEST_USER_A_ID`
+- `SMOKE_TEST_USER_B_ID`
 - `VITE_CLERK_PUBLISHABLE_KEY`
 - `SMOKE_API_URL`
 - `SMOKE_FRONTEND_URL`
@@ -93,24 +95,25 @@ Source: https://docs.github.com/en/actions/deployment/targeting-different-enviro
 ### Repository secrets
 - `DATABASE_URL`
 - `RENDER_DEPLOY_HOOK_URL`
-- `SMOKE_TEST_TOKEN`
-- `SMOKE_OTHER_TEST_TOKEN`
+- `CLERK_SECRET_KEY`
 - `PRODUCTION_DATABASE_URL`
 - `PRODUCTION_RENDER_DEPLOY_HOOK_URL`
-- `PRODUCTION_SMOKE_TEST_TOKEN`
-- `PRODUCTION_SMOKE_OTHER_TEST_TOKEN`
 
 ### Backend environment variables
 - `APP_MODE=hosted`
 - `DATABASE_URL`
 - `CORS_ORIGINS`
+- `CLERK_AUTHORIZED_PARTIES`
+- `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` must be JSON arrays of origins,
+  for example `["https://shanegore.github.io"]`. They must contain origins, not
+  URLs with paths such as `https://shanegore.github.io/BenchScope/`.
 - `HOST`
 - `PORT`
 - `BENCHMARK_ENABLED=false`
 - Clerk variables only if authentication is enabled:
   - `CLERK_JWKS_URL`
   - `CLERK_ISSUER`
-  - `CLERK_AUDIENCE`
+  - `CLERK_AUTHORIZED_PARTIES` (see above)
 
 ## Pre-deployment checklist
 - Confirm provider terms still satisfy the $0, no-card, no-paid-upgrade policy.

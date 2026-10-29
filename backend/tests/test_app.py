@@ -69,6 +69,7 @@ def test_hosted_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) 
     assert settings.app_mode == "hosted"
     assert settings.bind_host == "0.0.0.0"
     assert settings.cors_allow_origins == ["https://dashboard.example"]
+    assert settings.clerk_authorized_parties == ["https://dashboard.example"]
 
 
 def test_hosted_configuration_rejects_wildcard_origins() -> None:
