@@ -7,6 +7,19 @@ import pytest
 
 from app import incident_recovery as recovery
 
+DISPOSABLE_ENV = {
+    "POSTGRES_DB": "x",
+    "POSTGRES_USER": "y",
+    "POSTGRES_PASSWORD": "z",
+    "POSTGRES_PORT": "15432",
+    "API_PORT": "18000",
+    "PROMETHEUS_PORT": "19090",
+    "GRAFANA_PORT": "13000",
+    "LOKI_PORT": "13100",
+    "TEMPO_PORT": "13200",
+    "OTLP_PORT": "14318",
+}
+
 
 def _approval(now=None, **overrides):
     now = now or datetime.now(UTC)
@@ -102,11 +115,7 @@ def test_no_command_on_invalid_approval(monkeypatch):
             approval=approval,
             now=now,
             executor=fake_executor,
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
         )
     assert calls == []
 
@@ -131,11 +140,7 @@ def test_occupied_ports(monkeypatch):
     with pytest.raises(recovery.RecoveryBlocked, match="occupied"):
         recovery.execute_fixed_recovery(
             approval=_approval(),
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
             ports=[8000],
         )
 
@@ -152,7 +157,7 @@ def test_exact_execution(monkeypatch):
     approval = _approval(now=now)
     recovery.execute_fixed_recovery(
         approval=approval,
-        env_config={"POSTGRES_DB": "x", "POSTGRES_USER": "y", "POSTGRES_PASSWORD": "z"},
+        env_config=dict(DISPOSABLE_ENV),
         ports=[],
         executor=fake_executor,
         now=now,
@@ -171,11 +176,7 @@ def test_execution_failure():
     with pytest.raises(recovery.RecoveryBlocked, match="failed"):
         recovery.execute_fixed_recovery(
             approval=approval,
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
             ports=[],
             executor=fake_executor,
             now=now,
@@ -191,11 +192,7 @@ def test_execution_timeout():
     with pytest.raises(subprocess.TimeoutExpired):
         recovery.execute_fixed_recovery(
             approval=approval,
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
             ports=[],
             executor=fake_executor,
             now=now,
@@ -210,7 +207,7 @@ def test_one_attempt_limit():
     approval = _approval(now=now)
     recovery.execute_fixed_recovery(
         approval=approval,
-        env_config={"POSTGRES_DB": "x", "POSTGRES_USER": "y", "POSTGRES_PASSWORD": "z"},
+        env_config=dict(DISPOSABLE_ENV),
         ports=[],
         executor=fake_executor,
         now=now,
@@ -218,11 +215,7 @@ def test_one_attempt_limit():
     with pytest.raises(recovery.RecoveryBlocked, match="attempted"):
         recovery.execute_fixed_recovery(
             approval=approval,
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
             ports=[],
             executor=fake_executor,
             now=now,
@@ -238,11 +231,7 @@ def test_no_success_after_failed_action():
     try:
         recovery.execute_fixed_recovery(
             approval=approval,
-            env_config={
-                "POSTGRES_DB": "x",
-                "POSTGRES_USER": "y",
-                "POSTGRES_PASSWORD": "z",
-            },
+            env_config=dict(DISPOSABLE_ENV),
             ports=[],
             executor=fake_executor,
             now=now,
@@ -330,3 +319,20 @@ def test_audit_no_sensitive_payload():
     )
     assert record["verification"]["raw_payload"] == "[redacted]"
     assert record["verification"]["secret"] == "[redacted]"
+
+
+def test_disposable_env_accepts_fixed_alternate_ports():
+    assert recovery.validate_disposable_env(dict(DISPOSABLE_ENV)) == DISPOSABLE_ENV
+
+
+def test_disposable_env_rejects_unexpected_port():
+    bad = dict(DISPOSABLE_ENV, API_PORT="8000")
+    with pytest.raises(recovery.RecoveryBlocked):
+        recovery.validate_disposable_env(bad)
+
+
+def test_disposable_env_rejects_missing_port():
+    bad = dict(DISPOSABLE_ENV)
+    del bad["PROMETHEUS_PORT"]
+    with pytest.raises(recovery.RecoveryBlocked):
+        recovery.validate_disposable_env(bad)

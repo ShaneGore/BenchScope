@@ -56,16 +56,25 @@ RECOVERY_SMOKE_TEST_COMMAND = (
 RECOVERY_SMOKE_TEST_WORKING_DIRECTORY = Path(__file__).resolve().parents[1]
 RECOVERY_SMOKE_TEST_TIMEOUT_SECONDS = 300
 
-READY_URL = "http://127.0.0.1:8000/ready"
+READY_URL = "http://127.0.0.1:18000/ready"
 PROMETHEUS_QUERY_URL = (
-    "http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D"
+    "http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D"
 )
-ALERTS_QUERY_URL = "http://127.0.0.1:9090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%7D"
+ALERTS_QUERY_URL = "http://127.0.0.1:19090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%7D"
 
 DISPOSABLE_REQUIRED_ENV_KEYS = frozenset(
     {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"}
 )
-DISPOSABLE_REQUIRED_HOST_PORTS = (8000, 5432, 9090, 3000, 3100, 3200, 4318)
+DISPOSABLE_REQUIRED_HOST_PORTS = (18000, 15432, 19090, 13000, 13100, 13200, 14318)
+DISPOSABLE_REQUIRED_PORT_ASSIGNMENTS = {
+    "POSTGRES_PORT": 15432,
+    "API_PORT": 18000,
+    "PROMETHEUS_PORT": 19090,
+    "GRAFANA_PORT": 13000,
+    "LOKI_PORT": 13100,
+    "TEMPO_PORT": 13200,
+    "OTLP_PORT": 14318,
+}
 
 FORBIDDEN_AUDIT_KEYS = {
     "secret",
@@ -355,6 +364,13 @@ def validate_disposable_env(env_values: Any = None, path: Any = None) -> dict[st
         raise RecoveryBlocked("disposable environment configuration is invalid")
     for key in DISPOSABLE_REQUIRED_ENV_KEYS:
         if not str(env_values.get(key, "")).strip():
+            raise RecoveryBlocked("disposable environment configuration is invalid")
+    for key, expected_port in DISPOSABLE_REQUIRED_PORT_ASSIGNMENTS.items():
+        try:
+            actual_port = int(str(env_values.get(key, "")).strip())
+        except (TypeError, ValueError):
+            raise RecoveryBlocked("disposable environment configuration is invalid")
+        if actual_port != expected_port:
             raise RecoveryBlocked("disposable environment configuration is invalid")
     return dict(env_values)
 
