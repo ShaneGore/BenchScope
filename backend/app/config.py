@@ -145,7 +145,7 @@ class Settings(BaseSettings):
             (self.clerk_jwks_url, self.clerk_issuer, self.clerk_authorized_parties)
         ):
             raise ValueError(
-                "Clerk issuer, audience, and JWKS URL must be configured together"
+                "Clerk issuer, authorized parties, and JWKS URL must be configured together"
             )
         return self
 

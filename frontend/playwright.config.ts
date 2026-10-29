@@ -45,7 +45,7 @@ export default defineConfig({
         CORS_ORIGINS: '["http://127.0.0.1:5173"]',
         CLERK_JWKS_URL: 'http://127.0.0.1:8001/.well-known/jwks.json',
         CLERK_ISSUER: 'https://clerk.example.invalid',
-        CLERK_AUDIENCE: 'benchscope-e2e',
+        CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:5173"]',
         TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
         PYTHONPATH: '.',
         E2E_SCHEMA: schema,
