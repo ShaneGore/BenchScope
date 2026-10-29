@@ -3,6 +3,9 @@
 
 The generated tokens are written only to the requested destination. They are
 never printed, because Clerk session tokens are sensitive and expire quickly.
+
+The session-creation API used here is a testing-only Clerk API and requires a
+Development instance. Do not use it with a Production instance.
 """
 
 from __future__ import annotations
@@ -64,7 +67,9 @@ def _request(
         raise SmokeCredentialError("Clerk credential request failed") from exc
 
     if status != 200:
-        raise SmokeCredentialError(f"Clerk credential request failed with HTTP {status}")
+        raise SmokeCredentialError(
+            f"Clerk credential request failed with HTTP {status}"
+        )
 
     try:
         parsed = json.loads(body)
@@ -117,7 +122,9 @@ def create_session_token(
     if not session_id.strip():
         raise SmokeCredentialError("a Clerk session ID is required")
     if not MIN_EXPIRES_IN_SECONDS <= expires_in_seconds <= MAX_EXPIRES_IN_SECONDS:
-        raise SmokeCredentialError("expires_in_seconds is outside Clerk's allowed range")
+        raise SmokeCredentialError(
+            "expires_in_seconds is outside Clerk's allowed range"
+        )
 
     origin = _validate_base_url(base_url)
     quoted_session_id = urllib.parse.quote(session_id.strip(), safe="")
@@ -133,6 +140,8 @@ def create_session_token(
     if not isinstance(jwt, str) or not jwt.strip():
         raise SmokeCredentialError("Clerk did not return a session token")
     return jwt.strip()
+
+
 def generate_tokens(
     secret_key: str,
     user_a_id: str,
@@ -169,7 +178,9 @@ def generate_tokens(
     }
 
 
-def write_env_file(tokens: dict[str, str], path: str | Path, *, append: bool = False) -> None:
+def write_env_file(
+    tokens: dict[str, str], path: str | Path, *, append: bool = False
+) -> None:
     """Write tokens to an environment file without printing them."""
     destination = Path(path)
     mode = "a" if append else "w"
@@ -240,4 +251,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

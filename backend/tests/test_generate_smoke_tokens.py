@@ -134,7 +134,9 @@ def test_invalid_base_url_is_rejected():
     module = load_module()
 
     with pytest.raises(module.SmokeCredentialError):
-        module.create_session("sk_test_secret", "user_a", base_url="http://api.clerk.com")
+        module.create_session(
+            "sk_test_secret", "user_a", base_url="http://api.clerk.com"
+        )
 
 
 def test_cli_writes_env_file_without_printing_token(tmp_path, monkeypatch):
@@ -142,7 +144,10 @@ def test_cli_writes_env_file_without_printing_token(tmp_path, monkeypatch):
     output = tmp_path / "smoke.env"
 
     def fake_generate_tokens(*args, **kwargs):
-        return {"SMOKE_TEST_TOKEN": "secret-token", "SMOKE_OTHER_TEST_TOKEN": "other-token"}
+        return {
+            "SMOKE_TEST_TOKEN": "secret-token",
+            "SMOKE_OTHER_TEST_TOKEN": "other-token",
+        }
 
     monkeypatch.setattr(module, "generate_tokens", fake_generate_tokens)
 
