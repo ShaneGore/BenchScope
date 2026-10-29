@@ -27,18 +27,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_REF: ${{ github.event.inputs.ref }}
           WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           if [ "$EVENT_NAME" = "workflow_run" ]; then
             selected_ref="$WORKFLOW_SHA"
           else
-            selected_ref="${INPUT_REF:-main}"
-            case "$selected_ref" in
-              main|refs/heads/main) ;;
-              *)
-                echo "::error::Manual backend deployment is restricted to main or an approved release tag."
-                exit 1
-                ;;
-            esac
+            selected_ref="$GITHUB_SHA"
           fi
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 
@@ -52,9 +46,9 @@ jobs:
           SMOKE_OTHER_TEST_TOKEN: ${{ secrets.SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.SMOKE_FRONTEND_URL }}
         run: |
-          if [ -z "$DATABASE_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ] || [ -z "$SMOKE_API_URL" ]; then
+          if [ -z "$DATABASE_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ] || [ -z "$SMOKE_API_URL" ] || [ -z "$SMOKE_TEST_TOKEN" ] || [ -z "$SMOKE_OTHER_TEST_TOKEN" ] || [ -z "$SMOKE_FRONTEND_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL or SMOKE_API_URL is not configured."
+            echo "::notice::Backend deployment skipped because DATABASE_URL, RENDER_DEPLOY_HOOK_URL, SMOKE_API_URL, SMOKE_TEST_TOKEN, SMOKE_OTHER_TEST_TOKEN or SMOKE_FRONTEND_URL is not configured."
             exit 0
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -88,7 +82,7 @@ jobs:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
           SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
         run: |
-          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL?ref=$SELECTED_REF"
+          python scripts/render_deploy_hook.py
 
       - name: Wait for backend readiness
         if: steps.config.outputs.configured == 'true'

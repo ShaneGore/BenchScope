@@ -157,3 +157,7 @@ any such prompt. Do not add a provider or fallback outside the approved list.
 
 Do not treat earlier free-tier descriptions or numbers elsewhere in the
 repository as verified current terms.
+
+## Render deploy-hook revision control
+
+When triggering a Render deploy hook from GitHub Actions, append `?ref=<commit-sha>` to the hook URL. Render supports deploying a specific commit with this parameter. Configure the Render service so automatic deploys from the linked branch cannot overwrite a deliberately pinned release; use the deploy hook as the controlled deployment trigger.

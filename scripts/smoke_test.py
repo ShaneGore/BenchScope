@@ -83,11 +83,17 @@ def main() -> int:
     parser.add_argument("--frontend-url", default=os.environ.get("SMOKE_FRONTEND_URL"))
     parser.add_argument("--auth-token", default=os.environ.get("SMOKE_TEST_TOKEN"))
     parser.add_argument("--other-auth-token", default=os.environ.get("SMOKE_OTHER_TEST_TOKEN"))
-    parser.add_argument("--mode", choices=("health", "full"), default="full")
+    parser.add_argument("--mode", choices=("health", "full", "production"), default="full")
     args = parser.parse_args()
 
     if not args.api_url:
         raise SystemExit("SMOKE_API_URL or --api-url is required")
+    if args.mode in ("full", "production") and not args.frontend_url:
+        raise SystemExit(f"FAIL: {args.mode} smoke mode requires SMOKE_FRONTEND_URL")
+    if args.mode in ("full", "production") and not args.auth_token:
+        raise SystemExit(f"FAIL: {args.mode} smoke mode requires SMOKE_TEST_TOKEN")
+    if args.mode == "full" and not args.other_auth_token:
+        raise SystemExit("FAIL: full smoke mode requires SMOKE_OTHER_TEST_TOKEN")
     api = args.api_url.rstrip("/")
 
     status, body = request(f"{api}/health")
@@ -104,17 +110,23 @@ def main() -> int:
     status, _ = request(f"{api}/api/v1/demo/runs", method="POST")
     check("anonymous demo records are immutable", status in (401, 403, 404, 405), f"HTTP {status}")
 
-    if args.frontend_url:
-        status, _ = request(args.frontend_url)
-        check("frontend reachable", status == 200, f"HTTP {status}")
+    status, _ = request(args.frontend_url)
+    check("frontend reachable", status == 200, f"HTTP {status}")
 
     if args.mode == "health":
         print("PASS: health-only smoke mode completed; full Issue #21 journey was not exercised.")
         print("Smoke tests completed successfully.")
         return 0
 
-    if not args.auth_token:
-        raise SystemExit("FAIL: full smoke mode requires SMOKE_TEST_TOKEN")
+    if args.mode == "production":
+        status, _ = request(args.frontend_url)
+        check("frontend reachable", status == 200, f"HTTP {status}")
+        headers = {"Authorization": f"Bearer {args.auth_token}"}
+        status, body = request(f"{api}/api/v1/profiles", headers=headers)
+        check("authenticated profile access", status in (200, 204), f"HTTP {status}")
+        print("PASS: read-only production smoke mode completed; no data was imported or mutated.")
+        print("Smoke tests completed successfully.")
+        return 0
 
     headers = {"Authorization": f"Bearer {args.auth_token}"}
     status, body = request(f"{api}/api/v1/profiles", headers=headers)
@@ -162,12 +174,9 @@ def main() -> int:
     status, body = request(f"{api}/api/v1/runs/compare?ids={first_id},{second_id}", headers=headers)
     check("run comparison works", status == 200 and isinstance(load_json(body), list) and len(load_json(body)) >= 2, f"HTTP {status}")
 
-    if args.other_auth_token:
-        other_headers = {"Authorization": f"Bearer {args.other_auth_token}"}
-        status, _ = request(f"{api}/api/v1/runs/{first_id}", headers=other_headers)
-        check("owner isolation enforced", status == 404, f"HTTP {status}")
-    else:
-        print("SKIP: owner-isolation check requires SMOKE_OTHER_TEST_TOKEN")
+    other_headers = {"Authorization": f"Bearer {args.other_auth_token}"}
+    status, _ = request(f"{api}/api/v1/runs/{first_id}", headers=other_headers)
+    check("owner isolation enforced", status == 404, f"HTTP {status}")
 
     print("Smoke tests completed successfully.")
     return 0

@@ -37,18 +37,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_REF: ${{ github.event.inputs.ref }}
           WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           if [ "$EVENT_NAME" = "workflow_run" ]; then
             selected_ref="$WORKFLOW_SHA"
           else
-            selected_ref="${INPUT_REF:-main}"
-            case "$selected_ref" in
-              main|refs/heads/main) ;;
-              *)
-                echo "::error::Manual frontend deployment is restricted to main or an approved release tag."
-                exit 1
-                ;;
-            esac
+            selected_ref="$GITHUB_SHA"
           fi
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 

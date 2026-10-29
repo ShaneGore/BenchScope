@@ -24,15 +24,10 @@ jobs:
         id: ref
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
-          selected_ref="${INPUT_REF:-main}"
-          case "$selected_ref" in
-            main|refs/heads/main) ;;
-            *)
-              echo "::error::Production promotion is restricted to main or an approved release tag."
-              exit 1
-              ;;
-          esac
+          selected_ref="$GITHUB_SHA"
+
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 
       - name: Check production configuration
@@ -45,9 +40,9 @@ jobs:
           PRODUCTION_SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
           PRODUCTION_SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
         run: |
-          if [ -z "$PRODUCTION_DATABASE_URL" ] || [ -z "$PRODUCTION_RENDER_DEPLOY_HOOK_URL" ] || [ -z "$PRODUCTION_SMOKE_API_URL" ]; then
+          if [ -z "$PRODUCTION_DATABASE_URL" ] || [ -z "$PRODUCTION_RENDER_DEPLOY_HOOK_URL" ] || [ -z "$PRODUCTION_SMOKE_API_URL" ] || [ -z "$PRODUCTION_SMOKE_TEST_TOKEN" ] || [ -z "$PRODUCTION_SMOKE_FRONTEND_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Production promotion skipped because production configuration is not complete."
+            echo "::notice::Production promotion skipped because production database, deploy hook, smoke API URL, smoke token or frontend URL is not configured."
             exit 0
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -81,7 +76,7 @@ jobs:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
           SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
         run: |
-          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL?ref=$SELECTED_REF"
+          python scripts/render_deploy_hook.py
 
       - name: Wait for production readiness
         if: steps.config.outputs.configured == 'true'
@@ -106,4 +101,4 @@ jobs:
           SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
         run: |
-          python scripts/smoke_test.py --mode full
+          python scripts/smoke_test.py --mode production
