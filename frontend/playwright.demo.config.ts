@@ -40,7 +40,7 @@ export default defineConfig({
         DATABASE_URL: '',
         CLERK_JWKS_URL: 'https://clerk.example.invalid/.well-known/jwks.json',
         CLERK_ISSUER: 'https://clerk.example.invalid',
-        CLERK_AUDIENCE: 'benchscope-e2e',
+        CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:5174"]',
         TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
         PYTHONPATH: '.',
         E2E_SCHEMA: schema,
