@@ -115,6 +115,8 @@ def _credentials(path: Path) -> dict[str, Any]:
                 "sub": subject,
                 "iss": ISSUER,
                 "exp": int(time.time()) + 600,
+                "nbf": int(time.time()) - 10,
+                "iat": int(time.time()) - 10,
             },
             private_key,
             algorithm="RS256",
