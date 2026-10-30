@@ -13,7 +13,7 @@ import time
 from ctypes import wintypes
 from dataclasses import dataclass
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if os.name == "nt" else None
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_ALL_ACCESS = 0x1F0FFF
@@ -82,7 +82,13 @@ def _last_error(message: str) -> OSError:
     return OSError(f"{message}: {ctypes.get_last_error()}")
 
 
+def _require_windows() -> None:
+    if kernel32 is None:
+        raise RuntimeError("process-tree cleanup is only supported on Windows")
+
+
 def process_exists(pid: int) -> bool:
+    _require_windows()
     if pid <= 0:
         return False
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
@@ -98,6 +104,7 @@ def process_exists(pid: int) -> bool:
 
 
 def create_job() -> int:
+    _require_windows()
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
         raise _last_error("CreateJobObjectW failed")
@@ -153,6 +160,7 @@ def terminate_process_tree(
     termination of the entire job.
     """
 
+    _require_windows()
     if not process_exists(pid):
         return ProcessTreeTerminationResult(pid, False, False, ())
 
@@ -211,6 +219,8 @@ def terminate_job(
     root_pid: int | None = None,
 ) -> ProcessTreeTerminationResult:
     """Terminate every process currently assigned to *job*."""
+
+    _require_windows()
 
     graceful_attempted = True
     forced = False
