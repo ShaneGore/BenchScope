@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -267,3 +268,87 @@ def terminate_job(
         forced,
         remaining,
     )
+
+
+CREATE_SUSPENDED = 0x00000004
+TH32CS_SNAPTHREAD = 0x00000004
+THREAD_SUSPEND_RESUME = 0x0002
+
+
+class _THREADENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ThreadID", wintypes.DWORD),
+        ("th32OwnerProcessID", wintypes.DWORD),
+        ("tpBasePri", ctypes.c_long),
+        ("tpDeltaPri", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+def _resume_main_thread(pid: int) -> None:
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+    if snapshot == wintypes.HANDLE(-1).value:
+        raise _last_error("CreateToolhelp32Snapshot failed")
+    try:
+        entry = _THREADENTRY32()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not kernel32.Thread32First(snapshot, ctypes.byref(entry)):
+            raise _last_error("Thread32First failed")
+        thread_id: int | None = None
+        while True:
+            if entry.th32OwnerProcessID == pid:
+                thread_id = entry.th32ThreadID
+                break
+            if not kernel32.Thread32Next(snapshot, ctypes.byref(entry)):
+                break
+        if thread_id is None:
+            raise RuntimeError("main thread not found")
+        handle = kernel32.OpenThread(THREAD_SUSPEND_RESUME, False, thread_id)
+        if not handle:
+            raise _last_error("OpenThread failed")
+        try:
+            if kernel32.ResumeThread(handle) == 0xFFFFFFFF:
+                raise _last_error("ResumeThread failed")
+        finally:
+            kernel32.CloseHandle(handle)
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+def start_suspended_process(
+    command: list[str] | tuple[str, ...],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    creationflags: int = 0,
+) -> tuple[subprocess.Popen[bytes], int]:
+    if kernel32 is None:
+        raise RuntimeError("suspended process launch is only supported on Windows")
+    job = create_job()
+    flags = creationflags | CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP
+    try:
+        process = subprocess.Popen(
+            list(command),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+            creationflags=flags,
+        )
+    except Exception:
+        kernel32.CloseHandle(job)
+        raise
+    try:
+        assign_process(job, process.pid)
+        _resume_main_thread(process.pid)
+    except Exception:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait()
+        kernel32.CloseHandle(job)
+        raise
+    return process, job

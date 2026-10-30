@@ -12,7 +12,9 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,9 +25,8 @@ from app.benchmark_wrapper import (
     validate_wrapper_result,
 )
 from app.process_cleanup import (
-    assign_process,
-    create_job,
     is_windows,
+    start_suspended_process,
 )
 from app.runner import RunResult
 
@@ -117,32 +118,35 @@ class SubprocessAdapter:
             }
         )
 
-        process: asyncio.subprocess.Process | None = None
+        process: subprocess.Popen[bytes] | None = None
         job_handle: int | None = None
         try:
-            process = await asyncio.create_subprocess_exec(
-                self.config.executable,
-                *self.config.args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(working_directory),
-                env=environment,
-            )
-            self.last_process_id = process.pid
             if is_windows():
-                try:
-                    job_handle = create_job()
-                    assign_process(job_handle, process.pid)
-                except OSError:
-                    job_handle = None
+                process, job_handle = await asyncio.to_thread(
+                    start_suspended_process,
+                    (self.config.executable, *self.config.args),
+                    cwd=str(working_directory),
+                    env=environment,
+                )
+            else:
+                process = await asyncio.to_thread(
+                    subprocess.Popen,
+                    (self.config.executable, *self.config.args),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(working_directory),
+                    env=environment,
+                )
+                job_handle = None
+            self.last_process_id = process.pid
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=self.config.timeout_seconds
+                stdout, stderr = await _bounded_communicate(
+                    process, self.config.max_output_bytes, self.config.timeout_seconds
                 )
-            except TimeoutError as exc:
+            except RuntimeError:
                 await _terminate(process, job_handle)
-                raise RuntimeError("Benchmark adapter timed out.") from exc
+                raise
             except asyncio.CancelledError:
                 await _terminate(process, job_handle)
                 raise
@@ -254,4 +258,76 @@ async def _terminate(
             process.kill()
         except ProcessLookupError:
             pass
-        await process.wait()
+        await asyncio.to_thread(process.wait)
+
+
+def _read_stream(
+    stream: Any, bucket: bytearray, limit: int, exceeded: list[bool], process: Any
+) -> None:
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            break
+        if len(bucket) + len(chunk) > limit:
+            remaining = limit - len(bucket)
+            if remaining > 0:
+                bucket.extend(chunk[:remaining])
+            exceeded[0] = True
+            try:
+                process.kill()
+            except OSError:
+                pass
+            return
+        bucket.extend(chunk)
+
+
+async def _bounded_communicate(
+    process: subprocess.Popen[bytes], limit: int, timeout: float
+) -> tuple[bytes, bytes]:
+    stdout_bucket = bytearray()
+    stderr_bucket = bytearray()
+    stdout_exceeded = [False]
+    stderr_exceeded = [False]
+
+    stdout_thread = threading.Thread(
+        target=_read_stream,
+        args=(process.stdout, stdout_bucket, limit, stdout_exceeded, process),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_read_stream,
+        args=(process.stderr, stderr_bucket, limit, stderr_exceeded, process),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(process.wait), timeout=timeout)
+    except TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await asyncio.to_thread(process.wait)
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        raise RuntimeError("Benchmark adapter timed out.")
+    except asyncio.CancelledError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await asyncio.to_thread(process.wait)
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        raise
+
+    stdout_thread.join()
+    stderr_thread.join()
+
+    stdout = bytes(stdout_bucket)
+    stderr = bytes(stderr_bucket)
+    if stdout_exceeded[0] or stderr_exceeded[0]:
+        raise RuntimeError("Benchmark adapter output exceeded the configured bound.")
+    return stdout, stderr
