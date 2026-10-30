@@ -262,3 +262,6 @@ Do not commit or publish:
 - A stable BenchScope-callable invocation, cancellation protocol, and
   process-tree cleanup guarantee do not currently exist.
 - Any fact not listed above must be marked unknown rather than inferred.
+## Provenance status
+
+The canonical task-ID format and manifest SHA-256 procedure are not yet established from authoritative local benchmark metadata in this repository. The current v2 contract requires safe canonical task IDs and a lowercase 64-character SHA-256 digest, but the exact canonicalization algorithm, source metadata, and manifest generation process remain unresolved. Do not invent or present an algorithm as authoritative until the owner provides the approved metadata or exporter.

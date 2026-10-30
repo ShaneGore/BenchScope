@@ -130,3 +130,35 @@ jobs:
           --build-arg VITE_BASE_PATH=/
           --build-arg VITE_API_URL=
           ./frontend
+
+  backend-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify Windows runner
+        shell: pwsh
+        run: |
+          if (-not $IsWindows) {
+            throw "Process-tree cleanup tests require a Windows runner."
+          }
+      - run: uv sync --locked --group dev
+      - name: Run Windows process-tree cleanup tests
+        shell: pwsh
+        run: |
+          $output = uv run pytest tests/test_process_cleanup.py -q 2>&1
+          $output | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows process-tree cleanup tests failed."
+          }
+          if ($output -match '\d+\s+skipped') {
+            throw "Windows process-tree cleanup tests were skipped unexpectedly."
+          }
