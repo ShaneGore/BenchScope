@@ -88,8 +88,17 @@ def _require_windows() -> None:
 
 
 def process_exists(pid: int) -> bool:
-    _require_windows()
     if pid <= 0:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+    if kernel32 is None:
         return False
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
