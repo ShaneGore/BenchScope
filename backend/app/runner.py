@@ -29,6 +29,8 @@ class RunResult:
     output_tokens: int | None = None
     prompt_throughput_tps: float | None = None
     generation_throughput_tps: float | None = None
+    benchmark_details: dict[str, object] | None = None
+    task_results: list[dict[str, object]] | None = None
 
 
 class BenchmarkAdapter(Protocol):
