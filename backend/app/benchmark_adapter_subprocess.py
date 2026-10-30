@@ -86,6 +86,8 @@ class SubprocessAdapter:
     def __init__(self, config: SubprocessAdapterConfig) -> None:
         self.config = config
         self.last_process_id: int | None = None
+        self.last_job_handle: int | None = None
+        self.last_remaining_pids: tuple[int, ...] = ()
 
     async def run(self, profile: dict[str, str | None], config_id: UUID) -> RunResult:
         if config_id != self.config.config_id:
@@ -139,10 +141,14 @@ class SubprocessAdapter:
                 )
                 job_handle = None
             self.last_process_id = process.pid
+            self.last_job_handle = job_handle
 
             try:
                 stdout, stderr = await _bounded_communicate(
-                    process, self.config.max_output_bytes, self.config.timeout_seconds
+                    process,
+                    job_handle,
+                    self.config.max_output_bytes,
+                    self.config.timeout_seconds,
                 )
             except RuntimeError:
                 await _terminate(process, job_handle)
@@ -168,11 +174,16 @@ class SubprocessAdapter:
             if not result_path.is_file():
                 raise RuntimeError("Benchmark adapter did not produce a result file.")
 
-            result_text = result_path.read_text(encoding="utf-8")
-            if len(result_text.encode("utf-8")) > self.config.max_output_bytes:
+            with result_path.open("rb") as result_file:
+                result_bytes = result_file.read(self.config.max_output_bytes + 1)
+            if len(result_bytes) > self.config.max_output_bytes:
                 raise RuntimeError(
                     "Benchmark result file exceeded the configured bound."
                 )
+            try:
+                result_text = result_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise RuntimeError("Benchmark result file is not valid UTF-8.") from exc
 
             wrapper_result = parse_wrapper_result(
                 result_text, max_bytes=self.config.max_output_bytes
@@ -205,6 +216,13 @@ class SubprocessAdapter:
             )
         finally:
             if job_handle is not None:
+                if is_windows():
+                    try:
+                        from app.process_cleanup import _job_process_ids
+
+                        self.last_remaining_pids = tuple(_job_process_ids(job_handle))
+                    except OSError:
+                        self.last_remaining_pids = ()
                 try:
                     if is_windows():
                         from app.process_cleanup import kernel32
@@ -218,6 +236,7 @@ class SubprocessAdapter:
                     _kernel32.CloseHandle(job_handle)
                 except OSError:
                     pass
+                self.last_job_handle = None
                 job_handle = None
             if process is not None and process.returncode is None:
                 await _terminate(process, None)
@@ -243,9 +262,7 @@ def _validate_benchmark_identity(actual: Any, config: SubprocessAdapterConfig) -
         raise RuntimeError("Benchmark adapter returned an unexpected task set.")
 
 
-async def _terminate(
-    process: asyncio.subprocess.Process, job_handle: int | None
-) -> None:
+async def _terminate(process: subprocess.Popen[bytes], job_handle: int | None) -> None:
     if job_handle is not None and is_windows():
         try:
             from app.process_cleanup import kernel32
@@ -262,7 +279,12 @@ async def _terminate(
 
 
 def _read_stream(
-    stream: Any, bucket: bytearray, limit: int, exceeded: list[bool], process: Any
+    stream: Any,
+    bucket: bytearray,
+    limit: int,
+    exceeded: list[bool],
+    process: Any,
+    job_handle: int | None,
 ) -> None:
     while True:
         chunk = stream.read(65536)
@@ -273,16 +295,16 @@ def _read_stream(
             if remaining > 0:
                 bucket.extend(chunk[:remaining])
             exceeded[0] = True
-            try:
-                process.kill()
-            except OSError:
-                pass
+            _terminate_sync(process, job_handle)
             return
         bucket.extend(chunk)
 
 
 async def _bounded_communicate(
-    process: subprocess.Popen[bytes], limit: int, timeout: float
+    process: subprocess.Popen[bytes],
+    job_handle: int | None,
+    limit: int,
+    timeout: float,
 ) -> tuple[bytes, bytes]:
     stdout_bucket = bytearray()
     stderr_bucket = bytearray()
@@ -291,12 +313,26 @@ async def _bounded_communicate(
 
     stdout_thread = threading.Thread(
         target=_read_stream,
-        args=(process.stdout, stdout_bucket, limit, stdout_exceeded, process),
+        args=(
+            process.stdout,
+            stdout_bucket,
+            limit,
+            stdout_exceeded,
+            process,
+            job_handle,
+        ),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_read_stream,
-        args=(process.stderr, stderr_bucket, limit, stderr_exceeded, process),
+        args=(
+            process.stderr,
+            stderr_bucket,
+            limit,
+            stderr_exceeded,
+            process,
+            job_handle,
+        ),
         daemon=True,
     )
     stdout_thread.start()
@@ -305,29 +341,57 @@ async def _bounded_communicate(
     try:
         await asyncio.wait_for(asyncio.to_thread(process.wait), timeout=timeout)
     except TimeoutError:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
+        _terminate_sync(process, job_handle)
         await asyncio.to_thread(process.wait)
         stdout_thread.join(timeout=1)
         stderr_thread.join(timeout=1)
+        if stdout_thread.is_alive() or stderr_thread.is_alive():
+            raise RuntimeError("Benchmark adapter timed out and cleanup is incomplete.")
         raise RuntimeError("Benchmark adapter timed out.")
     except asyncio.CancelledError:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
+        _terminate_sync(process, job_handle)
         await asyncio.to_thread(process.wait)
         stdout_thread.join(timeout=1)
         stderr_thread.join(timeout=1)
+        if stdout_thread.is_alive() or stderr_thread.is_alive():
+            raise RuntimeError("Benchmark adapter cancellation cleanup is incomplete.")
         raise
 
-    stdout_thread.join()
-    stderr_thread.join()
+    if is_windows() and job_handle is not None:
+        try:
+            from app.process_cleanup import _job_process_ids, terminate_job
+
+            if _job_process_ids(job_handle):
+                terminate_job(job_handle, grace_period=0.1, root_pid=None)
+        except OSError:
+            pass
+    stdout_thread.join(timeout=2)
+    stderr_thread.join(timeout=2)
+    if stdout_thread.is_alive() or stderr_thread.is_alive():
+        _terminate_sync(process, job_handle)
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        if stdout_thread.is_alive() or stderr_thread.is_alive():
+            raise RuntimeError("Benchmark adapter cleanup is incomplete.")
 
     stdout = bytes(stdout_bucket)
     stderr = bytes(stderr_bucket)
     if stdout_exceeded[0] or stderr_exceeded[0]:
         raise RuntimeError("Benchmark adapter output exceeded the configured bound.")
     return stdout, stderr
+
+
+def _terminate_sync(process: subprocess.Popen[bytes], job_handle: int | None) -> None:
+    """Terminate the process tree synchronously and wait for the parent."""
+    if job_handle is not None and is_windows():
+        try:
+            from app.process_cleanup import kernel32
+
+            kernel32.TerminateJobObject(job_handle, 1)
+        except OSError:
+            pass
+    if process.returncode is None:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass

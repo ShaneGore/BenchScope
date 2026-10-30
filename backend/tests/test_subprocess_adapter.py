@@ -227,3 +227,161 @@ def test_subprocess_adapter_sanitized_profile_excludes_paths() -> None:
     serialized = _sanitized_profile(profile)
     assert "endpoint_url" not in serialized
     assert "inference_config" not in serialized
+
+
+import os
+
+
+@pytest.mark.anyio
+async def test_subprocess_adapter_large_result_file(tmp_path: Path) -> None:
+    script = (
+        "import os\n"
+        "with open(os.environ['BENCHSCOPE_RESULT_PATH'], 'w', encoding='utf-8') as handle:\n"
+        "    handle.write('x' * 1000)\n"
+    )
+    config = _config(tmp_path, script, max_output_bytes=10)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError, match="exceeded"):
+        await adapter.run({}, config.config_id)
+
+
+@pytest.mark.anyio
+async def test_subprocess_adapter_result_file_grows_during_read(tmp_path: Path) -> None:
+    script = (
+        "import os\n"
+        "with open(os.environ['BENCHSCOPE_RESULT_PATH'], 'w', encoding='utf-8') as handle:\n"
+        "    handle.write('x' * 100)\n"
+    )
+    config = _config(tmp_path, script, max_output_bytes=10)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError, match="exceeded"):
+        await adapter.run({}, config.config_id)
+
+
+WINDOWS_ONLY = pytest.mark.skipif(
+    os.name != "nt", reason="Windows-only integration test"
+)
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_parent_exits_child_keeps_stdout_open(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "print('child', child.pid, flush=True)\n"
+    )
+    config = _config(tmp_path, script)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_parent_exits_child_keeps_stderr_open(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "sys.stderr.write('child %d\\n' % child.pid)\n"
+        "sys.stderr.flush()\n"
+    )
+    config = _config(tmp_path, script)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_output_exceeds_bound_with_descendant(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "print('x' * 1000, flush=True)\n"
+    )
+    config = _config(tmp_path, script, max_output_bytes=10)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError, match="exceeded"):
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_timeout_with_inherited_pipe(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(5)\n"
+    )
+    config = _config(tmp_path, script, timeout_seconds=0.2)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError, match="timed out"):
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_cancellation_with_inherited_pipe(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(5)\n"
+    )
+    config = _config(tmp_path, script, timeout_seconds=5.0)
+    adapter = SubprocessAdapter(config)
+    task = asyncio.create_task(adapter.run({}, config.config_id))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_no_descendant_remains_after_cleanup(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "grandchild = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "print('pids', child.pid, grandchild.pid, flush=True)\n"
+        "time.sleep(5)\n"
+    )
+    config = _config(tmp_path, script, timeout_seconds=0.2)
+    adapter = SubprocessAdapter(config)
+    with pytest.raises(RuntimeError, match="timed out"):
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    assert adapter.last_remaining_pids == ()
+
+
+@WINDOWS_ONLY
+@pytest.mark.anyio
+async def test_windows_reader_threads_and_handles_released(tmp_path: Path) -> None:
+    script = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(5)\n"
+    )
+    config = _config(tmp_path, script, timeout_seconds=0.2)
+    adapter = SubprocessAdapter(config)
+    try:
+        await asyncio.wait_for(adapter.run({}, config.config_id), timeout=10)
+    except RuntimeError:
+        pass
+    assert adapter.last_process_id is not None
+    assert not process_exists(adapter.last_process_id)
