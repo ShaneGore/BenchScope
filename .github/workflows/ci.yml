@@ -154,7 +154,7 @@ jobs:
       - name: Run Windows process-tree cleanup tests
         shell: pwsh
         run: |
-          $output = uv run pytest tests/test_process_cleanup.py -q 2>&1
+          $output = uv run pytest tests/test_process_cleanup.py tests/test_subprocess_adapter.py -q 2>&1
           $output | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) {
             throw "Windows process-tree cleanup tests failed."
