@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   FlaskConical,
@@ -29,10 +29,30 @@ export function DashboardPage({
   const canImport = !isDemo;
   const store = getBenchmarkService(serviceMode);
   const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), []);
+  const [showWakeUp, setShowWakeUp] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      setShowWakeUp(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowWakeUp(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   const summary = useMemo(() => computeSummary(data?.items ?? []), [data]);
 
-  if (loading) return <DashboardSkeleton />;
+  if (loading)
+    return (
+      <div role="status" aria-live="polite">
+        <DashboardSkeleton />
+        {showWakeUp && (
+          <p className="mt-4 text-sm text-text-secondary">
+            Waking the hosted API on Render Free can take about one minute after inactivity.
+          </p>
+        )}
+      </div>
+    );
   if (error) return <ErrorState onRetry={refetch} description="Could not load dashboard data." />;
 
   const runs = data?.items ?? [];
