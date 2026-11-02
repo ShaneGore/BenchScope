@@ -121,7 +121,16 @@ function HostedApp() {
     if (isLoaded && redirect) navigate(redirect);
   }, [isLoaded, redirect]);
 
-  if (!isLoaded || redirect) return null;
+  if (!isLoaded || redirect) {
+    if (!isLoaded) {
+      return (
+        <main className="flex min-h-screen items-center justify-center" role="status" aria-live="polite">
+          <div className="text-sm text-text-secondary">Loading authentication…</div>
+        </main>
+      );
+    }
+    return null;
+  }
   return <AppRoutes path={path} runnerEnabled={false} publicOnly={!isSignedIn} />;
 }
 
