@@ -447,6 +447,35 @@ def test_copilot_cli_preflight_requires_successful_empty_allowlist_parse(monkeyp
     assert len(calls) == 3
 
 
+def test_cli_version_does_not_prove_tools_auth_or_cost_authorization(monkeypatch):
+    def fake_run(args, cwd, timeout, output_limit):
+        if "--help" in args:
+            help_output = (
+                b"--model --available-tools --disable-builtin-mcps "
+                b"--no-custom-instructions --no-ask-user --max-ai-credits "
+                b"--output-format --prompt --secret-env-vars --sync-session "
+                b"--usage-output-file"
+            )
+            return help_output, b""
+        if "permissions" in args:
+            return b"--available-tools filtered out by list", b""
+        return b"GitHub Copilot CLI 1.2.3", b""
+
+    monkeypatch.setattr(investigation, "_run_cli_process", fake_run)
+    for authorized in (False, True):
+        provider = investigation.CopilotCLIProvider(
+            "copilot", costs_authorized=authorized
+        )
+        result = provider.verify_capabilities()
+        assert result.model_flag_accepted
+        assert result.usage_cost_authorized is authorized
+        assert not result.tool_restrictions_verified
+        assert not result.existing_auth_credential_available
+        assert not result.permits_invocation
+        with pytest.raises(investigation.InvestigationBlocked):
+            provider.invoke("sanitized evidence")
+
+
 def test_copilot_cli_preflight_fails_closed_when_help_lacks_required_flags(
     monkeypatch,
 ):

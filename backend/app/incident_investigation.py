@@ -632,10 +632,13 @@ class CopilotCLIProvider:
 
         return CapabilityVerification(
             model_flag_accepted=model_flag_accepted,
-            tool_restrictions_verified=model_flag_accepted,
-            existing_auth_credential_available=model_flag_accepted,
-            usage_cost_authorized=model_flag_accepted,
-            blocker=None if model_flag_accepted else CLI_PREFLIGHT_BLOCKER,
+            # Accepting flags for --version does not establish that a real
+            # request enforces them, that authentication is available, or that
+            # the configured account is entitled to use the selected model.
+            tool_restrictions_verified=False,
+            existing_auth_credential_available=False,
+            usage_cost_authorized=self.costs_authorized,
+            blocker=CLI_PREFLIGHT_BLOCKER,
             empty_tool_allowlist_argument_accepted=empty_tool_allowlist_argument_accepted,
             tool_controls_documented=tool_controls_documented,
         )

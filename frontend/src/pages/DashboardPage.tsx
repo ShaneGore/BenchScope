@@ -57,7 +57,7 @@ export function DashboardPage({
 
   const runs = data?.items ?? [];
   const activeRun = runs.find((r) => r.status === 'running');
-  const recent = runs.slice(0, 5);
+  const recent = isDemo ? runs : runs.slice(0, 5);
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
@@ -73,11 +73,11 @@ export function DashboardPage({
           title="Recent activity"
           subtitle="Latest benchmark runs"
           icon={<ListTree className="h-4 w-4" />}
-          action={
+          action={!isDemo && (
           <Button size="sm" variant="ghost" rightIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => navigate(isDemo ? '/demo/runs' : '/runs')}>
               View all
             </Button>
-          }
+          )}
         />
         {runs.length === 0 ? (
           <EmptyState

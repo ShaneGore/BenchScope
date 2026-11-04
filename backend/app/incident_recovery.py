@@ -15,10 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
-from app.models import IncidentRecord
 
 RECOVERY_COMMAND = (
     "docker",
@@ -619,19 +616,13 @@ def execute_fixed_recovery(
             final_state=final_state,
         )
         if outcome == "success":
-            final_state = "resolved"
+            # A successful restart command is not evidence of recovery. Leave
+            # the incident open until independent health and alert checks run.
+            final_state = "verification_required"
             audit["final_state"] = final_state
             audit["outcome"] = outcome
-            if session is not None:
-                record = session.get(IncidentRecord, _as_uuid(target_incident))
-                if record is not None:
-                    record.resolved_at = ended_at
-                    try:
-                        session.commit()
-                    except SQLAlchemyError:
-                        session.rollback()
     if outcome == "success":
-        return {"status": "resolved", "audit": audit, "outcome": outcome}
+        return {"status": "verification_required", "audit": audit, "outcome": outcome}
     return {"status": "escalated", "audit": audit, "outcome": outcome}
 
 
