@@ -1,6 +1,25 @@
 import type { ReactNode } from 'react';
 import { Inbox, TriangleAlert } from 'lucide-react';
 
+export function StartupState() {
+  return (
+    <main className="p-8 text-sm text-text-secondary" role="status">
+      Starting BenchScope. Please wait while the application loads.
+    </main>
+  );
+}
+
+export function DemoMethodology() {
+  return (
+    <p className="text-sm text-text-secondary">
+      Source: Local-LLM-Coding-Benchmark-v2, two local runs with reasoning off.
+      Pass rate is tasks passed out of 47. Throughput is the mean of per-trial
+      output tokens divided by request time, not overall run throughput. The runs
+      used different MTP settings, so compare with care.
+    </p>
+  );
+}
+
 export function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`skeleton ${className}`} aria-hidden />;
 }

@@ -954,7 +954,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List immutable synthetic demo runs
+         * List immutable demo runs
          * @description Anonymous read-only application fixture; no database seed or mutation endpoints.
          */
         get: {
@@ -993,7 +993,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Read one immutable synthetic demo run */
+        /** Read one immutable demo run */
         get: {
             parameters: {
                 query?: never;

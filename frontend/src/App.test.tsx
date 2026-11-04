@@ -20,7 +20,7 @@ test("demo route loads only anonymous synthetic API data", async () => {
     benchmark_config: { name: 'synthetic', temperature: 0, max_tokens: 32 },
     started_at: '2026-01-01T00:00:00Z',
     ended_at: '2026-01-01T00:00:01Z',
-    metrics: {},
+    metrics: { pass_rate: 0.5 },
     hardware_snapshot: { cpu: 'Demo CPU', gpu: null, ram_gb: null, gpu_vram_gb: null, os: null },
   };
   const fetcher = vi.fn(async (input: RequestInfo | URL) => {
@@ -39,6 +39,8 @@ test("demo route loads only anonymous synthetic API data", async () => {
   try {
     render(<App />);
     expect(await screen.findByText("Synthetic browser model")).toBeTruthy();
+    expect(screen.getByText("Pass rate")).toBeTruthy();
+    expect(screen.getByText("50.00%")).toBeTruthy();
     expect(fetcher.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/demo/'))).toEqual([
       '/api/v1/demo/runs',
     ]);

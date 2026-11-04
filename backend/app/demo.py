@@ -60,61 +60,55 @@ class DemoRun(BaseModel):
     hardware_snapshot: DemoHardware
 
 
-# Frozen response models and a tuple keep the approved, synthetic fixture read-only.
+# Allowlisted summaries of two complete reasoning-off runs; see README provenance.
 _DEMO_RUNS = (
     DemoRun(
         id="demo-run-01",
         status="completed",
         profile_snapshot=DemoProfile(
-            name="Sample Model A",
-            model_name="sample-model-a",
-            model_version="1.0",
-            quantisation="Q4",
+            name="Qwen3.8 27B GSQ-RCO (MTP on)",
+            model_name="Qwen3.8-27B-GSQ-RCO-IQ3_XXS-MTP",
+            model_version=None,
+            quantisation="IQ3_XXS",
         ),
         benchmark_config=DemoConfig(
-            name="synthetic-demo", temperature=0.2, max_tokens=128
+            name="Local coding v2 · reasoning off", temperature=0.0, max_tokens=6000
         ),
-        started_at=datetime(2026, 10, 26, 10, 0, tzinfo=UTC),
-        ended_at=datetime(2026, 10, 26, 10, 1, tzinfo=UTC),
+        started_at=datetime(2026, 10, 14, 9, 55, 33, 57603, tzinfo=UTC),
+        ended_at=datetime(2026, 10, 14, 10, 17, 31, 87900, tzinfo=UTC),
         metrics=DemoMetrics(
-            quality_score=0.82,
-            pass_rate=0.78,
-            ttft_ms=215,
-            prompt_tokens=400,
-            output_tokens=190,
-            prompt_throughput_tps=125.0,
-            generation_throughput_tps=42.5,
-            elapsed_ms=60_000,
+            pass_rate=31 / 47,
+            generation_throughput_tps=27.4,
         ),
         hardware_snapshot=DemoHardware(
-            cpu="Demo CPU",
-            gpu="Demo GPU",
-            ram_gb=16,
-            gpu_vram_gb=8,
-            os="Demo OS",
+            cpu=None,
+            gpu=None,
+            ram_gb=None,
+            gpu_vram_gb=None,
+            os=None,
         ),
     ),
     DemoRun(
         id="demo-run-02",
         status="completed",
         profile_snapshot=DemoProfile(
-            name="Sample Model B",
-            model_name="sample-model-b",
+            name="Qwen3.8 27B AP (MTP off)",
+            model_name="Qwen3.8-27B-AP-IQ3_XXS",
             model_version=None,
-            quantisation="Q5",
+            quantisation="IQ3_XXS",
         ),
         benchmark_config=DemoConfig(
-            name="synthetic-demo", temperature=0.0, max_tokens=128
+            name="Local coding v2 · reasoning off", temperature=0.0, max_tokens=6000
         ),
-        started_at=datetime(2026, 10, 26, 11, 0, tzinfo=UTC),
-        ended_at=datetime(2026, 10, 26, 11, 1, tzinfo=UTC),
-        metrics=DemoMetrics(quality_score=0.74, pass_rate=0.69, elapsed_ms=60_000),
+        started_at=datetime(2026, 10, 14, 14, 10, 48, 455124, tzinfo=UTC),
+        ended_at=datetime(2026, 10, 14, 14, 28, 55, 145489, tzinfo=UTC),
+        metrics=DemoMetrics(pass_rate=30 / 47, generation_throughput_tps=33.9),
         hardware_snapshot=DemoHardware(
-            cpu="Demo CPU",
-            gpu="Demo GPU",
-            ram_gb=16,
-            gpu_vram_gb=8,
-            os="Demo OS",
+            cpu=None,
+            gpu=None,
+            ram_gb=None,
+            gpu_vram_gb=None,
+            os=None,
         ),
     ),
 )

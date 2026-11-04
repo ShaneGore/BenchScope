@@ -25,5 +25,4 @@
 
 - Hosted mode does not run benchmarks.
 - No paid services are used.
-- No private benchmark content is committed or publicly served.
-PY
+- Only selected approved benchmark summary values are publicly served; private prompts, responses, test content and paths are not.

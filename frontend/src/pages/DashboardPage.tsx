@@ -15,7 +15,7 @@ import { metricAvailable, runProfileLabel } from '@/lib/metrics';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
+import { DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function DashboardPage({
   serviceMode = APP_MODE,
@@ -62,6 +62,7 @@ export function DashboardPage({
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       <PageHeading canLaunch={canLaunch} canImport={canImport} isDemo={isDemo} />
+      {isDemo && <DemoMethodology />}
 
       {activeRun && <ActiveRunBanner run={activeRun} />}
 
@@ -274,7 +275,7 @@ function RecentList({
               <p className="text-[11px] text-text-muted font-mono truncate">{r.benchmark_config.name}</p>
             </div>
             <div className="hidden sm:flex items-center gap-4 text-right">
-              <RecentMetric label="Quality" value={r.metrics.quality_score != null ? fmtRate(r.metrics.quality_score) : null} />
+              <RecentMetric label={serviceMode === 'demo' ? 'Pass rate' : 'Quality'} value={serviceMode === 'demo' ? (r.metrics.pass_rate != null ? fmtRate(r.metrics.pass_rate) : null) : (r.metrics.quality_score != null ? fmtRate(r.metrics.quality_score) : null)} />
               <RecentMetric label="Gen t/s" value={r.metrics.generation_throughput_tps != null ? fmtNum(r.metrics.generation_throughput_tps, 1) : null} />
               <RecentMetric label="TTFT" value={r.metrics.ttft_ms != null ? fmtMs(r.metrics.ttft_ms) : null} />
             </div>

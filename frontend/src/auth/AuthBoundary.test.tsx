@@ -52,6 +52,16 @@ beforeEach(async () => {
 
 afterEach(() => vi.unstubAllEnvs());
 
+test('shows startup progress until authentication is ready', async () => {
+  mocks.auth.isLoaded = false;
+  const view = render(<AuthBoundary><div>Application ready</div></AuthBoundary>);
+  expect(screen.getByRole('status').textContent).toMatch(/starting benchscope.*please wait/i);
+  expect(screen.queryByText('Application ready')).toBeNull();
+  mocks.auth.isLoaded = true;
+  view.rerender(<AuthBoundary><div>Application ready</div></AuthBoundary>);
+  expect(await screen.findByText('Application ready')).toBeTruthy();
+});
+
 test('clears user-scoped state before signing out', async () => {
   render(<HostedAuthControls />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
