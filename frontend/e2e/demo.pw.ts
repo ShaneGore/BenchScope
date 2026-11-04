@@ -15,8 +15,9 @@ test('hosted anonymous demo stays GET-only and never contacts auth or runner API
   });
 
   await page.goto('/#/demo');
-  await expect(page.getByText('Qwen3.8 27B GSQ-RCO (MTP on) IQ3_XXS')).toBeVisible();
-  await page.getByRole('button', { name: /Qwen3\.8 27B GSQ-RCO \(MTP on\)/ }).click();
+  const reasoningOffRun = page.getByRole('button', { name: /Qwen3\.8 27B GSQ-RCO \(MTP on\)/ }).filter({ hasText: 'Reasoning off' });
+  await expect(reasoningOffRun).toBeVisible();
+  await reasoningOffRun.click();
   await expect(page).toHaveURL(/#\/demo\/runs\/demo-run-01$/);
   await expect(page.getByRole('heading', { name: 'Qwen3.8 27B GSQ-RCO (MTP on) IQ3_XXS' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(0);
