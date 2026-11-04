@@ -15,10 +15,10 @@ test('hosted anonymous demo stays GET-only and never contacts auth or runner API
   });
 
   await page.goto('/#/demo');
-  await expect(page.getByText('Sample Model A')).toBeVisible();
-  await page.getByRole('button', { name: /Sample Model A/ }).click();
+  await expect(page.getByText('Qwen3.8 27B GSQ-RCO (MTP on) IQ3_XXS')).toBeVisible();
+  await page.getByRole('button', { name: /Qwen3\.8 27B GSQ-RCO \(MTP on\)/ }).click();
   await expect(page).toHaveURL(/#\/demo\/runs\/demo-run-01$/);
-  await expect(page.getByRole('heading', { name: 'Sample Model A' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Qwen3.8 27B GSQ-RCO (MTP on) IQ3_XXS' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Retry run' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Compare' })).toHaveCount(0);
