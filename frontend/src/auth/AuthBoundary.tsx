@@ -1,3 +1,4 @@
+import { StartupState } from '@/components/ui/State';
 import { ClerkProvider, useAuth } from '@clerk/react';
 import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { resetStore } from '@/mock/store';
@@ -38,7 +39,7 @@ function ClerkSession({ children }: { children: ReactNode }) {
     };
   }, [getToken, isLoaded, isSignedIn, userId]);
 
-  if (!isLoaded || activeUserId !== (userId ?? null)) return null;
+  if (!isLoaded || activeUserId !== (userId ?? null)) return <StartupState />;
   // A new identity gets a fresh component tree and no prior mock/server state.
   return <div key={userId ?? 'signed-out'}>{children}</div>;
 }

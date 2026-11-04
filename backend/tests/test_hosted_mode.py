@@ -81,9 +81,33 @@ def test_anonymous_demo_reads_are_deterministic_sanitized_and_personal_data_stay
     assert first.json() == second.json()
     runs = first.json()
     assert [run["id"] for run in runs] == ["demo-run-01", "demo-run-02"]
-    detail = client.get(f"/api/v1/demo/runs/{runs[0]['id']}")
-    assert detail.status_code == 200
-    assert detail.json() == runs[0]
+    for run in runs:
+        detail = client.get(f"/api/v1/demo/runs/{run['id']}")
+        assert detail.status_code == 200
+        assert detail.json() == run
+        assert set(run) == {
+            "id",
+            "status",
+            "profile_snapshot",
+            "benchmark_config",
+            "started_at",
+            "ended_at",
+            "metrics",
+            "hardware_snapshot",
+        }
+        assert set(run["metrics"]) == {
+            "quality_score",
+            "pass_rate",
+            "ttft_ms",
+            "prompt_tokens",
+            "output_tokens",
+            "prompt_throughput_tps",
+            "generation_throughput_tps",
+            "elapsed_ms",
+        }
+        assert all(value is None for value in run["hardware_snapshot"].values())
+    assert [run["metrics"]["pass_rate"] for run in runs] == [31 / 47, 30 / 47]
+    assert [run["metrics"]["generation_throughput_tps"] for run in runs] == [27.4, 33.9]
     missing_demo = client.get("/api/v1/demo/runs/missing-id")
     assert missing_demo.status_code == 404
     assert missing_demo.json() == {"detail": "Demo run not found"}
@@ -95,6 +119,10 @@ def test_anonymous_demo_reads_are_deterministic_sanitized_and_personal_data_stay
         "api_key",
         "credential",
         "artifact_ref",
+        "task_id",
+        "prompt_sha",
+        "served_model_path",
+        "generated_code",
         "private",
         "prompt_set",
         "raw_output",

@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Modal } from '@/components/ui/Modal';
-import { EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
+import { DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function RunDetailPage({
   id,
@@ -129,6 +129,8 @@ export function RunDetailPage({
         </div>
         <StatusBadge status={run.status} />
       </div>
+
+      {serviceMode === 'demo' && <DemoMethodology />}
 
       {actionError && (
         <div className="rounded-md border border-status-failed-border bg-status-failed-bg px-4 py-2 text-sm text-status-failed-fg">

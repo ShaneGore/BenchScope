@@ -171,7 +171,7 @@ function Sidebar({
           </div>
           <p className="mt-1.5 text-[10px] text-text-disabled leading-snug">
             {demo
-              ? 'Read-only synthetic dataset.'
+              ? 'Read-only benchmark results.'
               : launchEnabled
                 ? 'Full local workflow enabled.'
                 : 'Import & compare only.'}

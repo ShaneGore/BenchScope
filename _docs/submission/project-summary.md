@@ -15,7 +15,7 @@ BenchScope imports supported JSON result files, validates required fields, norma
 - Import v1 and v2 benchmark result contracts.
 - Persisted run history with owner isolation.
 - Run detail and comparison views.
-- Synthetic read-only demo for unauthenticated visitors.
+- Read-only demo of selected real benchmark summaries for unauthenticated visitors.
 - Model profiles with hardware and benchmark settings.
 - Local/private mode with loopback binding.
 - Hosted multi-user mode with Clerk authentication.
@@ -24,7 +24,7 @@ BenchScope imports supported JSON result files, validates required fields, norma
 - Windows process-tree safety foundation for future local benchmark execution.
 - Bounded output capture and result-file reads.
 - Docker Compose local stack.
-- CI/CD with five required checks, including Windows.
+- CI/CD workflow with five checks, including Windows; repository protection settings should be verified.
 
 ## Technology stack
 
@@ -51,4 +51,3 @@ BenchScope never stores private prompts, reference answers, hidden tests, genera
 - The local subprocess adapter is implemented and tested with synthetic runners.
 - Observability and alerting are verified in local Docker Compose.
 - `quality_score` remains null until an authoritative scoring definition exists.
-PY
