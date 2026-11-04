@@ -29,7 +29,17 @@ test("demo route loads only anonymous synthetic API data", async () => {
       return new Response(JSON.stringify({ enabled: false }));
     }
     if (url.endsWith('/demo/runs')) {
-      return new Response(JSON.stringify([demoRun]));
+      return new Response(JSON.stringify([
+        demoRun,
+        ...Array.from({ length: 14 }, (_, i) => ({
+          ...demoRun,
+          id: `other-${i}`,
+          profile_snapshot: { ...demoRun.profile_snapshot, name: `Model ${i + 2}` },
+          started_at: null,
+          ended_at: null,
+          metrics: {},
+        })),
+      ]));
     }
     throw new Error(`Unexpected request ${url}`);
   });
@@ -39,7 +49,8 @@ test("demo route loads only anonymous synthetic API data", async () => {
   try {
     render(<App />);
     expect(await screen.findByText("Synthetic browser model")).toBeTruthy();
-    expect(screen.getByText("Pass rate")).toBeTruthy();
+    expect(screen.getByText("Model 15")).toBeTruthy();
+    expect(screen.getAllByText("Pass rate").length).toBe(15);
     expect(screen.getByText("50.00%")).toBeTruthy();
     expect(fetcher.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/demo/'))).toEqual([
       '/api/v1/demo/runs',

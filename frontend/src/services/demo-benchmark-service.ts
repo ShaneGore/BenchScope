@@ -22,8 +22,8 @@ interface DemoRunResponse {
     temperature: number | null;
     max_tokens: number | null;
   };
-  started_at: string;
-  ended_at: string;
+  started_at: string | null;
+  ended_at: string | null;
   metrics: BenchmarkRun['metrics'];
   hardware_snapshot: NonNullable<BenchmarkRun['hardware_snapshot']>;
 }
@@ -129,7 +129,7 @@ function mapDemoRun(run: DemoRunResponse): BenchmarkRun {
       name: run.benchmark_config.name,
       max_tokens: run.benchmark_config.max_tokens ?? undefined,
     },
-    started_at: run.started_at,
+    started_at: run.started_at ?? '',
     ended_at: run.ended_at,
     source: 'imported',
     metrics: run.metrics,

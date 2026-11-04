@@ -13,14 +13,16 @@ The hosted API may need about a minute to wake after inactivity. Please wait; if
 
 ### Showcase data
 
-The demo contains two real completed runs from the owner's Local-LLM-Coding-Benchmark-v2, selected from the October 14, 2026 reasoning-off leaderboard. Each ran 47 tasks, with 31 and 30 passes respectively. A pass requires the solution to import and pass both public and hidden checks. Throughput is the leaderboard's mean per-trial output tokens per second, rounded to one decimal; it is not aggregate run throughput. Both used temperature 0, seed 1234, and a 6,000-token limit; the GSQ-RCO run used MTP and the AP run did not. Their driver logs provide the start and end times. These are illustrative results, not a controlled ranking across all settings or hardware. Only selected aggregate values and model/configuration labels are published; unavailable metrics and hardware fields are null. The benchmark and raw trials are private and are not distributed here.
+The demo contains all 15 configurations from the owner's Local-LLM-Coding-Benchmark-v2 results: 13 local model and reasoning-mode configurations and two paid, hosted OpenRouter configurations. Each records 47 tasks; a pass requires a solution to import and pass both public and hidden checks. One Bonsai reasoning-on trial encountered a provider error, which is identified in the demo.
+
+For the local configurations, throughput is the mean output tokens per request-second over trials with a measured rate, rounded to one decimal. It is not aggregate run throughput; the Bonsai reasoning-on mean uses 46 measurements and the other local means use 47. Throughput is unavailable for the hosted runs. Settings differ, including reasoning, MTP and context size, so the results should not be treated as a controlled ranking. Only two runs have verified driver-log boundaries; missing timestamps and unavailable metrics are shown as unavailable. The demo publishes aggregate values and model/configuration labels, while private benchmark materials and raw trials remain private.
 
 ## Key features
 
 - Validated benchmark result import for v1 and v2 contracts.
 - Persistent run history, detail views, and compatible-run comparison.
 - Model profiles with version, quantisation, endpoint, and hardware notes.
-- Read-only public demo of selected real benchmark summaries for unauthenticated visitors.
+- Read-only public demo of all 15 available real benchmark configurations for unauthenticated visitors.
 - Clerk authentication with backend-enforced owner isolation.
 - Docker Compose full-stack local setup with PostgreSQL and observability.
 - Five-job CI on Linux and Windows, including process-tree safety tests.
@@ -42,7 +44,7 @@ Real benchmark launch and cancellation are not yet connected to the private runn
 - Observability: OpenTelemetry, Prometheus, Grafana, Loki, Tempo
 - Deployment: GitHub Pages, Render Free, Neon Free
 
-See _docs/architecture/README.md for details.
+See the [architecture overview](_docs/architecture/README.md) for details.
 
 ## Local quick start
 
@@ -79,20 +81,16 @@ corepack pnpm build
 
 ## Documentation
 
-- Setup and architecture: _docs/
-- Agent workflow: AGENTS.md
-- Submission pack: _docs/submission/
-- Incident runbooks: _docs/incidents/
-- Known limitations: _docs/submission/known-limitations.md
+- [Setup and architecture](_docs/architecture/README.md)
+- [Agent workflow and project instructions](AGENTS.md)
+- [Course submission evidence](_docs/submission/submission-checklist.md)
+- [Incident runbooks](_docs/incidents/)
+- [Known limitations](_docs/submission/known-limitations.md)
 
-## Licence
+## Project status
 
-This repository's first-party BenchScope code is licensed under the MIT Licence. See [LICENSE](./LICENSE).
-
-Third-party code, dependencies, and private benchmark materials remain subject to their own licences and are not covered by this licence.
-
-- Issue #21: closed (hosted deployment and rollback evidence)
-- Issue #25: open (real runner contract and integration)
+- [Issue #21](https://github.com/ShaneGore/BenchScope/issues/21): hosted deployment and rollback evidence.
+- [Issue #25](https://github.com/ShaneGore/BenchScope/issues/25): real runner contract and integration remain open.
 - CI/CD: five checks run in the workflow; branch protection must be verified in repository settings
 - Hosting uses free-tier services; check current provider limits and charges.
 
@@ -136,7 +134,7 @@ BenchScope supports two result contracts.
 
 ### Anonymous demo mode
 
-- Read-only selected benchmark summaries.
+- Read-only benchmark summaries, including the hosted OpenRouter configurations.
 - No import, profile editing, deletion, or personal record access.
 - Used for public demonstrations without exposing private data.
 
@@ -164,3 +162,8 @@ BenchScope supports two result contracts.
 - The local subprocess adapter is implemented and tested with synthetic runners only.
 - `quality_score` remains null until an authoritative definition exists.
 - Observability dashboards and alerts are verified in local Docker Compose.
+- Alert intake does not automatically invoke the investigator, and the permitted local recovery requires operator approval. An autonomous alert-to-fix chain has not been demonstrated.
+
+## Licence
+
+First-party BenchScope code is licensed under the MIT Licence; see [LICENSE](./LICENSE). Third-party dependencies and private benchmark materials remain subject to their own licences.

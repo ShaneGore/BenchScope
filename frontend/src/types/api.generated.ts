@@ -1293,9 +1293,9 @@ export interface components {
             profile_snapshot: components["schemas"]["DemoProfileSnapshot"];
             benchmark_config: components["schemas"]["DemoBenchmarkConfig"];
             /** Format: date-time */
-            started_at: string;
+            started_at: string | null;
             /** Format: date-time */
-            ended_at: string;
+            ended_at: string | null;
             metrics: components["schemas"]["RunMetrics"];
             hardware_snapshot: components["schemas"]["DemoHardwareSnapshot"];
         };

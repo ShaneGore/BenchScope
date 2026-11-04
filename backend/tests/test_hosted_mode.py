@@ -80,7 +80,7 @@ def test_anonymous_demo_reads_are_deterministic_sanitized_and_personal_data_stay
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
     runs = first.json()
-    assert [run["id"] for run in runs] == ["demo-run-01", "demo-run-02"]
+    assert [run["id"] for run in runs] == [f"demo-run-{i:02d}" for i in range(1, 16)]
     for run in runs:
         detail = client.get(f"/api/v1/demo/runs/{run['id']}")
         assert detail.status_code == 200
@@ -106,8 +106,31 @@ def test_anonymous_demo_reads_are_deterministic_sanitized_and_personal_data_stay
             "elapsed_ms",
         }
         assert all(value is None for value in run["hardware_snapshot"].values())
-    assert [run["metrics"]["pass_rate"] for run in runs] == [31 / 47, 30 / 47]
-    assert [run["metrics"]["generation_throughput_tps"] for run in runs] == [27.4, 33.9]
+    assert [run["metrics"]["pass_rate"] for run in runs] == [
+        n / 47 for n in (31, 30, 28, 30, 21, 25, 31, 33, 31, 26, 29, 22, 32, 34, 31)
+    ]
+    assert [run["metrics"]["generation_throughput_tps"] for run in runs] == [
+        27.4,
+        33.9,
+        27.2,
+        27.8,
+        55.9,
+        67.3,
+        34.5,
+        26.8,
+        15.6,
+        49.1,
+        50.6,
+        87.8,
+        87.6,
+        None,
+        None,
+    ]
+    assert all(
+        run["started_at"] is None and run["ended_at"] is None for run in runs[2:]
+    )
+    assert "1 provider error" in runs[10]["benchmark_config"]["name"]
+    assert all("47/47 recorded" in run["benchmark_config"]["name"] for run in runs)
     missing_demo = client.get("/api/v1/demo/runs/missing-id")
     assert missing_demo.status_code == 404
     assert missing_demo.json() == {"detail": "Demo run not found"}

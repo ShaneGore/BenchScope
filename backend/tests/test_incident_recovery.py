@@ -155,13 +155,15 @@ def test_exact_execution(monkeypatch):
 
     now = datetime.now(UTC)
     approval = _approval(now=now)
-    recovery.execute_fixed_recovery(
+    result = recovery.execute_fixed_recovery(
         approval=approval,
         env_config=dict(DISPOSABLE_ENV),
         ports=[],
         executor=fake_executor,
         now=now,
     )
+    assert result["status"] == "verification_required"
+    assert result["audit"]["final_state"] == "verification_required"
     assert captured["command"] == list(recovery.RECOVERY_COMMAND)
     assert captured["kwargs"]["cwd"] == recovery.RECOVERY_WORKING_DIRECTORY
     assert captured["kwargs"]["env"] is None

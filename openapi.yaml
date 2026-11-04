@@ -339,8 +339,8 @@ components:
         status: { const: completed }
         profile_snapshot: { $ref: "#/components/schemas/DemoProfileSnapshot" }
         benchmark_config: { $ref: "#/components/schemas/DemoBenchmarkConfig" }
-        started_at: { type: string, format: date-time }
-        ended_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
         metrics: { $ref: "#/components/schemas/RunMetrics" }
         hardware_snapshot: { $ref: "#/components/schemas/DemoHardwareSnapshot" }
     ImportResult:
