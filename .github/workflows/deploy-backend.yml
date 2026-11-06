@@ -73,6 +73,10 @@ jobs:
             echo "::error::Deployment revision must be an ancestor of main."
             exit 1
           fi
+          if [ ! -f scripts/wait_for_deployment.py ] || ! grep -q '@app.get("/version")' backend/app/main.py; then
+            echo "::error::This legacy revision lacks deployment identity support; no migration or deployment was triggered."
+            exit 1
+          fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5

@@ -155,6 +155,7 @@ def test_backend_workflows_resolve_and_verify_requested_revision():
         assert 'selected_ref="${INPUT_REF:-main}"' in content
         assert "git rev-parse HEAD" in content
         assert "git merge-base --is-ancestor HEAD origin/main" in content
+        assert "legacy revision lacks deployment identity support" in content
         assert "SELECTED_REF: ${{ steps.revision.outputs.sha }}" in content
         assert "EXPECTED_REVISION: ${{ steps.revision.outputs.sha }}" in content
         assert "python scripts/wait_for_deployment.py" in content

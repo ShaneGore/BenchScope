@@ -89,9 +89,17 @@ def main() -> int:
         action="store_true",
         help="also start local metrics/logs/traces/Grafana and alert intake",
     )
+    parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="stop this checkout's stack while retaining PostgreSQL data",
+    )
     args = parser.parse_args()
     try:
         require_local_docker()
+        if args.stop and not (ROOT / ".env").exists():
+            print("No local .env exists; no stack was changed.")
+            return 0
         env = prepare_environment(observability=args.observability)
         project = (
             "benchscope-" + hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:8]
@@ -108,11 +116,18 @@ def main() -> int:
         ]
         if args.observability:
             compose.extend(["-f", "compose.observability.yaml"])
+        if args.stop:
+            run(*compose, "down", env=env)
+            print("Stopped this checkout's stack; PostgreSQL data was retained.")
+            return 0
         run(*compose, "up", "--build", "--wait", "--detach", env=env)
         print(f"BenchScope: http://127.0.0.1:{env.get('FRONTEND_PORT', '5173')}")
         print(f"API readiness: http://127.0.0.1:{env.get('API_PORT', '8000')}/ready")
         print(f"Compose project: {project}; data persists in its PostgreSQL volume.")
-        print("Stop while retaining data: " + " ".join(compose) + " down")
+        print(
+            "Stop while retaining data: uv run --no-project python scripts/start.py --stop"
+            + (" --observability" if args.observability else "")
+        )
         return 0
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         # CalledProcessError may contain environment-derived arguments; do not echo it.

@@ -63,7 +63,7 @@ def verify_persistence(compose: list[str], env: dict[str, str]) -> None:
     imported = request_json(api + "/api/v1/runs/import", payload)
     run_id = imported["run"]["id"]
     before = request_json(api + "/api/v1/runs/" + run_id)
-    if before.get("pass_rate") != 0.75:
+    if before.get("metrics", {}).get("pass_rate") != 0.75:
         raise RuntimeError("Imported synthetic result did not read back correctly.")
     run(*compose, "restart", "api", env=env)
     wait_for_revision(api, env["APP_REVISION"], timeout=120)
@@ -210,6 +210,12 @@ def main() -> int:
                 cwd=ROOT / "frontend",
                 env=env,
             )
+            container_browser_env = {
+                **env,
+                "VERIFY_FRONTEND_URL": f"http://127.0.0.1:{stack_env['FRONTEND_PORT']}",
+                "VERIFY_API_URL": f"http://127.0.0.1:{stack_env['API_PORT']}",
+            }
+            run("node", "scripts/verify-container.mjs", env=container_browser_env)
             run("corepack", "pnpm", "test:journey", cwd=ROOT / "frontend", env=env)
             print(
                 "PASS: backend unit/integration, frontend tests/build/contract, and browser journeys."
