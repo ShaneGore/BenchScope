@@ -1,6 +1,6 @@
 # BenchScope showcase improvement plan
 
-Date: 6 November 2026. PM status: READY for implementation. Implementation issue: pending orchestrator creation and claim.
+Date: 6 November 2026. PM status: READY for implementation. Implementation issue: [#56](https://github.com/ShaneGore/BenchScope/issues/56), claimed and in progress.
 
 ## Goal
 
@@ -165,8 +165,9 @@ No dependencies without owner approval. Preserve hosted restrictions, local-only
 ## Progress record
 
 - PM grooming: READY, 6 November 2026.
-- Issue: pending orchestrator creation/claim.
+- Issue: [#56](https://github.com/ShaneGore/BenchScope/issues/56), claimed.
 - Baseline: isolated at `f2902bf`; original dirty checkout preserved.
 - Implementation/QA: pending.
-- Cleanup: inventory pending.
+- Cleanup: 23 merged task checkouts removed; three retained for local data/changes. See [cleanup inventory](worktree-cleanup-2026-11-06.md); independent QA pending.
 - Publication: pending; local implementation alone is not live deployment evidence.
+
