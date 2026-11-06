@@ -9,6 +9,10 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
     PATH="/opt/venv/bin:${PATH}"
 
+ARG APP_REVISION=unknown
+ENV APP_REVISION=${APP_REVISION}
+LABEL org.opencontainers.image.revision=${APP_REVISION}
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./

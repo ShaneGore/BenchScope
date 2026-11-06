@@ -156,7 +156,7 @@ BENCHMARK_ENABLED=false
 "@ | Set-Content -Encoding ascii .env.incident-response-disposable
 Remove-Variable dbPassword, bearer
 
-docker compose --env-file .env.incident-response-disposable -p $project config --quiet
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project config --quiet
 try {
   $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
 } catch {
@@ -166,8 +166,8 @@ if (@($listeners | Where-Object { $requiredPorts -contains $_.Port }).Count -gt 
   throw "An alternate port became occupied; abort without changing its listener."
 }
 # Run only after confirming every required image is cached; do not pull images.
-docker compose --env-file .env.incident-response-disposable -p $project up --build --pull never --wait --detach
-docker compose --env-file .env.incident-response-disposable -p $project ps
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project up --build --pull never --wait --detach
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project ps
 ```
 
 Do not substitute `.env` or start the default Compose project. The receiver
@@ -188,11 +188,11 @@ Invoke-RestMethod http://127.0.0.1:13100/ready
 Invoke-RestMethod http://127.0.0.1:13200/ready
 Invoke-RestMethod http://127.0.0.1:13000/api/health
 curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
-docker compose --env-file .env.incident-response-disposable -p $project stop api
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project stop api
 Start-Sleep -Seconds 100
 Invoke-RestMethod "http://127.0.0.1:19090/api/v1/alerts"
 curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=ALERTS%7Balertname%3D%22BenchScopeApiUnavailable%22%2Calertstate%3D%22firing%22%7D'
-docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
 ```
 
 Grafana's `BenchScopeApiUnavailable` rule must be firing and the database row
@@ -210,12 +210,12 @@ deliver the resolved webhook. Then confirm the same incident row is resolved
 rather than duplicated:
 
 ```powershell
-docker compose --env-file .env.incident-response-disposable -p $project start api
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project start api
 Invoke-RestMethod http://127.0.0.1:18000/ready
 Start-Sleep -Seconds 60
 curl.exe --fail 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22api%22%7D'
 Invoke-RestMethod http://127.0.0.1:19090/api/v1/alerts
-docker compose --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "SELECT alert_status, evidence_status FROM incident_records ORDER BY received_at DESC LIMIT 1"'
 ```
 
 Before cleanup, verify that every container carries the exact
@@ -230,7 +230,7 @@ $containers = @(docker ps -aq --filter "label=com.docker.compose.project=$projec
 if ($containers.Count -eq 0) { throw "Project containers not found; inspect before cleanup." }
 $labels = docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' $containers
 if (@($labels | Where-Object { $_ -ne $project }).Count -gt 0) { throw "Project identity mismatch; do not clean up." }
-docker compose --env-file .env.incident-response-disposable -p $project down --volumes --remove-orphans --rmi local
+docker compose -f compose.yaml -f compose.observability.yaml --env-file .env.incident-response-disposable -p $project down --volumes --remove-orphans --rmi local
 Remove-Item .env.incident-response-disposable
 Remove-Item secrets/alert-receiver-bearer
 docker ps -a --filter "label=com.docker.compose.project=$project"
