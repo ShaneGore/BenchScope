@@ -7,7 +7,7 @@ on:
         description: Type "promote" to run production promotion.
         required: true
       ref:
-        description: Git ref to promote. Must be main or an approved release tag.
+        description: Git ref to promote. Use main, a versioned release tag, or an exact commit SHA.
         required: false
         default: main
 
@@ -26,8 +26,12 @@ jobs:
           INPUT_REF: ${{ github.event.inputs.ref }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
-          selected_ref="$GITHUB_SHA"
+          selected_ref="${INPUT_REF:-main}"
 
+          if ! printf '%s' "$selected_ref" | grep -Eq '^(main|refs/heads/main|[0-9a-f]{40}|(refs/tags/)?v[0-9][A-Za-z0-9._-]*)$'; then
+            echo "::error::Select main, a versioned release tag, or an exact commit SHA."
+            exit 1
+          fi
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 
       - name: Check production configuration
@@ -52,6 +56,21 @@ jobs:
         with:
           ref: ${{ steps.ref.outputs.selected_ref }}
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve exact deployment revision
+        if: steps.config.outputs.configured == 'true'
+        id: revision
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Deployment revision must be an ancestor of main."
+            exit 1
+          fi
+          if [ ! -f scripts/wait_for_deployment.py ] || ! grep -q '@app.get("/version")' backend/app/main.py; then
+            echo "::error::This legacy revision lacks deployment identity support; no migration or deployment was triggered."
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         if: steps.config.outputs.configured == 'true'
@@ -74,24 +93,16 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
-          SELECTED_REF: ${{ steps.ref.outputs.selected_ref }}
+          SELECTED_REF: ${{ steps.revision.outputs.sha }}
         run: |
           python scripts/render_deploy_hook.py
 
-      - name: Wait for production readiness
+      - name: Wait for the intended backend revision
         if: steps.config.outputs.configured == 'true'
         env:
           SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
-        run: |
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent "$SMOKE_API_URL/ready" >/dev/null; then
-              echo "Production backend is ready."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::Production backend did not become ready."
-          exit 1
+          EXPECTED_REVISION: ${{ steps.revision.outputs.sha }}
+        run: python scripts/wait_for_deployment.py
 
       - name: Run production smoke tests
         if: steps.config.outputs.configured == 'true'

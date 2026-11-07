@@ -154,6 +154,9 @@ function AppRoutes({
     case 'demo':
       page = <DashboardPage serviceMode="demo" />;
       break;
+    case 'demo-compare':
+      page = <ComparePage ids={(query.ids ?? '').split(',').filter(Boolean)} serviceMode="demo" />;
+      break;
     case 'demo-run-detail':
       page = <RunDetailPage id={route.params.id} serviceMode="demo" />;
       break;

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -183,6 +185,19 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/version")
+    def version() -> dict[str, str]:
+        # Render supplies the exact revision at runtime; local builds use ARG.
+        revision = next(
+            (
+                value
+                for key in ("APP_REVISION", "RENDER_GIT_COMMIT")
+                if re.fullmatch(r"[0-9a-f]{40}", value := os.getenv(key, ""))
+            ),
+            "unknown",
+        )
+        return {"revision": revision}
 
     @app.get("/ready")
     def ready(request: Request) -> JSONResponse:

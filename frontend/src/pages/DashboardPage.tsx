@@ -62,16 +62,16 @@ export function DashboardPage({
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       <PageHeading canLaunch={canLaunch} canImport={canImport} isDemo={isDemo} />
-      {isDemo && <DemoMethodology />}
+      {isDemo && <DemoOverview runs={runs} />}
 
       {activeRun && <ActiveRunBanner run={activeRun} />}
 
-      <SummaryGrid summary={summary} />
+      {!isDemo && <SummaryGrid summary={summary} />}
 
       <Card>
         <CardHeader
-          title="Recent activity"
-          subtitle="Latest benchmark runs"
+          title={isDemo ? "Benchmark configurations" : "Recent activity"}
+          subtitle={isDemo ? "Explore every published result" : "Latest benchmark runs"}
           icon={<ListTree className="h-4 w-4" />}
           action={!isDemo && (
           <Button size="sm" variant="ghost" rightIcon={<ArrowRight className="h-3.5 w-3.5" />} onClick={() => navigate(isDemo ? '/demo/runs' : '/runs')}>
@@ -126,9 +126,9 @@ function PageHeading({
   return (
     <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
       <div>
-        <h1 className="text-xl font-semibold text-text-primary tracking-tight">Dashboard</h1>
+        <h1 className="text-xl font-semibold text-text-primary tracking-tight">{isDemo ? "Benchmark explorer" : "Dashboard"}</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Overview of benchmark runs, outcomes, and recent activity.
+          {isDemo ? "Explore coding accuracy, generation speed, and the settings behind each result." : "Overview of benchmark runs, outcomes, and recent activity."}
         </p>
       </div>
       <div className="flex gap-2">
@@ -142,11 +142,9 @@ function PageHeading({
             Import
           </Button>
         )}
-        {!isDemo && (
-          <Button size="sm" variant="outline" onClick={() => navigate('/compare')}>
-            Compare
-          </Button>
-        )}
+        <Button size="sm" variant={isDemo ? "primary" : "outline"} onClick={() => navigate(isDemo ? '/demo/compare' : '/compare')}>
+          {isDemo ? 'Compare configurations' : 'Compare'}
+        </Button>
       </div>
     </div>
   );
@@ -229,7 +227,7 @@ function ActiveRunBanner({ run }: { run: BenchmarkRun }) {
     <button
       onClick={() => navigate(`/runs/${run.id}`)}
       className="flex items-center gap-3 rounded-lg border border-status-running-border bg-status-running-bg px-4 py-3 text-left hover:bg-status-running-bg/80 transition-colors w-full"
-      aria-label={`Active run ${run.profile_snapshot.name} — view detail`}
+      aria-label={`Active run ${run.profile_snapshot.name} â€” view detail`}
     >
       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-status-running-bg border border-status-running-border">
         <span className="h-2.5 w-2.5 rounded-full bg-status-running-fg animate-pulseDot" />
@@ -237,7 +235,7 @@ function ActiveRunBanner({ run }: { run: BenchmarkRun }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-status-running-fg">Run in progress</p>
         <p className="text-xs text-text-secondary truncate">
-          {runProfileLabel(run)} — {run.benchmark_config.name}
+          {runProfileLabel(run)} â€” {run.benchmark_config.name}
         </p>
       </div>
       <span className="font-mono tabular-nums text-xs text-status-running-fg">
@@ -277,9 +275,9 @@ function RecentList({
             <div className="hidden sm:flex items-center gap-4 text-right">
               <RecentMetric label={serviceMode === 'demo' ? 'Pass rate' : 'Quality'} value={serviceMode === 'demo' ? (r.metrics.pass_rate != null ? fmtRate(r.metrics.pass_rate) : null) : (r.metrics.quality_score != null ? fmtRate(r.metrics.quality_score) : null)} />
               <RecentMetric label="Gen t/s" value={r.metrics.generation_throughput_tps != null ? fmtNum(r.metrics.generation_throughput_tps, 1) : null} />
-              <RecentMetric label="TTFT" value={r.metrics.ttft_ms != null ? fmtMs(r.metrics.ttft_ms) : null} />
+              {serviceMode !== 'demo' && <RecentMetric label="TTFT" value={r.metrics.ttft_ms != null ? fmtMs(r.metrics.ttft_ms) : null} />}
             </div>
-            <span className="text-[11px] text-text-muted font-mono whitespace-nowrap">{fmtDate(r.started_at)}</span>
+            {(serviceMode !== 'demo' || r.started_at) && <span className="text-[11px] text-text-muted font-mono whitespace-nowrap">{fmtDate(r.started_at)}</span>}
           </button>
         </li>
       ))}
@@ -348,5 +346,28 @@ function DashboardSkeleton() {
         <SkeletonText lines={6} />
       </Card>
     </div>
+  );
+}
+
+
+function DemoOverview({ runs }: { runs: BenchmarkRun[] }) {
+  const rates = runs.map((run) => run.metrics.pass_rate).filter((value): value is number => metricAvailable(value));
+  const speeds = runs.map((run) => run.metrics.generation_throughput_tps).filter((value): value is number => metricAvailable(value));
+  const tiles = [
+    { label: 'Configurations', value: String(runs.length), hint: 'Local and hosted results' },
+    { label: 'Recorded pass rates', value: rates.length ? `${fmtRate(Math.min(...rates), 1)}–${fmtRate(Math.max(...rates), 1)}` : 'Unavailable', hint: 'Settings differ across configurations' },
+    { label: 'Measured output speed', value: speeds.length ? `${fmtNum(Math.min(...speeds), 1)}–${fmtNum(Math.max(...speeds), 1)}` : 'Unavailable', hint: 'Tokens / request-second · local trials' },
+  ];
+  return (
+    <>
+      <div className="grid sm:grid-cols-3 gap-3">
+        {tiles.map((tile) => <Card key={tile.label} className="!p-5">
+          <p className="text-xs text-text-secondary">{tile.label}</p>
+          <p className="mt-2 font-mono text-xl font-semibold text-primary-500">{tile.value}</p>
+          <p className="mt-2 text-[11px] text-text-muted">{tile.hint}</p>
+        </Card>)}
+      </div>
+      <DemoMethodology />
+    </>
   );
 }

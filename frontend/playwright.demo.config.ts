@@ -1,3 +1,4 @@
+import { apiPort, apiOrigin, demoPort, demoOrigin } from './e2e/ports';
 import { defineConfig } from '@playwright/test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,27 +21,27 @@ export default defineConfig({
   testMatch: '**/demo.pw.ts',
   workers: 1,
   use: {
-    baseURL: 'http://127.0.0.1:5174',
+    baseURL: demoOrigin,
     browserName: 'chromium',
   },
   webServer: [
     {
       command: 'uv run python tests/e2e_server.py',
       cwd: '../backend',
-      url: 'http://127.0.0.1:8000/health',
+      url: `${apiOrigin}/health`,
       reuseExistingServer: false,
       env: {
         APP_MODE: 'hosted',
         APP_ENV: 'test',
         LOCAL_AUTH_BYPASS: 'false',
         HOST: '127.0.0.1',
-        PORT: '8000',
+        PORT: String(apiPort),
         BENCHMARK_ENABLED: 'false',
-        CORS_ORIGINS: '["http://127.0.0.1:5174"]',
+        CORS_ORIGINS: JSON.stringify([demoOrigin]),
         DATABASE_URL: '',
         CLERK_JWKS_URL: 'https://clerk.example.invalid/.well-known/jwks.json',
         CLERK_ISSUER: 'https://clerk.example.invalid',
-        CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:5174"]',
+        CLERK_AUTHORIZED_PARTIES: JSON.stringify([demoOrigin]),
         TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
         PYTHONPATH: '.',
         E2E_SCHEMA: schema,
@@ -48,12 +49,12 @@ export default defineConfig({
       },
     },
     {
-      command: 'corepack pnpm dev --host 127.0.0.1 --port 5174 --strictPort',
-      url: 'http://127.0.0.1:5174',
+      command: `corepack pnpm dev --host 127.0.0.1 --port ${demoPort} --strictPort`,
+      url: demoOrigin,
       reuseExistingServer: false,
       env: {
         E2E_CLERK_STUB: 'true',
-        VITE_API_URL: 'http://127.0.0.1:8000',
+        VITE_API_URL: apiOrigin,
         VITE_APP_MODE: 'hosted',
         VITE_CLERK_PUBLISHABLE_KEY: 'pk_test_benchscope.example.invalid',
       },

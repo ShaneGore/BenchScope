@@ -11,7 +11,9 @@ export function StartupState() {
 
 export function DemoMethodology() {
   return (
-    <p className="text-sm text-text-secondary">
+    <details className="rounded-lg border border-border bg-surface/40 px-4 py-3">
+      <summary className="cursor-pointer text-sm font-medium text-text-secondary">How to read these results</summary>
+      <p className="mt-3 text-sm text-text-secondary leading-relaxed">
       Source: Local-LLM-Coding-Benchmark-v2. All 15 configurations record 47 of 47
       tasks; pass rate counts passed tasks. One Bonsai reasoning-on trial had a
       provider error. Throughput is mean output tokens per request-second for
@@ -19,7 +21,8 @@ export function DemoMethodology() {
       The two OpenRouter runs are hosted, not local, and have no throughput here.
       Settings differ, including MTP, reasoning and context; compare with care.
       Missing run timestamps are shown as unavailable.
-    </p>
+      </p>
+    </details>
   );
 }
 

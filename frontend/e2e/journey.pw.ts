@@ -88,3 +88,21 @@ test('real API import, history filters, comparison, and failure atomicity', asyn
     /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/.test(value)
   )).toBe(true);
 });
+
+
+test('downloadable example imports and detects a duplicate', async ({ page }) => {
+  await installLocalAuth(page);
+  await page.goto('/#/import');
+  const download = page.getByRole('link', { name: 'Download a synthetic example' });
+  await expect(download).toBeVisible();
+  const href = await download.getAttribute('href');
+  expect(href).toBeTruthy();
+  const response = await page.request.get(href!);
+  expect(response.ok()).toBe(true);
+  const content = await response.text();
+  await importFile(page, 'synthetic-run.json', content);
+  await expect(page.getByRole('heading', { name: 'Imported run' })).toBeVisible();
+  await expect(page.getByText('Synthetic example model example-Q4')).toBeVisible();
+  await importFile(page, 'synthetic-run.json', content);
+  await expect(page.getByRole('heading', { name: 'Duplicate import' })).toBeVisible();
+});

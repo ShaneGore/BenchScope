@@ -1,3 +1,4 @@
+import { apiPort, apiOrigin, jwksOrigin, frontendPort, frontendOrigin } from './e2e/ports';
 import { defineConfig } from '@playwright/test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,27 +26,27 @@ export default defineConfig({
   ],
   workers: 1,
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: frontendOrigin,
     browserName: 'chromium',
   },
   webServer: [
     {
       command: 'uv run python tests/e2e_server.py',
       cwd: '../backend',
-      url: 'http://127.0.0.1:8000/health',
+      url: `${apiOrigin}/health`,
       reuseExistingServer: false,
       env: {
         APP_MODE: 'local',
         APP_ENV: 'test',
         LOCAL_AUTH_BYPASS: 'false',
         HOST: '127.0.0.1',
-        PORT: '8000',
+        PORT: String(apiPort),
         BENCHMARK_ENABLED: 'true',
         BENCHMARK_TIMEOUT_SECONDS: '0.25',
-        CORS_ORIGINS: '["http://127.0.0.1:5173"]',
-        CLERK_JWKS_URL: 'http://127.0.0.1:8001/.well-known/jwks.json',
+        CORS_ORIGINS: JSON.stringify([frontendOrigin]),
+        CLERK_JWKS_URL: `${jwksOrigin}/.well-known/jwks.json`,
         CLERK_ISSUER: 'https://clerk.example.invalid',
-        CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:5173"]',
+        CLERK_AUTHORIZED_PARTIES: JSON.stringify([frontendOrigin]),
         TEST_DATABASE_URL: process.env.TEST_DATABASE_URL,
         PYTHONPATH: '.',
         E2E_SCHEMA: schema,
@@ -53,14 +54,14 @@ export default defineConfig({
       },
     },
     {
-      command: 'corepack pnpm dev --host 127.0.0.1 --port 5173 --strictPort',
-      url: 'http://127.0.0.1:5173',
+      command: `corepack pnpm dev --host 127.0.0.1 --port ${frontendPort} --strictPort`,
+      url: frontendOrigin,
       reuseExistingServer: false,
       env: {
-        VITE_API_URL: 'http://127.0.0.1:8000',
+        VITE_API_URL: apiOrigin,
         VITE_APP_MODE: 'local',
         VITE_OTEL_EXPORTER_OTLP_ENDPOINT:
-          'http://127.0.0.1:4318/v1/traces',
+          process.env.E2E_OTLP_ENDPOINT ?? '',
       },
     },
   ],

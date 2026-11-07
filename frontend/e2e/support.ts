@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 
-const API_ORIGIN = 'http://127.0.0.1:8000';
+import { apiOrigin as API_ORIGIN } from './ports';
 
 interface E2EState {
   tokens: Record<string, string>;

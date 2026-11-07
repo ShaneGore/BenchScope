@@ -31,8 +31,10 @@ from app.models import Base, BenchmarkRun
 from app.runner import RunResult
 
 ISSUER = "https://benchscope-e2e.invalid"
-AUTHORIZED_PARTIES = ["http://127.0.0.1:5173", "http://127.0.0.1:5174"]
-JWKS_PORT = 8001
+LOCAL_FRONTEND = f"http://127.0.0.1:{os.environ.get('E2E_FRONTEND_PORT', '5173')}"
+DEMO_FRONTEND = f"http://127.0.0.1:{os.environ.get('E2E_DEMO_PORT', '5174')}"
+AUTHORIZED_PARTIES = [LOCAL_FRONTEND, DEMO_FRONTEND]
+JWKS_PORT = int(os.environ.get("E2E_JWKS_PORT", "8001"))
 LOCAL_SUBJECTS = ("e2e-owner-a", "e2e-owner-b")
 SUCCESS_CONFIG = UUID("00000000-0000-4000-8000-000000000001")
 FAILURE_CONFIG = UUID("00000000-0000-4000-8000-000000000002")
@@ -89,7 +91,7 @@ def _settings(database_url: str, *, hosted: bool = False) -> Settings:
         port=int(os.environ.get("PORT", "8000")),
         benchmark_enabled=not hosted,
         benchmark_timeout_seconds=0.25,
-        cors_origins=["http://127.0.0.1:5174" if hosted else "http://127.0.0.1:5173"],
+        cors_origins=[DEMO_FRONTEND if hosted else LOCAL_FRONTEND],
         clerk_jwks_url=(
             "https://clerk.example.invalid/.well-known/jwks.json"
             if hosted

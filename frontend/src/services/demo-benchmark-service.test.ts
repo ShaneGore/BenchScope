@@ -46,3 +46,26 @@ test('demo API failure is surfaced without substituting mock personal data', asy
   );
   await expect(service.listRuns()).rejects.toEqual({ status: 503, detail: 'Unavailable' });
 });
+
+
+test('demo comparison resolves public catalogue only and preserves null metrics', async () => {
+  const second = { ...demoRun, id: 'demo-run-02', metrics: { pass_rate: 0.5, generation_throughput_tps: null } };
+  const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify([demoRun, second])));
+  const service = new DemoBenchmarkService('https://api.example', fetcher as unknown as typeof fetch);
+  const runs = await service.compareRuns([demoRun.id, second.id]);
+  expect(runs.map((run) => run.id)).toEqual([demoRun.id, second.id]);
+  expect(runs[1].metrics.generation_throughput_tps).toBeNull();
+  await expect(service.compareRuns([demoRun.id, 'personal-record'])).rejects.toMatchObject({ status: 422 });
+  expect(fetcher.mock.calls.every(([url, init]) => url === 'https://api.example/api/v1/demo/runs' && !init.headers.Authorization)).toBe(true);
+  await expect(service.importRun()).rejects.toMatchObject({ status: 403 });
+  await expect(service.deleteRun()).rejects.toMatchObject({ status: 403 });
+});
+
+test('demo comparison validates selection before making requests', async () => {
+  const fetcher = vi.fn();
+  const service = new DemoBenchmarkService('', fetcher as unknown as typeof fetch);
+  for (const ids of [[], ['one'], ['one', 'one'], Array.from({ length: 7 }, (_, i) => String(i))]) {
+    await expect(service.compareRuns(ids)).rejects.toMatchObject({ status: 422 });
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+});

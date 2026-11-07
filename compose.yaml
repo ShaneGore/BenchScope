@@ -19,6 +19,8 @@ services:
   api:
     build:
       context: ./backend
+      args:
+        APP_REVISION: ${APP_REVISION:-unknown}
     command:
       - sh
       - -c
@@ -28,9 +30,9 @@ services:
         condition: service_healthy
     environment:
       APP_MODE: local
+      CORS_ORIGINS: '["http://127.0.0.1:${FRONTEND_PORT:-5173}", "http://localhost:${FRONTEND_PORT:-5173}"]'
       APP_ENV: ${APP_ENV:-production}
       LOCAL_AUTH_BYPASS: ${LOCAL_AUTH_BYPASS:-false}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
     healthcheck:
       test:
@@ -47,46 +49,11 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
 
-  alert-receiver:
-    build:
-      context: ./backend
-    command:
-      - uv
-      - run
-      - --no-sync
-      - uvicorn
-      - app.alert_receiver:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8001"
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      ALERT_RECEIVER_SECRET_FILE: /run/secrets/alert-receiver-bearer
-      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=2)",
-        ]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    secrets:
-      - alert-receiver-bearer
-
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://127.0.0.1:${API_PORT:?Set API_PORT in .env}
-        VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318/v1/traces
+        VITE_API_URL: http://127.0.0.1:${API_PORT:-8000}
     depends_on:
       api:
         condition: service_healthy
@@ -97,105 +64,8 @@ services:
       retries: 5
       start_period: 5s
     ports:
-      - "127.0.0.1:5173:80"
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:80"
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.136.0
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
-    volumes:
-      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
-    depends_on:
-      loki:
-        condition: service_started
-      tempo:
-        condition: service_started
-    ports:
-      - "127.0.0.1:${OTLP_PORT:-4318}:4318"
-
-  prometheus:
-    image: prom/prometheus:v3.5.0
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --enable-feature=exemplar-storage
-    volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./observability/api-alerts.yml:/etc/prometheus/rules/api-alerts.yml:ro
-      - ./observability/api-alert-test.yml:/etc/prometheus/api-alert-test.yml:ro
-      - prometheus-data:/prometheus
-    depends_on:
-      api:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/healthy"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    ports:
-      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
-
-  loki:
-    image: grafana/loki:3.5.3
-    command: ["-config.file=/etc/loki/local-config.yaml"]
-    volumes:
-      - ./observability/loki.yaml:/etc/loki/local-config.yaml:ro
-      - loki-data:/loki
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3100/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    ports:
-      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
-
-  tempo:
-    image: grafana/tempo:2.8.1
-    command: ["-config.file=/etc/tempo.yaml"]
-    volumes:
-      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
-      - tempo-data:/var/tempo
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3200/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    ports:
-      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
-
-  grafana:
-    image: grafana/grafana:12.1.1
-    environment:
-      ALERT_RECEIVER_BEARER: ${ALERT_RECEIVER_BEARER:?Set ALERT_RECEIVER_BEARER in local configuration}
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
-    depends_on:
-      prometheus:
-        condition: service_healthy
-      loki:
-        condition: service_healthy
-      tempo:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    ports:
-      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
 
 volumes:
   postgres-data:
-  prometheus-data:
-  loki-data:
-  tempo-data:
-  grafana-data:
-
-secrets:
-  alert-receiver-bearer:
-    file: ${ALERT_RECEIVER_SECRET_FILE:?Set ALERT_RECEIVER_SECRET_FILE to an ignored local secret file}
