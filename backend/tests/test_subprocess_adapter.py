@@ -335,21 +335,48 @@ async def test_windows_timeout_with_inherited_pipe(tmp_path: Path) -> None:
 @WINDOWS_ONLY
 @pytest.mark.anyio
 async def test_windows_cancellation_with_inherited_pipe(tmp_path: Path) -> None:
+    ready_path = tmp_path / "child-ready.txt"
     script = (
         "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
-        "time.sleep(5)\n"
+        f"ready = Path({str(ready_path)!r})\n"
+        "temporary = ready.with_suffix('.tmp')\n"
+        "temporary.write_text(str(child.pid), encoding='utf-8')\n"
+        "temporary.replace(ready)\n"
+        "time.sleep(30)\n"
     )
-    config = _config(tmp_path, script, timeout_seconds=5.0)
+    config = _config(tmp_path, script, timeout_seconds=30.0)
     adapter = SubprocessAdapter(config)
     task = asyncio.create_task(adapter.run({}, config.config_id))
-    await asyncio.sleep(0.2)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert adapter.last_process_id is not None
-    assert not process_exists(adapter.last_process_id)
-    assert adapter.last_remaining_pids == ()
+
+    async def wait_for_child() -> int:
+        # The atomic handshake proves the descendant exists and has inherited
+        # its parent's pipes. A scheduling delay cannot cancel before startup.
+        while not ready_path.is_file() or adapter.last_process_id is None:
+            if task.done():
+                await task
+                pytest.fail("Synthetic runner exited before its child was ready")
+            await asyncio.sleep(0.01)
+        return int(ready_path.read_text(encoding="utf-8"))
+
+    try:
+        child_pid = await asyncio.wait_for(wait_for_child(), timeout=10)
+        assert process_exists(child_pid)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10)
+        assert adapter.last_process_id is not None
+        assert not process_exists(adapter.last_process_id)
+        assert not process_exists(child_pid)
+        assert adapter.last_remaining_pids == ()
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=10)
+            except asyncio.CancelledError:
+                pass
 
 
 @WINDOWS_ONLY
