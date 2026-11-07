@@ -82,6 +82,9 @@ export function ImportPage() {
         <p className="text-sm text-text-secondary mt-1">
           Upload a supported benchmark result JSON file.
         </p>
+        <a href={`${import.meta.env.BASE_URL}examples/synthetic-run.json`} download className="mt-2 inline-block text-sm text-primary-500 hover:underline">
+          Download a synthetic example
+        </a>
       </div>
 
       <Card>

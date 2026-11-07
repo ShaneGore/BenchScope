@@ -1,0 +1,22 @@
+{
+  "format_version": "benchscope.run.v1",
+  "source_run_id": "synthetic-showcase-example-v1",
+  "profile_snapshot": {
+    "name": "Synthetic example model",
+    "model_name": "example/synthetic-model",
+    "quantisation": "example-Q4"
+  },
+  "benchmark_config": {
+    "name": "Synthetic example — not a measured benchmark",
+    "temperature": 0,
+    "max_tokens": 256
+  },
+  "started_at": "2026-01-01T10:00:00Z",
+  "ended_at": "2026-01-01T10:00:10Z",
+  "metrics": {
+    "pass_rate": 0.75,
+    "generation_throughput_tps": 25,
+    "ttft_ms": null,
+    "quality_score": null
+  }
+}

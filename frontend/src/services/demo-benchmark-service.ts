@@ -86,8 +86,18 @@ export class DemoBenchmarkService implements BenchmarkService {
     return Promise.reject(readonlyError());
   }
 
-  compareRuns(): Promise<BenchmarkRun[]> {
-    return Promise.reject(readonlyError());
+  async compareRuns(ids: string[]): Promise<BenchmarkRun[]> {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length < 2 || uniqueIds.length > 6 || uniqueIds.length !== ids.length) {
+      throw { status: 422, detail: 'Choose between two and six different demo configurations.' } satisfies ApiError;
+    }
+    // Resolve IDs against the public catalogue only, never personal APIs.
+    const catalogue = (await this.listRuns()).items;
+    const selected = uniqueIds.map((id) => catalogue.find((run) => run.id === id));
+    if (selected.some((run) => !run || run.status !== 'completed')) {
+      throw { status: 422, detail: 'One or more selected configurations are unavailable. Choose configurations from the demo catalogue.' } satisfies ApiError;
+    }
+    return selected as BenchmarkRun[];
   }
 
   private async request<T>(path: string): Promise<T> {
@@ -127,6 +137,7 @@ function mapDemoRun(run: DemoRunResponse): BenchmarkRun {
     },
     benchmark_config: {
       name: run.benchmark_config.name,
+      temperature: run.benchmark_config.temperature,
       max_tokens: run.benchmark_config.max_tokens ?? undefined,
     },
     started_at: run.started_at ?? '',

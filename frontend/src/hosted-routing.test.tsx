@@ -50,7 +50,7 @@ test('anonymous hosted root lands in the read-only demo without capability or ru
   window.location.hash = '/';
   render(<App />);
 
-  expect(await screen.findByText('Recent activity')).toBeTruthy();
+  expect(await screen.findByText('Benchmark configurations')).toBeTruthy();
   await waitFor(() => expect(window.location.hash).toBe('#/demo'));
   const requests = fetcher.mock.calls.map(([url, init]) => ({
     url: String(url),
@@ -69,7 +69,7 @@ test('anonymous hosted protected routes go to sign-in while demo remains public'
 
   window.location.hash = '/demo';
   rerender(<App />);
-  expect(await screen.findByText('Recent activity')).toBeTruthy();
+  expect(await screen.findByText('Benchmark configurations')).toBeTruthy();
   expect(fetcher.mock.calls.every(([url]) => !String(url).includes('/benchmark/'))).toBe(true);
 });
 
@@ -77,7 +77,7 @@ test('hosted benchmark direct navigation redirects to the mode-appropriate route
   window.location.hash = '/benchmark';
   render(<App />);
   await waitFor(() => expect(window.location.hash).toBe('#/demo'));
-  expect(await screen.findByText('Recent activity')).toBeTruthy();
+  expect(await screen.findByText('Benchmark configurations')).toBeTruthy();
   expect(fetcher.mock.calls).toHaveLength(1);
   expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/v1/demo/runs');
 });
@@ -88,4 +88,17 @@ test('signed-in hosted benchmark direct navigation returns to the personal dashb
   render(<App />);
   await waitFor(() => expect(window.location.hash).toBe('#/'));
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+
+test('anonymous comparison deep links stay public and use only the demo catalogue', async () => {
+  window.location.hash = '/demo/compare?ids=one,two';
+  const base = { status: 'completed', profile_snapshot: { name: 'Model', model_name: 'model', model_version: null, quantisation: null }, benchmark_config: { name: 'Reasoning off', temperature: 0, max_tokens: 100 }, started_at: null, ended_at: null, metrics: { pass_rate: 0.5, generation_throughput_tps: null }, hardware_snapshot: {} };
+  fetcher.mockImplementation(async () => new Response(JSON.stringify([{ ...base, id: 'one' }, { ...base, id: 'two' }])));
+  render(<App />);
+  expect(await screen.findByText('Pass rate comparison')).toBeTruthy();
+  expect(window.location.hash).toBe('#/demo/compare?ids=one,two');
+  expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual(['/api/v1/demo/runs']);
+  expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
 });

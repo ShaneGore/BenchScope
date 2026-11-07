@@ -23,6 +23,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/demo', label: 'Demo', icon: LayoutDashboard },
+  { to: '/demo/compare', label: 'Compare demo', icon: BarChart3 },
   { to: '/runs', label: 'History', icon: ListTree },
   { to: '/compare', label: 'Compare', icon: BarChart3 },
   { to: '/profiles', label: 'Profiles', icon: UserCog },
@@ -49,7 +50,7 @@ export function AppShell({
 }) {
   useScrollTopOnRoute(currentPath);
   const items = navItems.filter(
-    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo')
+    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo' || n.to === '/demo/compare')
   );
 
   return (
@@ -134,7 +135,7 @@ function Sidebar({
   launchEnabled: boolean;
 }) {
   const isActive = (to: string) =>
-    to === '/' ? currentPath === '/' : currentPath.startsWith(to);
+    to === '/' || to === '/demo' ? currentPath === to : currentPath.startsWith(to);
   const demo = isDemo || currentPath.startsWith('/demo');
 
   return (
@@ -192,10 +193,10 @@ export function MobileNav({
   publicOnly?: boolean;
 }) {
   const items = navItems.filter(
-    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo')
+    (n) => (!n.localOnly || launchEnabled) && (!publicOnly || n.to === '/demo' || n.to === '/demo/compare')
   );
   const isActive = (to: string) =>
-    to === '/' ? currentPath === '/' : currentPath.startsWith(to);
+    to === '/' || to === '/demo' ? currentPath === to : currentPath.startsWith(to);
 
   return (
     <nav className="md:hidden sticky top-14 z-30 border-b border-border bg-canvas/90 backdrop-blur-md overflow-x-auto">

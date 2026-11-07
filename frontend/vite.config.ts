@@ -19,5 +19,7 @@ export default defineConfig({
   resolve: { alias: aliases },
   test: {
     environment: "jsdom",
+    // Unit tests use explicit fixtures, independent of local developer config.
+    env: { VITE_API_URL: '', VITE_APP_MODE: 'local' },
   },
 });
