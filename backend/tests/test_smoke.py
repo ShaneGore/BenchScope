@@ -8,6 +8,7 @@ def test_application_registers_health_personal_and_demo_routes() -> None:
     assert set(app.openapi()["paths"]) == {
         "/health",
         "/ready",
+        "/version",
         "/api/v1/profiles",
         "/api/v1/profiles/{id}",
         "/api/v1/runs",
