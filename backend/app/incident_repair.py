@@ -46,6 +46,7 @@ _REVISION = re.compile(r"[0-9a-f]{7,64}\Z")
 _DIFF_PATH = re.compile(r"^diff --git a/([^ \r\n]+) b/([^ \r\n]+)$", re.MULTILINE)
 _ROOT_CAUSE_LIMIT = 1024
 _PATCH_LIMIT_BYTES = 64 * 1024
+_REPAIR_CLI_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024
 logger = logging.getLogger(__name__)
 _SAFE_INVESTIGATION_FAILURES = frozenset(
     {
@@ -277,7 +278,7 @@ class CopilotRepairProvider:
                 args,
                 working_directory,
                 timeout=180,
-                output_limit=CLI_OUTPUT_LIMIT_BYTES,
+                output_limit=_REPAIR_CLI_OUTPUT_LIMIT_BYTES,
                 env=environment,
             )
             response = _parse_cli_events(stdout)

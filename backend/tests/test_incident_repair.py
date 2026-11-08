@@ -433,6 +433,21 @@ def test_binary_patch_is_rejected():
         repair._patch_paths(patch, set(repair.REPAIR_SOURCE_FILES))
 
 
+def test_repair_model_stream_limit_is_bounded_above_patch_limit(monkeypatch):
+    observed = []
+    monkeypatch.setattr(repair, "_verify_cli_restrictions", lambda *args: None)
+
+    def run(*args, **kwargs):
+        observed.append(kwargs["output_limit"])
+        raise InvestigationBlocked("test")
+
+    monkeypatch.setattr(repair, "_run_cli_process", run)
+    with pytest.raises(InvestigationBlocked):
+        repair.CopilotRepairProvider("copilot", authorized=True).invoke("test prompt")
+    assert observed == [2 * 1024 * 1024]
+    assert repair._PATCH_LIMIT_BYTES == 64 * 1024
+
+
 def test_timed_out_container_is_explicitly_removed(tmp_path, monkeypatch):
     dockerfile = tmp_path / "backend" / "Dockerfile.repair-test"
     dockerfile.parent.mkdir()
