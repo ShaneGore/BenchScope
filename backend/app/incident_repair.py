@@ -47,6 +47,36 @@ _DIFF_PATH = re.compile(r"^diff --git a/([^ \r\n]+) b/([^ \r\n]+)$", re.MULTILIN
 _ROOT_CAUSE_LIMIT = 1024
 _PATCH_LIMIT_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
+_SAFE_INVESTIGATION_FAILURES = frozenset(
+    {
+        "Copilot CLI exited unsuccessfully: unsupported option",
+        "Copilot CLI exited unsuccessfully: invalid invocation",
+        "Copilot CLI exited unsuccessfully: authentication or authorization failure",
+        "Copilot CLI exited unsuccessfully: unknown cause",
+        "Copilot CLI timed out",
+        "Copilot CLI output exceeded its limit",
+        "Copilot CLI usage could not be verified",
+        "Copilot CLI usage output exceeded its limit",
+        "Copilot CLI usage output is invalid",
+        "Copilot CLI attempted a tool call",
+        "Copilot CLI exposed tools to the model",
+        "selected model identity unavailable or mismatched",
+        "effective model identity unavailable or mismatched",
+        "selected model metadata unavailable",
+        "effective model metadata unavailable",
+        "invalid Copilot CLI event output",
+        "invalid Copilot CLI event",
+        "unsafe Copilot CLI response",
+        "repair response is invalid or oversized",
+        "repair response is invalid JSON",
+        "repair response has an invalid shape",
+        "repair response fields are invalid",
+        "repair evidence reference is invalid",
+        "repair patch has no allowlisted file changes",
+        "repair patch changes a prohibited path",
+        "repair patch file count is invalid",
+    }
+)
 REPAIR_SOURCE_FILES = frozenset(
     {
         "backend/app/main.py",
@@ -718,7 +748,23 @@ def run_next_repair_job(
             return _fail_job(session_factory, job_id, "source_revision_mismatch")
         sources = load_repair_sources(root)
         prompt = make_repair_prompt(record, sources)
-        recommendation = provider.invoke(prompt)
+        try:
+            recommendation = provider.invoke(prompt)
+        except (InvestigationBlocked, InvestigationRejected) as exc:
+            detail = str(exc)
+            logger.warning(
+                "Copilot repair failed: %s",
+                detail
+                if detail in _SAFE_INVESTIGATION_FAILURES
+                else "unverified failure",
+            )
+            return _fail_job(
+                session_factory,
+                job_id,
+                "model_response_rejected"
+                if isinstance(exc, InvestigationRejected)
+                else "model_invocation_blocked",
+            )
         if (
             not recommendation.patch
             or recommendation.selected_model != MODEL

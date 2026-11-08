@@ -142,9 +142,9 @@ def test_open_pull_request_does_not_block_another_fingerprint(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "failure", ["github", "tests", "base_mismatch", "pull_request"]
+    "failure", ["model", "github", "tests", "base_mismatch", "pull_request"]
 )
-def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, failure):
+def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, failure):
     monkeypatch.delenv("BENCHSCOPE_REPAIR_GH_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.setattr(
@@ -206,6 +206,8 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, failure):
 
         def invoke(self, prompt):
             self.prompts.append(prompt)
+            if failure == "model":
+                raise InvestigationBlocked("private-log-sentinel")
             return repair.RepairRecommendation(
                 "Health returns an invalid status.",
                 0.9,
@@ -252,7 +254,8 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, failure):
             monkeypatch.setattr(repair, "_create_pull_request", failed_pull_request)
     assert repair.run_next_repair_job(factory, repo, provider=provider) == "escalated"
     assert len(provider.prompts) == 1
-    assert len(test_runs) == 1
+    assert len(test_runs) == (0 if failure == "model" else 1)
+    assert "private-log-sentinel" not in caplog.text
     with factory() as session:
         job = session.scalar(select(IncidentRepairJob))
         record = session.get(IncidentRecord, incident_id)
@@ -261,6 +264,7 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, failure):
             job.failure_code
             == {
                 "github": "github_permissions_unverified",
+                "model": "model_invocation_blocked",
                 "tests": "tests_failed",
                 "base_mismatch": "source_revision_mismatch",
                 "pull_request": "pull_request_failed",
@@ -276,18 +280,20 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, failure):
                 )
             )
         ]
-        assert events[:4] == [
+        assert events[:3] == [
             "repair_job_queued",
             "sanitized_evidence_ready",
             "repair_started",
-            "copilot_patch_validated",
         ]
-        if failure != "tests":
+        if failure != "model":
+            assert events[3] == "copilot_patch_validated"
+        if failure not in {"model", "tests"}:
             assert events[4] == "tests_passed"
         assert (
             events[-1]
             == {
                 "github": "github_permissions_unverified",
+                "model": "investigation_failed",
                 "tests": "tests_failed",
                 "base_mismatch": "investigation_failed",
                 "pull_request": "pull_request_failed",
