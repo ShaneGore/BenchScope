@@ -458,6 +458,34 @@ def test_patch_application_rejects_paths_outside_allowlist(tmp_path):
         repair.apply_repair_patch(tmp_path, patch)
 
 
+def test_patch_application_recounts_hunks_without_relaxing_context(tmp_path):
+    source = tmp_path / "backend" / "app" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("before\nold\nafter\n", encoding="utf-8")
+    patch = (
+        "diff --git a/backend/app/main.py b/backend/app/main.py\n"
+        "--- a/backend/app/main.py\n"
+        "+++ b/backend/app/main.py\n"
+        "@@ -1,4 +1,4 @@\n"
+        " before\n"
+        "-old\n"
+        "+new\n"
+        " after\n"
+    )
+    assert repair.apply_repair_patch(tmp_path, patch) == {"backend/app/main.py"}
+    assert source.read_text(encoding="utf-8") == "before\nnew\nafter\n"
+
+    source.write_text("before\ndifferent\nafter\n", encoding="utf-8")
+    with pytest.raises(InvestigationBlocked):
+        repair.apply_repair_patch(tmp_path, patch)
+    assert source.read_text(encoding="utf-8") == "before\ndifferent\nafter\n"
+
+    source.write_text("before\nold\nafter\n", encoding="utf-8")
+    with pytest.raises(InvestigationBlocked):
+        repair.apply_repair_patch(tmp_path, patch.replace("+new\n", "+new \n"))
+    assert source.read_text(encoding="utf-8") == "before\nold\nafter\n"
+
+
 def test_binary_patch_is_rejected():
     patch = (
         "diff --git a/backend/app/main.py b/backend/app/main.py\n"

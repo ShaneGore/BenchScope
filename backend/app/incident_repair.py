@@ -452,7 +452,9 @@ def make_repair_prompt(record: IncidentRecord, source_files: dict[str, str]) -> 
         "must be a non-empty array of {path,line} references to the supplied "
         "files; patch must be a git-format unified diff with a "
         "'diff --git a/PATH b/PATH' header for each file, accurate unified-diff "
-        "hunk line counts, and a final newline, changing only supplied "
+        "hunk line counts, and a final newline. Include up to three unchanged "
+        "context lines on each side of every change copied exactly from the "
+        "supplied file; do not add trailing whitespace. Change only supplied "
         "files under backend/app or backend/tests. Include both an application "
         "change and a new asserting regression test; leave existing test functions "
         "unchanged. In main.py change only the metrics enable condition or literal "
@@ -499,12 +501,19 @@ def apply_repair_patch(worktree: Path, patch: str) -> set[str]:
         patch_file = Path(directory) / "repair.patch"
         patch_file.write_bytes(patch.encode("utf-8"))
         _run_host_command(
-            ["git", "apply", "--check", "--whitespace=error-all", str(patch_file)],
+            [
+                "git",
+                "apply",
+                "--check",
+                "--recount",
+                "--whitespace=error-all",
+                str(patch_file),
+            ],
             cwd=worktree,
             timeout=10,
         )
         _run_host_command(
-            ["git", "apply", "--whitespace=error-all", str(patch_file)],
+            ["git", "apply", "--recount", "--whitespace=error-all", str(patch_file)],
             cwd=worktree,
             timeout=10,
         )
