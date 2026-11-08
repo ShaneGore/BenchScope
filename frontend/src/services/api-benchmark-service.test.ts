@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { components } from '@/types/api.generated';
 import { resetStore } from '@/mock/store';
 import {
@@ -70,6 +70,124 @@ function fetchQueue(...responses: Response[]) {
 beforeEach(() => {
   resetStore('hosted');
   setApiSessionTokenProvider(undefined);
+});
+
+afterEach(() => vi.useRealTimers());
+
+test.each(['token', 'fetch', 'body'])('hosted GET bounds %s and aborts network', async (stage) => {
+  vi.useFakeTimers();
+  const pending = new Promise<never>(() => {});
+  setApiSessionTokenProvider(() => stage === 'token' ? pending : Promise.resolve('token'));
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal ?? undefined;
+    if (stage === 'fetch') return pending;
+    return Promise.resolve({ ok: true, status: 200, json: () => pending } as unknown as Response);
+  });
+  const service = new ApiBenchmarkService('', fetcher as typeof fetch, true);
+  const result = service.listProfiles();
+  const assertion = expect(result).rejects.toMatchObject({ status: 0, detail: expect.stringMatching(/timed out/i) });
+  await vi.advanceTimersByTimeAsync(90000);
+  await assertion;
+  if (stage === 'token') expect(fetcher).not.toHaveBeenCalled();
+  else expect(signal?.aborted).toBe(true);
+});
+
+test('hosted GET retries failures with current token and preserves 404', async () => {
+  let token = 'first';
+  setApiSessionTokenProvider(async () => token);
+  const { fetcher, mock } = fetchQueue(new Response('invalid'), jsonResponse([profile]), jsonResponse({}, 404));
+  const service = new ApiBenchmarkService('', fetcher, true);
+  await expect(service.listProfiles()).rejects.toMatchObject({ status: 0 });
+  token = 'second';
+  await expect(service.listProfiles()).resolves.toHaveLength(1);
+  expect(new Headers(mock.mock.calls[1][1]?.headers).get('Authorization')).toBe('Bearer second');
+  await expect(service.getRun('missing')).rejects.toMatchObject({ status: 404 });
+});
+
+test('hosted GET rejects malformed successful response', async () => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse([{}]));
+  await expect(new ApiBenchmarkService('', fetcher, true).listProfiles()).rejects.toMatchObject({ status: 0 });
+});
+
+test.each(['detail', 'list', 'compare'])('hosted %s rejects missing required nested run fields and accepts nullable fields on retry', async (kind) => {
+  setApiSessionTokenProvider(async () => 'token');
+  const malformed = { ...run, profile_snapshot: {}, benchmark_config: {} };
+  const valid = { ...run, profile_snapshot: { ...run.profile_snapshot, profile_id: null }, benchmark_config: { ...run.benchmark_config, temperature: null }, ended_at: null };
+  const wrap = (value: unknown) => kind === 'list'
+    ? { items: [value], has_more: false, next_cursor: null }
+    : kind === 'compare' ? [value] : value;
+  const { fetcher } = fetchQueue(jsonResponse(wrap(malformed)), jsonResponse(wrap(valid)));
+  const service = new ApiBenchmarkService('', fetcher, true);
+  const load = () => kind === 'list' ? service.listRuns() : kind === 'compare' ? service.compareRuns(['a', 'b']) : service.getRun('a');
+  await expect(load()).rejects.toMatchObject({ status: 0, detail: expect.stringMatching(/retry/i) });
+  await expect(load()).resolves.toBeTruthy();
+});
+
+test.each(['profile_snapshot', 'benchmark_config'])('hosted GET rejects an empty %s independently', async (field) => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse({ ...run, [field]: {} }));
+  await expect(new ApiBenchmarkService('', fetcher, true).getRun('a')).rejects.toMatchObject({ status: 0 });
+});
+
+test.each([
+  { status: 'nonsense' },
+  { metrics: { pass_rate: '0.5' } },
+])('hosted GET rejects invalid run status or metrics', async (patch) => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse({ ...run, ...patch }));
+  await expect(new ApiBenchmarkService('', fetcher, true).getRun('a')).rejects.toMatchObject({ status: 0 });
+});
+
+test.each(['list', 'compare', 'detail'])('hosted %s accepts runner config_id and nullable metrics', async (kind) => {
+  setApiSessionTokenProvider(async () => 'token');
+  const runner = { ...run, benchmark_config: { config_id: 'config-1' }, metrics: { pass_rate: null } };
+  const body = kind === 'list' ? { items: [runner], has_more: false } : kind === 'compare' ? [runner] : runner;
+  const { fetcher } = fetchQueue(jsonResponse(body));
+  const service = new ApiBenchmarkService('', fetcher, true);
+  const result = kind === 'list' ? (await service.listRuns()).items[0]
+    : kind === 'compare' ? (await service.compareRuns(['a', 'b']))[0] : await service.getRun('a');
+  expect(result.benchmark_config.name).toBe('config-1');
+  expect(result.metrics.pass_rate).toBeNull();
+});
+
+test('hosted GET accepts legacy null benchmark config', async () => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse({ ...run, benchmark_config: null }));
+  await expect(new ApiBenchmarkService('', fetcher, true).getRun('a'))
+    .resolves.toMatchObject({ benchmark_config: { name: 'Unavailable' } });
+});
+
+test.each([
+  { task_results: {} },
+  { task_results: [{ task_id: 'a', passed: 'yes' }] },
+  { benchmark_details: { benchmark_id: 'b', release: 'r', manifest_sha256: 'hash', expected_task_ids: {} } },
+  { benchmark_details: { benchmark_id: 'b', release: 'r', manifest_sha256: 'hash', expected_task_ids: [1] } },
+  { events: {} },
+  { events: [{ ts: '2026-01-01', event: {} }] },
+  { hardware_snapshot: { cpu: {} } },
+  { profile_snapshot: { ...run.profile_snapshot, quantisation: {} } },
+  { benchmark_config: { name: 'short', temperature: {} } },
+])('hosted GET rejects malformed consumed nested fields %#', async (patch) => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse({ ...run, ...patch }));
+  await expect(new ApiBenchmarkService('', fetcher, true).getRun('a')).rejects.toMatchObject({ status: 0 });
+});
+
+test('hosted GET accepts valid task results, events and nullable nested fields', async () => {
+  setApiSessionTokenProvider(async () => 'token');
+  const { fetcher } = fetchQueue(jsonResponse({
+    ...run,
+    benchmark_details: { benchmark_id: 'b', release: 'r', manifest_sha256: 'hash', expected_task_ids: ['a'] },
+    task_results: [{ task_id: 'a', passed: false }],
+    events: [{ ts: '2026-01-01T00:00:00Z', event: 'started', detail: null }],
+    hardware_snapshot: { cpu: null, gpu: 'GPU', ram_gb: null },
+    benchmark_config: { name: 'short', temperature: null, seed: null },
+  }));
+  await expect(new ApiBenchmarkService('', fetcher, true).getRun('a')).resolves.toMatchObject({
+    task_results: [{ task_id: 'a', passed: false }],
+  });
 });
 
 test('maps profile CRUD to the in-scope API contract', async () => {

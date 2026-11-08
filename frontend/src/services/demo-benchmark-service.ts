@@ -101,26 +101,41 @@ export class DemoBenchmarkService implements BenchmarkService {
   }
 
   private async request<T>(path: string): Promise<T> {
-    const response = await (this.fetcher ?? globalThis.fetch)(
-      `${this.baseUrl}/api/v1${path}`,
-      {
-      headers: { Accept: 'application/json' },
-      }
-    );
-    let body: unknown;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
     try {
-      body = await response.json();
-    } catch {
-      body = null;
+      return await Promise.race([
+        (async () => {
+          const response = await (this.fetcher ?? globalThis.fetch)(
+            `${this.baseUrl}/api/v1${path}`,
+            { headers: { Accept: 'application/json' }, signal: controller.signal }
+          );
+          let body: unknown;
+          try {
+            body = await response.json();
+          } catch {
+            if (response.ok) throw { status: 0, detail: 'Could not read demo response.' } satisfies ApiError;
+            body = null;
+          }
+          if (!response.ok) {
+            const detail =
+              body && typeof body === 'object' && 'detail' in body
+                ? (body as { detail: ApiError['detail'] }).detail
+                : 'Request failed';
+            throw { status: response.status, detail } satisfies ApiError;
+          }
+          return body as T;
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject({ status: 0, detail: 'Demo request timed out. Please retry.' } satisfies ApiError);
+            controller.abort();
+          }, 90000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer!);
     }
-    if (!response.ok) {
-      const detail =
-        body && typeof body === 'object' && 'detail' in body
-          ? (body as { detail: ApiError['detail'] }).detail
-          : 'Request failed';
-      throw { status: response.status, detail } satisfies ApiError;
-    }
-    return body as T;
   }
 }
 

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -50,7 +50,10 @@ beforeEach(async () => {
   mocks.auth.signOut.mockClear();
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 test('shows startup progress until authentication is ready', async () => {
   mocks.auth.isLoaded = false;
@@ -60,6 +63,39 @@ test('shows startup progress until authentication is ready', async () => {
   mocks.auth.isLoaded = true;
   view.rerender(<AuthBoundary><div>Application ready</div></AuthBoundary>);
   expect(await screen.findByText('Application ready')).toBeTruthy();
+});
+
+test('missing hosted Clerk configuration fails closed', async () => {
+  vi.stubEnv('VITE_CLERK_PUBLISHABLE_KEY', '');
+  vi.resetModules();
+  const { AuthBoundary: UnconfiguredBoundary } = await import('./AuthBoundary');
+  render(<UnconfiguredBoundary><div>Protected content</div></UnconfiguredBoundary>);
+  expect(screen.getByRole('alert').textContent).toMatch(/not configured/i);
+  expect(screen.queryByText('Protected content')).toBeNull();
+  expect(mocks.tokenProvider).toBeUndefined();
+});
+
+test('times out startup and retry restarts without showing stale content', () => {
+  vi.useFakeTimers();
+  try {
+    mocks.auth.isLoaded = false;
+    const view = render(<AuthBoundary><div>Protected content</div></AuthBoundary>);
+    act(() => vi.advanceTimersByTime(5000));
+    expect(screen.getByRole('status').textContent).toMatch(/cold start/i);
+    act(() => vi.advanceTimersByTime(25000));
+    expect(screen.getByRole('alert').textContent).toMatch(/authentication.*too long/i);
+    mocks.auth.isLoaded = true;
+    view.rerender(<AuthBoundary><div>Protected content</div></AuthBoundary>);
+    expect(screen.queryByText('Protected content')).toBeNull();
+    mocks.auth.isLoaded = false;
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(screen.getByRole('status')).toBeTruthy();
+    mocks.auth.isLoaded = true;
+    view.rerender(<AuthBoundary><div>Protected content</div></AuthBoundary>);
+    expect(screen.getByText('Protected content')).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('clears user-scoped state before signing out', async () => {
@@ -98,4 +134,12 @@ test('identity change clears state and remounts before the next identity is show
   view.rerender(<AuthBoundary><PersonalState /></AuthBoundary>);
   expect(await screen.findByRole('button', { name: 'Personal 0' })).toBeTruthy();
   expect(mocks.tokenProvider).toBeUndefined();
+});
+
+test('signing out hides personal content before sign-out completes', async () => {
+  mocks.auth.signOut.mockImplementation(() => new Promise<void>(() => {}));
+  render(<AuthBoundary><div>Personal secret</div><HostedAuthControls /></AuthBoundary>);
+  expect(screen.getByText('Personal secret')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+  expect(screen.queryByText('Personal secret')).toBeNull();
 });

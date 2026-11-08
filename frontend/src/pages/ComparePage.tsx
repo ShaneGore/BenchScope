@@ -10,7 +10,7 @@ import { comparableTaskRuns, taskResult } from '@/lib/task-results';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
+import { DemoLoading, EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
 
 export function ComparePage({ ids, serviceMode = APP_MODE }: { ids: string[]; serviceMode?: AppMode }) {
   const isDemo = serviceMode === 'demo';
@@ -47,6 +47,7 @@ export function ComparePage({ ids, serviceMode = APP_MODE }: { ids: string[]; se
   }
 
   if (loading) {
+    if (serviceMode !== 'local') return <DemoLoading personal={!isDemo} />;
     return (
       <div className="flex flex-col gap-6 animate-fadeIn">
         <h1 className="text-xl font-semibold text-text-primary tracking-tight">Compare runs</h1>
@@ -221,7 +222,7 @@ function DemoRunPicker({ initialIds }: { initialIds: string[] }) {
   const store = getBenchmarkService('demo');
   const { data, loading, error, refetch } = useAsync(() => store.listRuns(), []);
   const [selected, setSelected] = useState<string[]>(initialIds);
-  if (loading) return <Card><SkeletonText lines={6} /></Card>;
+  if (loading) return <DemoLoading />;
   if (error) return <ErrorState onRetry={refetch} description="Could not load demo configurations." />;
   const runs = data?.items ?? [];
   return (

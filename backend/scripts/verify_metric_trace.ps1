@@ -1,18 +1,116 @@
+param([switch]$LibraryOnly)
+
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $composeFile = Join-Path $repositoryRoot "compose.yaml"
 $projectName = "benchscope-metric-trace-$([guid]::NewGuid().ToString('N').Substring(0, 12))"
-$temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) $projectName
+$temporaryDirectory = Join-Path $PSScriptRoot $projectName
 $environmentFile = Join-Path $temporaryDirectory "synthetic.env"
 $composeOverrideFile = Join-Path $temporaryDirectory "synthetic-api-image.yaml"
 $secretFile = Join-Path $temporaryDirectory "synthetic-alert-secret"
 $composeFiles = @("--file", $composeFile, "--file", (Join-Path $repositoryRoot "compose.observability.yaml"), "--file", $composeOverrideFile)
 $dockerContext = $null
 $started = $false
-$buildApiImage = $false
+$imageAttempted = $false
+$directoryCreated = $false
 $savedEnvironment = @{}
 $environmentNames = @()
+
+function Get-SourceFingerprint {
+    param([string]$Backend)
+    $paths = @("Dockerfile", ".dockerignore", "pyproject.toml", "uv.lock", "alembic.ini")
+    $files = @($paths | ForEach-Object { Get-Item -LiteralPath (Join-Path $Backend $_) }) +
+        @(Get-ChildItem -LiteralPath (Join-Path $Backend "app"), (Join-Path $Backend "alembic") -File -Recurse -Force |
+            Where-Object { $_.FullName -notmatch '[\\/](__pycache__|\.venv|secrets)[\\/]' -and $_.Extension -notin @(".pem", ".key", ".gguf", ".safetensors", ".onnx", ".pt", ".pth") })
+    $lines = foreach ($file in ($files | Sort-Object FullName)) {
+        if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Build input is a link: $($file.FullName)" }
+        "$($file.FullName.Substring($Backend.Length + 1)) $((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)"
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant() }
+    finally { $hash.Dispose() }
+}
+
+function Get-TraceSpans {
+    param($Trace, [string]$TraceId)
+    foreach ($batch in $Trace.batches) {
+        foreach ($scope in $batch.scopeSpans) {
+            foreach ($span in $scope.spans) {
+                $id = ([BitConverter]::ToString([Convert]::FromBase64String($span.traceId))).Replace("-", "").ToLowerInvariant()
+                if ($id -eq $TraceId -and $span.name -eq "GET /api/v1/runs") {
+                    ([BitConverter]::ToString([Convert]::FromBase64String($span.spanId))).Replace("-", "").ToLowerInvariant()
+                }
+            }
+        }
+    }
+}
+
+function Test-CorrelatedLog {
+    param($Result, [string]$TraceId, [string[]]$SpanIds)
+    foreach ($stream in $Result.data.result) {
+        foreach ($value in $stream.values) {
+            if ($value.Count -lt 3 -or $value[1] -ne "HTTP request completed") { continue }
+            $metadata = $value[2]
+            if ($metadata.trace_id -eq $TraceId -and $SpanIds -contains $metadata.span_id -and
+                $metadata.http_route -eq "/api/v1/runs" -and
+                $metadata.http_request_method -eq "GET" -and
+                "$($metadata.http_response_status_code)" -eq "200") { return $true }
+        }
+    }
+    return $false
+}
+
+function Assert-SourceUnchanged {
+    param([string]$Backend, [string]$Expected)
+    if ((Get-SourceFingerprint $Backend) -ne $Expected) { throw "API build inputs changed during verification." }
+}
+
+function Assert-ImageMatches {
+    param([string]$Expected, [string]$Actual)
+    if (-not $Expected -or $Actual -ne $Expected) { throw "API container is not running the freshly built image." }
+}
+
+function Find-Exemplar {
+    param($Result, [string]$TraceId)
+    $found = $null
+    foreach ($candidate in $Result.data) {
+        if ($candidate.seriesLabels.PSObject.Properties.Name -contains "trace_id") {
+            throw "The trace ID was incorrectly added as a metric label."
+        }
+        foreach ($item in $candidate.exemplars) {
+            if ($item.labels.trace_id -eq $TraceId) {
+                $found = $item
+            }
+        }
+    }
+    return $found
+}
+
+function Remove-DisposableResources {
+    param([bool]$Started, [bool]$ImageAttempted, [string]$Image, [string]$Directory)
+    $errors = @()
+    if ($Started) {
+        try { Invoke-Compose -ComposeArguments @("down", "--volumes") }
+        catch { $errors += "Could not clean disposable project $projectName : $_" }
+    }
+    if ($ImageAttempted) {
+        $found = @(& docker --context $dockerContext image ls --quiet $Image)
+        if ($LASTEXITCODE -ne 0) { $errors += "Could not inspect disposable image $Image" }
+        elseif ($found.Count -gt 0) {
+            & docker --context $dockerContext image rm $Image
+            if ($LASTEXITCODE -ne 0) { $errors += "Could not remove disposable image $Image" }
+        }
+    }
+    if ($Directory -and (Test-Path -LiteralPath $Directory)) {
+        try { Remove-Item -LiteralPath $Directory -Recurse -Force }
+        catch { $errors += "Could not remove disposable files $Directory : $_" }
+    }
+    if ($errors.Count -gt 0) { throw ($errors -join "; ") }
+}
+
+if ($LibraryOnly) { return }
 
 function Get-FreeLoopbackPort {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -77,7 +175,7 @@ try {
         "grafana/tempo:2.8.1",
         "grafana/grafana:12.1.1"
     )
-    $apiImage = "benchscope-issue35-api:latest"
+    $apiImage = "${projectName}-api:verify"
     $buildBaseImages = @("ghcr.io/astral-sh/uv:0.12.5", "python:3.12-slim")
     $availableImages = @(
         & docker --context $dockerContext image ls --format "{{.Repository}}:{{.Tag}}"
@@ -86,20 +184,17 @@ try {
         throw "Could not inspect local Docker images."
     }
     $missingImages = @(
-        $requiredServiceImages | Where-Object { $availableImages -notcontains $_ }
+        ($requiredServiceImages + $buildBaseImages) | Where-Object { $availableImages -notcontains $_ }
     )
     if ($missingImages.Count -gt 0) {
         throw "Required images are not already local; no pull was attempted: $($missingImages -join ', ')"
     }
-    $buildApiImage = $availableImages -notcontains $apiImage
-    if ($buildApiImage) {
-        $missingBuildBases = @(
-            $buildBaseImages | Where-Object { $availableImages -notcontains $_ }
-        )
-        if ($missingBuildBases.Count -gt 0) {
-            throw "Cached API image $apiImage is absent and build bases are not all local; no pull was attempted: $($missingBuildBases -join ', ')"
-        }
-    }
+    if ($availableImages -contains $apiImage) { throw "Disposable image tag already exists: $apiImage" }
+    $backend = (Resolve-Path (Join-Path $repositoryRoot "backend")).Path
+    $revision = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not identify source revision." }
+    $fingerprint = Get-SourceFingerprint $backend
+    Write-Output "Source revision: $revision; API build-input SHA256: $fingerprint (includes checkout changes)."
 
     $ports = @{}
     foreach ($name in @("POSTGRES_PORT", "API_PORT", "OTLP_PORT", "PROMETHEUS_PORT", "LOKI_PORT", "TEMPO_PORT", "GRAFANA_PORT")) {
@@ -118,6 +213,7 @@ try {
     }
 
     New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+    $directoryCreated = $true
     [IO.File]::WriteAllText(
         $composeOverrideFile,
         "services:`n  api:`n    image: $apiImage`n",
@@ -180,23 +276,29 @@ try {
         throw "The disposable Compose project name is unexpectedly in use."
     }
 
-    Write-Output "Starting isolated project $projectName on checked loopback ports."
-    if ($buildApiImage) {
-        Write-Output "Cached API image $apiImage is absent; building locally from cached bases only."
-        $apiBuildOption = "--build"
-    } else {
-        Write-Output "Using cached API image $apiImage without rebuilding."
-        $apiBuildOption = "--no-build"
-    }
+    Write-Output "Building $apiImage with local bases and no build network."
+    $imageAttempted = $true
+    & docker --context $dockerContext build --pull=false --network none --tag $apiImage --build-arg "APP_REVISION=$revision" $backend
+    if ($LASTEXITCODE -ne 0) { throw "Offline API build failed; dependencies must already be cached locally." }
+    Assert-SourceUnchanged $backend $fingerprint
+    $imageId = (& docker --context $dockerContext image inspect --format '{{.Id}}' $apiImage).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $imageId) { throw "Could not identify freshly built API image." }
+    Write-Output "Starting isolated project $projectName using image $imageId."
     $started = $true
     Invoke-Compose -ComposeArguments @(
-        "up", "--detach", $apiBuildOption, "--pull", "never",
+        "up", "--detach", "--no-build", "--pull", "never",
         "api", "prometheus", "otel-collector", "grafana"
     )
+    $containerId = (& docker --context $dockerContext compose --project-name $projectName --project-directory $repositoryRoot @composeFiles --env-file $environmentFile ps --quiet api).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $containerId) { throw "Could not identify the API container." }
+    $runningImage = (& docker --context $dockerContext inspect --format '{{.Image}}' $containerId).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the API container image." }
+    Assert-ImageMatches $imageId $runningImage
 
     $apiUri = "http://127.0.0.1:$($ports.API_PORT)"
     $prometheusUri = "http://127.0.0.1:$($ports.PROMETHEUS_PORT)"
     $tempoUri = "http://127.0.0.1:$($ports.TEMPO_PORT)"
+    $lokiUri = "http://127.0.0.1:$($ports.LOKI_PORT)"
     $grafanaUri = "http://127.0.0.1:$($ports.GRAFANA_PORT)"
     Wait-ForHttp -Uri "$apiUri/ready" | Out-Null
     Wait-ForHttp -Uri "$prometheusUri/-/ready" | Out-Null
@@ -220,52 +322,28 @@ try {
         'benchscope_http_server_requests_total{http_route="/api/v1/runs"}'
     )
     $exemplar = $null
-    $seriesLabels = $null
     for ($attempt = 0; $attempt -lt 45 -and $null -eq $exemplar; $attempt++) {
         $end = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $result = Invoke-RestMethod `
             -Uri "$prometheusUri/api/v1/query_exemplars?query=$query&start=$($requestStart - 5)&end=$end" `
             -TimeoutSec 10
-        foreach ($candidate in $result.data) {
-            $matches = @($candidate.exemplars |
-                Where-Object { $_.labels.trace_id -eq $traceId } |
-                Select-Object -First 1)
-            if ($matches.Count -gt 0) {
-                $seriesLabels = $candidate.seriesLabels
-                $exemplar = $matches[0]
-                break
-            }
-        }
+        $exemplar = Find-Exemplar $result $traceId
         if ($null -eq $exemplar) { Start-Sleep -Seconds 2 }
     }
     if ($null -eq $exemplar) {
         throw "Prometheus did not expose the synthetic request's exact trace exemplar."
     }
-    if ($seriesLabels.PSObject.Properties.Name -contains "trace_id") {
-        throw "The trace ID was incorrectly added as a metric label."
-    }
-
     $tempoTrace = $null
-    $tempoTraceIds = @()
+    $tempoSpanIds = @()
     for ($attempt = 0; $attempt -lt 30 -and $null -eq $tempoTrace; $attempt++) {
         try {
             $candidateTrace = Invoke-RestMethod `
                 -Uri "$tempoUri/api/traces/$traceId" `
                 -TimeoutSec 10
-            $candidateIds = @(
-                foreach ($batch in $candidateTrace.batches) {
-                    foreach ($scope in $batch.scopeSpans) {
-                        foreach ($span in $scope.spans) {
-                            ([BitConverter]::ToString(
-                                [Convert]::FromBase64String($span.traceId)
-                            )).Replace("-", "").ToLowerInvariant()
-                        }
-                    }
-                }
-            )
-            if ($candidateIds -contains $traceId) {
+            $candidateIds = @(Get-TraceSpans $candidateTrace $traceId)
+            if ($candidateIds.Count -gt 0) {
                 $tempoTrace = $candidateTrace
-                $tempoTraceIds = $candidateIds
+                $tempoSpanIds = $candidateIds
             }
         } catch {
             # Tempo may not have received the batch yet.
@@ -278,20 +356,29 @@ try {
     $grafanaTrace = Invoke-RestMethod `
         -Uri "$grafanaUri/api/datasources/proxy/uid/tempo/api/traces/$traceId" `
         -TimeoutSec 10
-    $grafanaTraceIds = @(
-        foreach ($batch in $grafanaTrace.batches) {
-            foreach ($scope in $batch.scopeSpans) {
-                foreach ($span in $scope.spans) {
-                    ([BitConverter]::ToString(
-                        [Convert]::FromBase64String($span.traceId)
-                    )).Replace("-", "").ToLowerInvariant()
-                }
-            }
-        }
-    )
-    if ($grafanaTraceIds -notcontains $traceId) {
+    $grafanaSpanIds = @(Get-TraceSpans $grafanaTrace $traceId)
+    if (@($grafanaSpanIds | Where-Object { $tempoSpanIds -contains $_ }).Count -eq 0) {
         throw "Anonymous Grafana Tempo proxy did not return a span with the exact synthetic trace ID $traceId."
     }
+
+    $logQuery = [uri]::EscapeDataString('{service_name="benchscope-api"} |= "HTTP request completed"')
+    $foundLog = $false
+    for ($attempt = 0; $attempt -lt 45 -and -not $foundLog; $attempt++) {
+        try {
+            $logResult = Invoke-RestMethod -Uri "$lokiUri/loki/api/v1/query_range?query=$logQuery&start=$($requestStart - 5)000000000&limit=1000" -TimeoutSec 10
+            $foundLog = Test-CorrelatedLog $logResult $traceId $tempoSpanIds
+        } catch {
+            # Loki may not have received the batch yet.
+        }
+        if (-not $foundLog) { Start-Sleep -Seconds 2 }
+    }
+    if (-not $foundLog) { throw "Loki did not return the synthetic HTTP completed log with the matching trace and span IDs." }
+    Assert-SourceUnchanged $backend $fingerprint
+    $currentContainer = (& docker --context $dockerContext compose --project-name $projectName --project-directory $repositoryRoot @composeFiles --env-file $environmentFile ps --quiet api).Trim()
+    if ($LASTEXITCODE -ne 0 -or $currentContainer -ne $containerId) { throw "API container changed during verification." }
+    $runningImage = (& docker --context $dockerContext inspect --format '{{.Image}}' $currentContainer).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the API container image." }
+    Assert-ImageMatches $imageId $runningImage
 
     $buildInfo = Invoke-RestMethod `
         -Uri "$prometheusUri/api/v1/status/buildinfo" `
@@ -311,22 +398,12 @@ try {
     Write-Output "Compose image versions: Prometheus 3.5.0; Grafana 12.1.1; Collector 0.136.0; Tempo 2.8.1; Loki 3.5.3; PostgreSQL 17-alpine."
     Write-Output "API telemetry packages: $pythonVersions"
     Write-Output "Metric exemplar trace_id: $($exemplar.labels.trace_id)"
-    Write-Output "Tempo trace IDs: $($tempoTraceIds -join ', ')"
-    Write-Output "Anonymous Grafana Tempo proxy trace IDs: $($grafanaTraceIds -join ', ')"
-    Write-Output "Verified exact metric-exemplar-to-Tempo trace match: $traceId"
-    Write-Output "Verified anonymous Grafana Trace URL returns exact trace: $traceId"
+    Write-Output "Verified exemplar, Tempo, Loki HTTP completed log and anonymous Grafana proxy for trace $traceId; Tempo span IDs: $($tempoSpanIds -join ', ')."
 } finally {
-    if ($started) {
-        try {
-            Invoke-Compose -ComposeArguments @("down", "--volumes")
-        } catch {
-            Write-Warning "Could not clean up only disposable project $projectName : $_"
+    try { Remove-DisposableResources $started $imageAttempted $apiImage $(if ($directoryCreated) { $temporaryDirectory } else { "" }) }
+    finally {
+        foreach ($name in $savedEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process")
         }
-    }
-    foreach ($name in $savedEnvironment.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], "Process")
-    }
-    if (Test-Path $temporaryDirectory) {
-        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
     }
 }

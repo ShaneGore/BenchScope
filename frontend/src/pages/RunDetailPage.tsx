@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import type { ApiError, BenchmarkRun } from '@/types';
 import { getBenchmarkService } from '@/services/benchmark-service';
 import { LocalRunnerService } from '@/services/runner-service';
 import { APP_MODE, canDelete } from '@/lib/mode';
 import { linkProps, navigate } from '@/lib/router';
-import { usePolling } from '@/lib/hooks';
+import { toApiError, usePolling } from '@/lib/hooks';
 import { fmtDate, fmtElapsed } from '@/lib/format';
 import { METRIC_DEFS, metricAvailable, runProfileLabel } from '@/lib/metrics';
 import { taskResult } from '@/lib/task-results';
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Modal } from '@/components/ui/Modal';
-import { DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
+import { DemoLoading, DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function RunDetailPage({
   id,
@@ -33,38 +33,42 @@ export function RunDetailPage({
   const [busy, setBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++requestId.current;
     setLoading(true);
     setError(null);
     try {
       const r = await store.getRun(id);
-      setRun(r);
+      if (requestId.current === request) setRun(r);
     } catch (e) {
-      setError(e as ApiError);
+      if (requestId.current === request) setError(toApiError(e));
     } finally {
-      setLoading(false);
+      if (requestId.current === request) setLoading(false);
     }
   }, [id, store]);
 
   useEffect(() => {
     load();
+    return () => { ++requestId.current; };
   }, [load]);
 
   usePolling(
-    run?.status === 'running',
+    run?.status === 'running' && !error && !loading,
     async () => {
+      const request = requestId.current;
       try {
         const r = await store.getRun(id);
-        setRun(r);
-      } catch {
-        // ignore polling errors
+        if (requestId.current === request) setRun(r);
+      } catch (e) {
+        if (serviceMode === 'hosted' && requestId.current === request) setError(toApiError(e));
       }
     },
     1000
   );
 
-  if (loading) return <RunDetailSkeleton />;
+  if (loading) return serviceMode !== 'local' ? <DemoLoading personal={serviceMode !== 'demo'} /> : <RunDetailSkeleton />;
   if (error) {
     if (error.status === 404) {
       return (

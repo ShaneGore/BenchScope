@@ -129,6 +129,7 @@ Current code behavior is limited to the following known facts:
 4. Use issue #21 to record health/readiness, anonymous demo, auth, import,
    comparison, owner-isolation, and rollback results. Promote to production
    only after that review and separate explicit owner approval.
+
 5. **Frontend rollback:** redeploy the Pages site from the last-known-good
    source commit using the Pages deployment workflow, or revert through a PR
    and redeploy. Keep the source commit and successful deployment URL in
@@ -146,6 +147,41 @@ Current code behavior is limited to the following known facts:
    synthetic identities. If its test state is unusable, recreate the test
    identities in that application; never copy production identities or
    credentials.
+
+The manual production promotion workflow fails if any of
+`PRODUCTION_DATABASE_URL`, `PRODUCTION_RENDER_DEPLOY_HOOK_URL`,
+`PRODUCTION_SMOKE_API_URL`, `PRODUCTION_SMOKE_TEST_TOKEN`, or
+`PRODUCTION_SMOKE_FRONTEND_URL` is missing. The first, second, and fourth are
+secrets; the two smoke URLs are GitHub environment variables.
+`PRODUCTION_SMOKE_OTHER_TEST_TOKEN` is an optional secret. Missing values are
+identified by name without printing their contents.
+
+Promotion accepts `main`, `refs/heads/main`, a versioned `v...` tag (optionally
+prefixed with `refs/tags/`), or a full lowercase 40-character commit SHA.
+The checked-out commit must exist and be in main's history before any code
+from it is executed. The workflow also requires the latest run of the
+repository's `.github/workflows/ci.yml` for that exact SHA to be a completed,
+successful `push` run on `main`; pull-request CI does not qualify. It uses
+read-only Actions access, rejects missing, pending, unsuccessful, malformed,
+unavailable, or more than 100 matching runs, and fails closed on API errors.
+A successful run reflects the CI definition at that revision, not an
+independent guarantee that its checks were adequate; protecting main and
+reviewing changes to CI remain necessary. GitHub environment protection and
+separate owner approval are still required.
+
+After these checks, the workflow installs the
+selected revision's locked development dependencies. Before migration or
+deployment, a bounded local check starts the actual app in isolated local test
+configuration with no database URL, benchmark execution disabled and socket
+connections blocked. It sends in-process HTTP requests to `/version` with
+synthetic revision values, and exercises the deployment verifier against
+synthetic ready, wrong-revision and not-ready responses. A failed or unsupported
+preflight fails closed. Harmless changes do not require pin updates. This check
+does not prove deployment-provider behavior or every possible implementation is
+compatible. The checked-out SHA is used for both
+the deploy hook and the readiness/revision check. These guards do not
+constitute owner approval or evidence that production deployment has been
+exercised.
 
 No deployment, hosted health/readiness check, CORS check, migration, smoke test,
 rollback, or recreation has been exercised yet. Record actual deployment URLs

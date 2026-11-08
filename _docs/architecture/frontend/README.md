@@ -49,6 +49,9 @@ frontend/
 - Clerk provider wraps app. Signed-in state from Clerk.
 - Route guards: protected routes redirect to sign-in; demo route public.
 - Hosted mode: hide launch/profile-endpoint UI based on `VITE_APP_MODE`, but backend remains authoritative.
+- Hosted Clerk startup announces progress, explains a slow start after five seconds, and offers a fresh initialization after a 30-second timeout. Protected content remains hidden until the current identity is ready.
+- Anonymous demo catalogue, detail, and comparison reads announce loading and explain a possible cold start after five seconds. Requests including response parsing time out after 90 seconds and can be retried; a missing detail remains a not-found state.
+- Hosted personal dashboard, history, run detail, comparison, and profiles reads announce loading and a possible cold start after five seconds. Token acquisition, network and response parsing share a 90-second deadline; failures can be retried, and a missing run remains not found. Identity changes discard the previous personal view; writes are not retried or timed out by this mechanism.
 
 ## 6. Data display rules
 

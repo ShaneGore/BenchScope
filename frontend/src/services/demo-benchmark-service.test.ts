@@ -69,3 +69,49 @@ test('demo comparison validates selection before making requests', async () => {
   }
   expect(fetcher).not.toHaveBeenCalled();
 });
+
+test.each(['fetch', 'json'])('bounds stalled %s and allows a fresh retry', async (stage) => {
+  vi.useFakeTimers();
+  try {
+    const never = new Promise<never>(() => {});
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => stage === 'fetch' ? never : Promise.resolve({ ok: true, json: () => never }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([demoRun])));
+    const service = new DemoBenchmarkService('', fetcher as unknown as typeof fetch);
+    const pending = service.listRuns();
+    const result = expect(pending).rejects.toMatchObject({ status: 0, detail: expect.stringMatching(/timed out/i) });
+    await vi.advanceTimersByTimeAsync(90000);
+    await result;
+    expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+    expect((await service.listRuns()).items[0].id).toBe(demoRun.id);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('preserves not found and reports malformed successful responses', async () => {
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response('{"detail":"Not found"}', { status: 404 }))
+    .mockResolvedValueOnce(new Response('not json'));
+  const service = new DemoBenchmarkService('', fetcher as unknown as typeof fetch);
+  await expect(service.getRun('missing')).rejects.toMatchObject({ status: 404 });
+  await expect(service.listRuns()).rejects.toMatchObject({ status: 0 });
+});
+
+test.each(['fetch', 'json'])('abort rejection during %s cannot mask timeout', async (stage) => {
+  vi.useFakeTimers();
+  try {
+    const fetcher = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      const aborted = new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+      return stage === 'fetch' ? aborted : Promise.resolve({ ok: true, json: () => aborted });
+    });
+    const service = new DemoBenchmarkService('', fetcher as unknown as typeof fetch);
+    const result = expect(service.listRuns()).rejects.toEqual({ status: 0, detail: 'Demo request timed out. Please retry.' });
+    await vi.advanceTimersByTimeAsync(90000);
+    await result;
+  } finally {
+    vi.useRealTimers();
+  }
+});

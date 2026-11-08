@@ -4,8 +4,10 @@ Local-only, supervised Stage 3 incident recovery.
 
 from __future__ import annotations
 
+import ipaddress
 import json
-import socket
+import math
+import re
 import subprocess
 import time
 import urllib.request
@@ -71,6 +73,17 @@ DISPOSABLE_REQUIRED_PORT_ASSIGNMENTS = {
     "LOKI_PORT": 13100,
     "TEMPO_PORT": 13200,
     "OTLP_PORT": 14318,
+}
+INSPECTION_TIMEOUT_SECONDS = 5
+EXPECTED_BINDINGS = {
+    "api": ("8000/tcp", 18000),
+    "db": ("5432/tcp", 15432),
+    "prometheus": ("9090/tcp", 19090),
+    "grafana": ("3000/tcp", 13000),
+    "loki": ("3100/tcp", 13100),
+    "tempo": ("3200/tcp", 13200),
+    "otel-collector": ("4318/tcp", 14318),
+    "alert-receiver": None,
 }
 
 FORBIDDEN_AUDIT_KEYS = {
@@ -138,7 +151,16 @@ class RecoveryVerificationResult:
 
     @property
     def success(self) -> bool:
-        return bool(self.checks) and all(bool(value) for value in self.checks.values())
+        required = {
+            "api_readiness",
+            "prometheus_target",
+            "alert_resolution",
+            "persistence",
+            "recovery_smoke_test",
+        }
+        return required <= self.checks.keys() and all(
+            value is True for value in self.checks.values()
+        )
 
     def __bool__(self) -> bool:
         return self.success
@@ -375,15 +397,87 @@ def validate_disposable_env(env_values: Any = None, path: Any = None) -> dict[st
 def check_host_ports(ports: Any = None, host: str = "127.0.0.1") -> list[int]:
     if ports is None:
         ports = DISPOSABLE_REQUIRED_HOST_PORTS
-    occupied: list[int] = []
-    for port in ports:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind((host, int(port)))
-        except OSError:
-            occupied.append(int(port))
-    return occupied
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            timeout=INSPECTION_TIMEOUT_SECONDS,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not isinstance(result.stdout, str):
+            raise ValueError
+        occupied = set()
+        header_seen = False
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            if not header_seen and line.strip().casefold() == "active connections":
+                continue
+            if not header_seen and [field.casefold() for field in fields] == [
+                "proto",
+                "local",
+                "address",
+                "foreign",
+                "address",
+                "state",
+                "pid",
+            ]:
+                header_seen = True
+                continue
+            if not header_seen:
+                raise ValueError
+            protocol = fields[0].upper()
+            if (
+                protocol not in {"TCP", "UDP"}
+                or len(fields) != (5 if protocol == "TCP" else 4)
+                or not fields[-1].isascii()
+                or not fields[-1].isdigit()
+            ):
+                raise ValueError
+            for index, endpoint in enumerate(fields[1:3]):
+                match = re.fullmatch(r"(\[[^\]]+\]|[^:]+):([0-9]+|\*)", endpoint)
+                if match is None:
+                    raise ValueError
+                address, port = match.groups()
+                if address == "*":
+                    if index == 0:
+                        raise ValueError
+                else:
+                    ip = ipaddress.ip_address(address.strip("[]"))
+                    if (ip.version == 6) != address.startswith("["):
+                        raise ValueError
+                if port != "*" and int(port) > 65535:
+                    raise ValueError
+            local_match = re.fullmatch(r"(\[[^\]]+\]|[^:]+):([0-9]+)", fields[1])
+            if local_match is None:
+                raise ValueError
+            if protocol == "UDP":
+                continue
+            state = fields[3].upper()
+            if state not in {
+                "LISTENING",
+                "ESTABLISHED",
+                "TIME_WAIT",
+                "CLOSE_WAIT",
+                "SYN_SENT",
+                "SYN_RECEIVED",
+                "FIN_WAIT_1",
+                "FIN_WAIT_2",
+                "CLOSING",
+                "LAST_ACK",
+                "CLOSED",
+                "DELETE_TCB",
+            }:
+                raise ValueError
+            if state == "LISTENING":
+                occupied.add(int(local_match.group(2)))
+        if not header_seen:
+            raise ValueError
+        return sorted(set(ports) & occupied)
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+        raise RecoveryBlocked("host listener inspection failed") from exc
 
 
 def host_ports_are_free(ports: Any = None, host: str = "127.0.0.1") -> bool:
@@ -396,6 +490,96 @@ def verify_compose_project_identity(
     if actual != expected:
         raise RecoveryBlocked("wrong Compose project identity")
     return True
+
+
+def inspect_disposable_project() -> dict[str, Any]:
+    """Observe the fixed project; this is not authorization to restart it."""
+
+    def run(command: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                command,
+                cwd=RECOVERY_WORKING_DIRECTORY,
+                timeout=INSPECTION_TIMEOUT_SECONDS,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0 or not isinstance(result.stdout, str):
+                raise RecoveryBlocked("Docker inspection failed")
+            return result.stdout
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise RecoveryBlocked("Docker inspection failed") from exc
+
+    ids = run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={RECOVERY_PROJECT}",
+        ]
+    ).splitlines()
+    if (
+        not ids
+        or len(ids) != len(set(ids))
+        or any(re.fullmatch(r"[0-9a-f]{64}", item) is None for item in ids)
+    ):
+        raise RecoveryBlocked("invalid or absent project containers")
+    try:
+        containers = json.loads(run(["docker", "inspect", *ids]))
+        if not isinstance(containers, list) or len(containers) != len(ids):
+            raise ValueError
+        seen_ids = set()
+        seen_services = set()
+        running_ports = set()
+        for container in containers:
+            container_id = container["Id"]
+            labels = container["Config"]["Labels"]
+            service = labels["com.docker.compose.service"]
+            if (
+                container_id not in ids
+                or container_id in seen_ids
+                or labels["com.docker.compose.project"] != RECOVERY_PROJECT
+                or service not in EXPECTED_BINDINGS
+                or service in seen_services
+            ):
+                raise ValueError
+            seen_ids.add(container_id)
+            seen_services.add(service)
+            running = container["State"]["Running"]
+            if not isinstance(running, bool):
+                raise TypeError
+            bindings = container["HostConfig"]["PortBindings"]
+            expected = EXPECTED_BINDINGS[service]
+            expected_bindings = (
+                {expected[0]: [{"HostIp": "127.0.0.1", "HostPort": str(expected[1])}]}
+                if expected
+                else {}
+            )
+            if bindings is None:
+                bindings = {}
+            if not isinstance(bindings, dict) or bindings != expected_bindings:
+                raise ValueError
+            if running and expected:
+                running_ports.add(expected[1])
+        if "api" not in seen_services:
+            raise ValueError
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise RecoveryBlocked("invalid project inspection or port mappings") from exc
+
+    occupied = set(check_host_ports())
+    return {
+        "api_container_id": next(
+            container["Id"]
+            for container in containers
+            if container["Config"]["Labels"]["com.docker.compose.service"] == "api"
+        ),
+        "surviving_service_ports": sorted(running_ports),
+        "unproven_listener_ports": sorted(occupied & running_ports),
+        "conflicting_ports": sorted(occupied - running_ports),
+    }
 
 
 def verify_api_readiness(
@@ -413,15 +597,44 @@ def verify_prometheus_target(
 ) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return False
             payload = json.loads(response.read().decode("utf-8"))
-        for item in payload.get("data", {}).get("result", []):
-            value = item.get("value", [None, None])
-            if len(value) == 2 and str(value[1]) == "1":
-                labels = item.get("metric", {})
-                if labels.get("job") == "api" or not labels:
-                    return True
-        return False
-    except (OSError, TimeoutError, ValueError):
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return False
+        data = payload.get("data")
+        if not isinstance(data, dict) or data.get("resultType") != "vector":
+            return False
+        results = data.get("result")
+        if not isinstance(results, list):
+            return False
+        target_up = False
+        for item in results:
+            if not isinstance(item, dict):
+                return False
+            labels, value = item.get("metric"), item.get("value")
+            if (
+                not isinstance(labels, dict)
+                or not isinstance(labels.get("job"), str)
+                or not isinstance(value, list)
+                or len(value) != 2
+                or isinstance(value[0], bool)
+                or not isinstance(value[0], (int, float))
+                or not math.isfinite(value[0])
+                or value[1] not in ("0", "1")
+            ):
+                return False
+            if labels["job"] == "api" and value[1] == "1":
+                target_up = True
+        return target_up
+    except (
+        OSError,
+        TimeoutError,
+        ValueError,
+        AttributeError,
+        TypeError,
+        OverflowError,
+    ):
         return False
 
 
@@ -434,14 +647,49 @@ def verify_alert_resolution(
     while True:
         try:
             with urllib.request.urlopen(url, timeout=5.0) as response:
+                if response.status != 200:
+                    raise ValueError("unsuccessful Prometheus response")
                 payload = json.loads(response.read().decode("utf-8"))
-            results = payload.get("data", {}).get("result", [])
-            firing = any(
-                str(item.get("value", [None, None])[-1]) == "1" for item in results
-            )
-            if not firing:
+            if not isinstance(payload, dict) or payload.get("status") != "success":
+                raise ValueError("invalid Prometheus status")
+            data = payload.get("data")
+            if not isinstance(data, dict) or data.get("resultType") != "vector":
+                raise ValueError("invalid Prometheus data")
+            results = data.get("result")
+            if not isinstance(results, list):
+                raise TypeError("invalid Prometheus result")
+            active = False
+            for item in results:
+                if not isinstance(item, dict):
+                    raise TypeError("invalid alert sample")
+                metric, value = item.get("metric"), item.get("value")
+                if (
+                    not isinstance(metric, dict)
+                    or not isinstance(metric.get("alertname"), str)
+                    or metric.get("alertstate") not in ("pending", "firing")
+                    or not isinstance(value, list)
+                    or len(value) != 2
+                    or isinstance(value[0], bool)
+                    or not isinstance(value[0], (int, float))
+                    or not math.isfinite(value[0])
+                    or value[1] not in ("0", "1")
+                ):
+                    raise ValueError("invalid alert sample")
+                if (
+                    metric["alertname"] == "BenchScopeApiUnavailable"
+                    and value[1] == "1"
+                ):
+                    active = True
+            if not active:
                 return True
-        except (OSError, TimeoutError, ValueError, KeyError):
+        except (
+            OSError,
+            TimeoutError,
+            ValueError,
+            AttributeError,
+            TypeError,
+            OverflowError,
+        ):
             pass
         if time.monotonic() >= deadline:
             return False
@@ -449,7 +697,7 @@ def verify_alert_resolution(
 
 
 def verify_synthetic_run_persisted(expected: Any, actual: Any) -> bool:
-    return expected == actual
+    return expected is not None and actual is not None and expected == actual
 
 
 def run_recovery_smoke_test(
@@ -482,20 +730,21 @@ def verify_recovery(
 ) -> RecoveryVerificationResult:
     checks = {
         "api_readiness": (
-            verify_api_readiness() if api_readiness is None else bool(api_readiness)
+            verify_api_readiness() is True
+            if api_readiness is None
+            else api_readiness is True
         ),
         "prometheus_target": (
-            verify_prometheus_target()
+            verify_prometheus_target() is True
             if prometheus_target is None
-            else bool(prometheus_target)
+            else prometheus_target is True
         ),
         "alert_resolution": (
-            verify_alert_resolution(timeout=0, poll_interval=0)
-            if alert_resolved is None
-            else bool(alert_resolved)
+            (alert_resolved is None or alert_resolved is True)
+            and verify_alert_resolution(timeout=0, poll_interval=0) is True
         ),
-        "persistence": bool(True if persistence is None else persistence),
-        "recovery_smoke_test": bool(True if smoke_test is None else smoke_test),
+        "persistence": persistence is True,
+        "recovery_smoke_test": smoke_test is True,
     }
     return RecoveryVerificationResult(checks=checks)
 
@@ -571,59 +820,13 @@ def execute_fixed_recovery(
         working_directory=RECOVERY_WORKING_DIRECTORY,
         now=current,
     )
-    if project_identity is not None:
-        verify_compose_project_identity(project_identity, RECOVERY_PROJECT)
-    else:
-        verify_compose_project_identity(RECOVERY_PROJECT, RECOVERY_PROJECT)
     validate_disposable_env(env_config, env_path)
-    occupied = check_host_ports(ports)
-    if occupied:
-        raise RecoveryBlocked("required host ports are occupied")
-    if getattr(approval, "attempted", False):
-        raise RecoveryBlocked("recovery has already been attempted")
-    approval.attempted = True
-    consume_approval(approval, now=current)
-    started_at = current
-    outcome = "failed"
-    final_state = "escalated"
-    verification: dict[str, bool] = {}
-    try:
-        result = executor(
-            list(RECOVERY_COMMAND),
-            cwd=RECOVERY_WORKING_DIRECTORY,
-            timeout=RECOVERY_TIMEOUT_SECONDS,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=None,
-        )
-        returncode = getattr(result, "returncode", 1)
-        if returncode != 0:
-            raise RecoveryBlocked("recovery action failed")
-        outcome = "success"
-    except Exception:
-        outcome = "failed"
-        raise
-    finally:
-        ended_at = _now()
-        audit = create_audit_record(
-            incident_id=target_incident,
-            approval=approval,
-            started_at=started_at,
-            ended_at=ended_at,
-            outcome=outcome,
-            verification=verification,
-            final_state=final_state,
-        )
-        if outcome == "success":
-            # A successful restart command is not evidence of recovery. Leave
-            # the incident open until independent health and alert checks run.
-            final_state = "verification_required"
-            audit["final_state"] = final_state
-            audit["outcome"] = outcome
-    if outcome == "success":
-        return {"status": "verification_required", "audit": audit, "outcome": outcome}
-    return {"status": "escalated", "audit": audit, "outcome": outcome}
+    observation = inspect_disposable_project()
+    if observation["conflicting_ports"]:
+        raise RecoveryBlocked("required host ports have conflicts")
+    if observation["unproven_listener_ports"]:
+        raise RecoveryBlocked("surviving service listener ownership is unproven")
+    raise RecoveryBlocked("recovery execution disabled: race-safe ownership unproven")
 
 
 def recover_incident(

@@ -3,8 +3,9 @@ import { expect, test, vi } from "vitest";
 import App from "./App";
 
 test("renders the application", () => {
-  const { container } = render(<App />);
+  const { container, unmount } = render(<App />);
   expect(container).toBeTruthy();
+  unmount();
 });
 
 test("demo route loads only anonymous synthetic API data", async () => {
@@ -46,8 +47,8 @@ test("demo route loads only anonymous synthetic API data", async () => {
   vi.stubGlobal("fetch", fetcher);
   window.location.hash = "/demo";
 
+  const { unmount } = render(<App />);
   try {
-    render(<App />);
     expect(await screen.findByText("Synthetic browser model")).toBeTruthy();
     expect(screen.getByText("Model 15")).toBeTruthy();
     expect(screen.getAllByText("Pass rate").length).toBe(15);
@@ -57,6 +58,7 @@ test("demo route loads only anonymous synthetic API data", async () => {
     ]);
     expect(fetcher.mock.calls.some(([url]) => String(url).includes('/runs/import'))).toBe(false);
   } finally {
+    unmount();
     window.location.hash = "";
     vi.unstubAllGlobals();
   }

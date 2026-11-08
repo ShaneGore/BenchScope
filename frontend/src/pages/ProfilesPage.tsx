@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
+import { DemoLoading, EmptyState, ErrorState, SkeletonText } from '@/components/ui/State';
 
 interface ProfileFormState {
   name: string;
@@ -123,6 +123,7 @@ export function ProfilesPage() {
   };
 
   if (loading) {
+    if (APP_MODE === 'hosted') return <DemoLoading personal />;
     return (
       <div className="flex flex-col gap-6 animate-fadeIn">
         <h1 className="text-xl font-semibold text-text-primary tracking-tight">Profiles</h1>
