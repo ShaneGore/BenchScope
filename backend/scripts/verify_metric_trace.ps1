@@ -50,9 +50,10 @@ function Get-TraceSpans {
 function Test-CorrelatedLog {
     param($Result, [string]$TraceId, [string[]]$SpanIds)
     foreach ($stream in $Result.data.result) {
+        $metadata = $stream.stream
+        if ($null -eq $metadata) { continue }
         foreach ($value in $stream.values) {
-            if ($value.Count -lt 3 -or $value[1] -ne "HTTP request completed") { continue }
-            $metadata = $value[2]
+            if ($value.Count -lt 2 -or $value[1] -ne "HTTP request completed") { continue }
             if ($metadata.trace_id -eq $TraceId -and $SpanIds -contains $metadata.span_id -and
                 $metadata.http_route -eq "/api/v1/runs" -and
                 $metadata.http_request_method -eq "GET" -and
@@ -276,10 +277,10 @@ try {
         throw "The disposable Compose project name is unexpectedly in use."
     }
 
-    Write-Output "Building $apiImage with local bases and no build network."
+    Write-Output "Building $apiImage with local bases and TLS-verified locked dependencies."
     $imageAttempted = $true
-    & docker --context $dockerContext build --pull=false --network none --tag $apiImage --build-arg "APP_REVISION=$revision" $backend
-    if ($LASTEXITCODE -ne 0) { throw "Offline API build failed; dependencies must already be cached locally." }
+    & docker --context $dockerContext build --pull=false --network default --tag $apiImage --build-arg "APP_REVISION=$revision" $backend
+    if ($LASTEXITCODE -ne 0) { throw "API build failed while installing locked dependencies; check package-index connectivity." }
     Assert-SourceUnchanged $backend $fingerprint
     $imageId = (& docker --context $dockerContext image inspect --format '{{.Id}}' $apiImage).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $imageId) { throw "Could not identify freshly built API image." }
@@ -363,16 +364,34 @@ try {
 
     $logQuery = [uri]::EscapeDataString('{service_name="benchscope-api"} |= "HTTP request completed"')
     $foundLog = $false
+    $lastLokiError = $null
     for ($attempt = 0; $attempt -lt 45 -and -not $foundLog; $attempt++) {
         try {
             $logResult = Invoke-RestMethod -Uri "$lokiUri/loki/api/v1/query_range?query=$logQuery&start=$($requestStart - 5)000000000&limit=1000" -TimeoutSec 10
             $foundLog = Test-CorrelatedLog $logResult $traceId $tempoSpanIds
         } catch {
-            # Loki may not have received the batch yet.
+            $lastLokiError = $_.Exception.Message
         }
         if (-not $foundLog) { Start-Sleep -Seconds 2 }
     }
-    if (-not $foundLog) { throw "Loki did not return the synthetic HTTP completed log with the matching trace and span IDs." }
+    if (-not $foundLog) {
+        if ($lastLokiError) { Write-Output "Last Loki query error: $lastLokiError" }
+        try {
+            $diagnosticQuery = [uri]::EscapeDataString('{service_name=~".+"} |= "HTTP request completed"')
+            $diagnostic = Invoke-RestMethod -Uri "$lokiUri/loki/api/v1/query_range?query=$diagnosticQuery&start=$($requestStart - 5)000000000&limit=100" -TimeoutSec 10
+            Write-Output "Loki diagnostic response: $($diagnostic | ConvertTo-Json -Depth 8 -Compress)"
+        } catch {
+            Write-Output "Loki diagnostic query failed: $($_.Exception.Message)"
+        }
+        $collectorLogs = & docker --context $dockerContext compose `
+            --project-name $projectName `
+            --project-directory $repositoryRoot `
+            @composeFiles `
+            --env-file $environmentFile `
+            logs --no-color --tail 40 otel-collector loki 2>&1
+        if ($LASTEXITCODE -eq 0) { Write-Output "Collector and Loki logs:`n$($collectorLogs -join "`n")" }
+        throw "Loki did not return the synthetic HTTP completed log with the matching trace and span IDs."
+    }
     Assert-SourceUnchanged $backend $fingerprint
     $currentContainer = (& docker --context $dockerContext compose --project-name $projectName --project-directory $repositoryRoot @composeFiles --env-file $environmentFile ps --quiet api).Trim()
     if ($LASTEXITCODE -ne 0 -or $currentContainer -ne $containerId) { throw "API container changed during verification." }
