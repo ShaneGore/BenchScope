@@ -241,6 +241,19 @@ This exercise demonstrates only authenticated local alert delivery, persistent
 deduplication, and bounded sanitized evidence. It does not demonstrate AI
 investigation, recovery automation, or completion of the course criterion.
 
+## Recovery verification helper
+
+`app.incident_recovery.verify_recovery` combines check results; it does not
+run persistence or smoke tests itself, and callers must supply explicit
+successful results for both. It trusts explicitly supplied readiness and target
+booleans without verifying their origin. Alert resolution requires a separate
+Prometheus query even if the caller supplies `alert_resolved=True`, and passes
+only for a successful vector response with no active matching alert; malformed
+or missing response evidence fails closed. A supplied false alert result also
+fails. A successful restart remains `verification_required`, not resolved: the
+helper is not wired into live recovery or incident resolution, and its mocked
+tests are not evidence of a live recovery.
+
 ## Issue #33 — Stage 2 read-only investigation
 
 The local `app.incident_investigation` runner accepts only a persisted
@@ -354,3 +367,18 @@ creation without adding unsafe permissions or relying solely on job membership.
 
 References: [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 and [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
+
+### Recovery preflight limitation
+
+The fixed-project preflight uses timeout-bounded, read-only Docker container
+listing and inspection, verifies observed Compose labels and expected loopback
+port bindings, and reads Windows `netstat -ano` listeners. Surviving service
+bindings are reported separately from other occupied ports: a matching mapping
+does not prove who owns a host listener, especially with Docker Desktop proxying.
+Unexpected mappings, malformed or unavailable observations, and timeouts block.
+The listener parser fails closed on unsupported output or localization.
+
+These observations are snapshots, not race-safe ownership or authorization.
+Recovery execution remains disabled even after a clean observation; approval
+is neither consumed nor marked attempted. No live Docker or recovery test is
+claimed; tests use synthetic inspection and listener output.

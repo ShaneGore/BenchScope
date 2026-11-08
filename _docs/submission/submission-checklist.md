@@ -1,21 +1,29 @@
 # Submission checklist
 
-Compared against the [current course criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md), which list 12 criteria and 24 points. This is an evidence map, not an awarded score; the reviewer determines the grade.
+Compared against the [current course criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md). This is an evidence map, not an awarded score; the reviewer determines the grade.
 
-| Criterion | Evidence and open questions |
-| --- | --- |
-| Problem description | [README](../../README.md) describes the problem, functionality and expected behaviour. |
-| Product specification | [Product plan](../plan.md) and [public issues](https://github.com/ShaneGore/BenchScope/issues) record requirements and work. |
-| Agent team | [Process](../process.md) and [role instructions](../team/) describe PM, engineering and QA responsibilities. |
-| Context management | [AGENTS.md](../../AGENTS.md) links modular project documentation. |
-| Application | Frontend, FastAPI and PostgreSQL are present; see README for setup. Full clean-start execution should be verified. |
-| Testing | Unit and integration tests exist; the PostgreSQL-dependent tests require a disposable database. A single-command all-tests workflow has not been established here. |
-| Containerization | Compose defines frontend, API and PostgreSQL plus observability. First-time environment and secret setup are required. |
-| Deployment | README links the deployed frontend and API; check both are reachable during review. |
-| CI/CD | GitHub Actions workflows define checks and staging deployment; manual production deployment evidence is not established here. |
-| Observability | Local OpenTelemetry, Prometheus, Grafana, Loki and Tempo setup and incident evidence are documented. Hosted correlation has not been verified here. |
-| Alerting on user impact | Alert rules and local incident exercise are documented under [incidents](../incidents/). |
-| On-call agent | Supervised recovery exists; evidence of an autonomous agent waking on an alert and fixing an issue is not established here. |
+| Criterion | Implemented or documented | Test and runtime evidence; limits |
+| --- | --- | --- |
+| Problem description | [README](../../README.md) describes the problem, functionality and expected behaviour. | Documentation, not a runtime demonstration. |
+| Product specification | [Product plan](../plan.md) and [public issues](https://github.com/ShaneGore/BenchScope/issues) record requirements and work. | Requirements and issue history, not proof of completion. |
+| Agent team | [Process](../process.md) and [role instructions](../team/) describe PM, engineering and QA responsibilities. | Documentation of the workflow. |
+| Context management | [AGENTS.md](../../AGENTS.md) links modular project documentation. | Documentation of the project context. |
+| Application | Frontend, FastAPI and PostgreSQL are present; see README for setup and the live demo. | The local browser journeys below were demonstrated; a full clean-start execution remains to be verified. Check live links during review. |
+| Testing | Unit and integration tests exist; PostgreSQL-dependent tests require a disposable database. | Backend and frontend results and their timing limits are recorded below. A single-command all-tests workflow has not been established here. |
+| Containerization | Compose defines frontend, API and PostgreSQL plus observability. | A disposable local stack was used for the exercises below; first-time environment and secret setup are required. A fresh current-source offline API build was blocked. |
+| Deployment | README links the deployed frontend and API; the [deployment guide](../architecture/deployment.md) describes promotion and rollback. | Check deployed links during review. Production promotion and rollback have not been executed. |
+| CI/CD | GitHub Actions workflows define checks and staging deployment; production promotion includes configuration and ref guards. | Production promotion is unexecuted; workflow definitions and local tests are not evidence of a production deployment. |
+| Observability | Local OpenTelemetry, Prometheus, Grafana, Loki and Tempo setup is documented in [metric-to-trace verification](../observability/metric-trace-link.md) and [incidents](../incidents/). | The local metric-to-trace exercise below has a cached-image limitation; fresh log correlation and hosted correlation are not verified. |
+| Alerting on user impact | Alert rules and a local incident exercise are documented under [incidents](../incidents/). | The documented local exercise is not proof of production alerting or automatic investigation. |
+| On-call agent | Incident-handling and supervised recovery components are documented under [incidents](../incidents/). | Automatic investigation, secure real-model execution and approved recovery remain unproven. Fixed recovery is disabled pending safety; an autonomous alert-to-fix run has not been demonstrated. |
+
+## Dated verification and provenance
+
+- **Historical:** [PR #57](https://github.com/ShaneGore/BenchScope/pull/57) was merged at `c108909`, and [issue #56](https://github.com/ShaneGore/BenchScope/issues/56) was closed. The backend full suite passed 412 tests **before** the latest changes; this is not a current full-suite result.
+- **2026-11-08, current branch, local tests:** frontend tests passed (102 tests) and the frontend build passed.
+- **2026-11-08, backend verification:** the post-CI-gate `uv run --no-sync pytest -q` passed 460 tests with no skips against disposable PostgreSQL. `ruff check .` and `ruff format --check .` passed (59 files).
+- **2026-11-08, runtime demonstration:** 10 browser journeys (6 + 3 + 1) passed in an isolated sequential final rerun using alternate loopback ports and disposable PostgreSQL. In an earlier attempt, one browser test timed out while the frontend suite ran concurrently; the cause is undetermined. Three isolated import reruns and the full 10-journey sequential rerun passed. The original default-port run was blocked because port 8000 was occupied.
+- **2026-11-07, limited runtime demonstration:** on a disposable stack, a metric exemplar matched a trace in Tempo and Grafana. The API used a cached image of unknown source, so this does not establish current-source behavior. A fresh current-source offline build was blocked by a missing cached locked dependency; fresh log correlation was not demonstrated.
 
 - [ ] Complete **three peer reviews** in the course platform; this is required to pass.
 - [ ] Confirm current deployment and complete the submission form on the course platform.

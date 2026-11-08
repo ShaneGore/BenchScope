@@ -27,23 +27,27 @@ external relative URL served by Grafana's Tempo data-source proxy.
 
 ## Reproduce in an isolated synthetic Compose project
 
-From a clean checkout on Windows with Docker Desktop and PowerShell, run:
+From a checkout on Windows with Docker Desktop and PowerShell, run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\scripts\verify_metric_trace.ps1
 ```
 
-The script uses a random Compose project name, a temporary synthetic-only env
+The script uses a random Compose project name, a disposable synthetic-only env
 file and secret, unique loopback ports, and project-scoped volumes. It never
 reads `.env`; every Compose invocation supplies the temporary env file and
 explicit project/file paths. It refuses a non-local Docker endpoint, missing
-cached images, or unavailable ports; it never pulls images or touches an
-existing Compose project. It uses `benchscope-issue35-api:latest` without
-rebuilding when that image is cached. If it is absent, it builds the API only
-when both Dockerfile base images are cached. Both paths use Compose's explicit
-`--pull never`. It starts only that disposable local project, runs
+cached service images or Dockerfile bases, or unavailable ports; it never pulls
+images or touches an existing Compose project. It builds a uniquely tagged API
+image with `--pull=false` and build network disabled; the locked dependency
+install layer must also already be cached, or the build fails. It records the
+Git revision and a SHA-256 fingerprint of the Dockerfile and copied backend
+inputs (including dirty checkout changes), checks the fingerprint after build
+and verification, and checks the running container image ID against the build.
+It starts only that disposable local project with `--no-build --pull never`, runs
 `GET /api/v1/runs` with a generated W3C `traceparent`, and removes only its own
-containers and volumes afterward. The endpoint returns an empty page from the
+containers, volumes, image tag and files afterward. Cleanup failures cause a
+nonzero exit. The endpoint returns an empty page from the
 newly created project database; the script fails if that database contains a
 run. No run data is imported or persisted. The local-only auth bypass is
 enabled only in the synthetic API container, and benchmark execution remains
@@ -52,12 +56,25 @@ disabled.
 The check polls Prometheus for the exact generated trace ID on the
 `benchscope_http_server_requests_total` exemplar for
 `/api/v1/runs`, verifies the ID is not a series label, then
-fetches that ID from Tempo and compares it with the decoded trace IDs on the
-returned spans. It prints the actual Prometheus version, locked API telemetry
+fetches that ID from Tempo and the anonymous Grafana Tempo proxy, and requires
+the actual Loki `HTTP request completed` record to carry that trace ID and the
+same request span ID, route, method and status. It prints the actual Prometheus version, locked API telemetry
 package versions, pinned local service image versions, exemplar ID, and Tempo
 IDs. A nonzero exit means the integration check did not pass; missing images or
 ports are reported before Compose starts. The images must already be present
 locally; this procedure does not download them.
+
+Docker-free verifier checks run with
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\tests\test_metric_trace_verifier.ps1`.
+
+### Fresh-image verification attempt (2026-11-07)
+
+The local bases and service images were present, but the offline fresh build
+could not reuse the locked dependency layer and failed fetching `idna==3.20`
+with build networking disabled. No image was pulled and the disposable stack
+was not started. Therefore the new source/image and Loki correlation checks
+have not yet passed end-to-end; the cached-image evidence below does not prove
+them. Prepare the exact dependency layer locally before rerunning.
 
 ## Viewer-safe trace access and Explore limitation
 

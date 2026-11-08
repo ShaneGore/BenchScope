@@ -1,12 +1,31 @@
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Inbox, TriangleAlert } from 'lucide-react';
 
 export function StartupState() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
     <main className="p-8 text-sm text-text-secondary" role="status">
       Starting BenchScope. Please wait while the application loads.
+      {slow && <p>Startup is taking longer than usual. The service may be waking from a cold start.</p>}
     </main>
   );
+}
+
+export function DemoLoading({ personal = false }: { personal?: boolean }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return <div role="status" className="p-4 text-sm text-text-secondary">
+    {personal ? 'Loading your data. Please wait.' : 'Loading demo results. Please wait.'}
+    {slow && <p>The hosted service may be waking from a cold start; this can take a little longer.</p>}
+  </div>;
 }
 
 export function DemoMethodology() {
@@ -80,7 +99,7 @@ export function ErrorState({
   onRetry?: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-16 px-6 animate-fadeIn">
+    <div role="alert" className="flex flex-col items-center justify-center text-center py-16 px-6 animate-fadeIn">
       <div className="mb-4 text-status-failed-fg">
         <TriangleAlert className="h-10 w-10" strokeWidth={1.5} />
       </div>

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 let fetcher: ReturnType<typeof vi.fn>;
@@ -101,4 +101,40 @@ test('anonymous comparison deep links stay public and use only the demo catalogu
   expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual(['/api/v1/demo/runs']);
   expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+});
+
+test('anonymous demo failure retries and detail navigation ignores late catalogue results', async () => {
+  let resolveOld!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => Promise.resolve(new Response('{}', { status: 503 })))
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOld = resolve; }))
+    .mockImplementationOnce(() => Promise.resolve(new Response('{}', { status: 404 })));
+  window.location.hash = '/demo';
+  render(<App />);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /retry request/i }));
+  expect(screen.getByRole('status').textContent).toMatch(/loading demo/i);
+  act(() => {
+    window.location.hash = '/demo/runs/missing';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+
+  expect(await screen.findByText('Run not found')).toBeTruthy();
+  await act(async () => { resolveOld(new Response('[]')); });
+  expect(screen.getByText('Run not found')).toBeTruthy();
+  expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+    '/api/v1/demo/runs', '/api/v1/demo/runs', '/api/v1/demo/runs/missing',
+  ]);
+});
+
+test.each([
+  ['/demo', 'Benchmark configurations'],
+  ['/demo/compare', 'Compare demo configurations'],
+])('anonymous %s retries a rejection without a reason', async (path, heading) => {
+  fetcher.mockRejectedValueOnce(undefined).mockResolvedValueOnce(new Response('[]'));
+  window.location.hash = path;
+  render(<App />);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /retry request/i }));
+  expect(await screen.findByText(heading)).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });

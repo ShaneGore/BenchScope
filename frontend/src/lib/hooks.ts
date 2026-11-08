@@ -7,6 +7,13 @@ interface QueryState<T> {
   error: ApiError | null;
 }
 
+export function toApiError(error: unknown): ApiError {
+  if (error && typeof error === 'object' && 'status' in error && 'detail' in error) {
+    return error as ApiError;
+  }
+  return { status: 0, detail: 'Request failed. Please retry.' };
+}
+
 export function useAsync<T>(
   fn: () => Promise<T>,
   deps: unknown[] = []
@@ -29,13 +36,14 @@ export function useAsync<T>(
       .then((data) => {
         if (runIdRef.current === id) setState({ data, loading: false, error: null });
       })
-      .catch((error: ApiError) => {
-        if (runIdRef.current === id) setState({ data: null, loading: false, error });
+      .catch((error: unknown) => {
+        if (runIdRef.current === id) setState({ data: null, loading: false, error: toApiError(error) });
       });
   }, []);
 
   useEffect(() => {
     run();
+    return () => { ++runIdRef.current; };
   }, [depsKey, run]);
 
   return { ...state, refetch: run };
@@ -56,7 +64,7 @@ export function useMutation<TArgs extends unknown[], TResult>(
         setLoading(false);
         return result;
       } catch (e) {
-        const err = e as ApiError;
+        const err = toApiError(e);
         setError(err);
         setLoading(false);
         return null;

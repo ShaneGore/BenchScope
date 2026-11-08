@@ -152,13 +152,13 @@ function AppRoutes({
       page = <DashboardPage benchmarkEnabled={runnerEnabled} />;
       break;
     case 'demo':
-      page = <DashboardPage serviceMode="demo" />;
+      page = <DashboardPage key="demo" serviceMode="demo" />;
       break;
     case 'demo-compare':
-      page = <ComparePage ids={(query.ids ?? '').split(',').filter(Boolean)} serviceMode="demo" />;
+      page = <ComparePage key={path} ids={(query.ids ?? '').split(',').filter(Boolean)} serviceMode="demo" />;
       break;
     case 'demo-run-detail':
-      page = <RunDetailPage id={route.params.id} serviceMode="demo" />;
+      page = <RunDetailPage key={path} id={route.params.id} serviceMode="demo" />;
       break;
     case 'runs':
       page = <RunsPage initialStatus={query.status} />;

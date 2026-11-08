@@ -12,6 +12,7 @@ on:
         default: main
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -24,73 +25,186 @@ jobs:
         id: ref
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
-          GITHUB_SHA: ${{ github.sha }}
         run: |
           selected_ref="${INPUT_REF:-main}"
 
-          if ! printf '%s' "$selected_ref" | grep -Eq '^(main|refs/heads/main|[0-9a-f]{40}|(refs/tags/)?v[0-9][A-Za-z0-9._-]*)$'; then
+          if [[ ! "$selected_ref" =~ ^(main|refs/heads/main|[0-9a-f]{40}|(refs/tags/)?v[0-9][A-Za-z0-9._-]*)$ ]]; then
             echo "::error::Select main, a versioned release tag, or an exact commit SHA."
             exit 1
+          fi
+          if [ "$selected_ref" = main ]; then
+            selected_ref=refs/heads/main
+          elif [[ "$selected_ref" == v* ]]; then
+            selected_ref="refs/tags/$selected_ref"
           fi
           echo "selected_ref=$selected_ref" >> "$GITHUB_OUTPUT"
 
       - name: Check production configuration
-        id: config
         env:
           PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
           PRODUCTION_RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
           PRODUCTION_SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
           PRODUCTION_SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
-          PRODUCTION_SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
           PRODUCTION_SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
         run: |
-          if [ -z "$PRODUCTION_DATABASE_URL" ] || [ -z "$PRODUCTION_RENDER_DEPLOY_HOOK_URL" ] || [ -z "$PRODUCTION_SMOKE_API_URL" ] || [ -z "$PRODUCTION_SMOKE_TEST_TOKEN" ] || [ -z "$PRODUCTION_SMOKE_FRONTEND_URL" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Production promotion skipped because production database, deploy hook, smoke API URL, smoke token or frontend URL is not configured."
-            exit 0
-          fi
-          echo "configured=true" >> "$GITHUB_OUTPUT"
+          missing=0
+          for name in PRODUCTION_DATABASE_URL PRODUCTION_RENDER_DEPLOY_HOOK_URL PRODUCTION_SMOKE_API_URL PRODUCTION_SMOKE_TEST_TOKEN PRODUCTION_SMOKE_FRONTEND_URL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then exit 1; fi
 
       - uses: actions/checkout@v4
-        if: steps.config.outputs.configured == 'true'
         with:
           ref: ${{ steps.ref.outputs.selected_ref }}
           persist-credentials: false
           fetch-depth: 0
 
       - name: Resolve exact deployment revision
-        if: steps.config.outputs.configured == 'true'
         id: revision
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::Deployment revision must be an ancestor of main."
             exit 1
           fi
-          if [ ! -f scripts/wait_for_deployment.py ] || ! grep -q '@app.get("/version")' backend/app/main.py; then
-            echo "::error::This legacy revision lacks deployment identity support; no migration or deployment was triggered."
-            exit 1
-          fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Require successful main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED_SHA: ${{ steps.revision.outputs.sha }}
+        run: |
+          if ! response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=$SELECTED_SHA&per_page=100" --jq '{total_count, workflow_runs: [.workflow_runs[] | {id, head_sha, head_branch, event, path, repository: {full_name: .repository.full_name}, head_repository: {full_name: .head_repository.full_name}, status, conclusion}]}' 2>/dev/null)"; then
+            echo "::error::Unable to verify CI for the selected revision."
+            exit 1
+          fi
+          if ! CI_RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+
+          try:
+              data = json.loads(os.environ["CI_RESPONSE"])
+              runs = data["workflow_runs"]
+              if not isinstance(runs, list) or not runs or type(data["total_count"]) is not int or data["total_count"] != len(runs) or len(runs) > 100:
+                  raise ValueError
+              if any(type(run["id"]) is not int for run in runs):
+                  raise ValueError
+              run = max(runs, key=lambda item: item["id"])
+              if not (
+                  run["head_sha"] == os.environ["SELECTED_SHA"]
+                  and run["head_branch"] == "main"
+                  and run["event"] == "push"
+                  and run["path"] == ".github/workflows/ci.yml"
+                  and run["repository"]["full_name"] == os.environ["GITHUB_REPOSITORY"]
+                  and run["head_repository"]["full_name"] == os.environ["GITHUB_REPOSITORY"]
+                  and run["status"] == "completed"
+                  and run["conclusion"] == "success"
+              ):
+                  raise ValueError
+          except (KeyError, TypeError, ValueError):
+              raise SystemExit(1)
+          PY
+          then
+            echo "::error::Selected revision has no successful latest main push CI run."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
-        if: steps.config.outputs.configured == 'true'
         with:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v6
-        if: steps.config.outputs.configured == 'true'
+
+      - name: Install preflight dependencies
+        working-directory: backend
+        run: uv sync --locked --group dev
+
+      - name: Check deployment identity compatibility
+        working-directory: backend
+        run: |
+          if ! timeout 30s uv run --no-sync python - <<'PY'
+          import asyncio
+          import os
+          import runpy
+          import socket
+          from unittest.mock import patch
+
+          def check_identity():
+              # No production settings, credentials, database or external telemetry.
+              os.environ.clear()
+              os.environ.update({"APP_MODE": "local", "APP_ENV": "test", "BENCHMARK_ENABLED": "false"})
+              loop = asyncio.new_event_loop()
+              with patch.object(socket.socket, "connect", side_effect=RuntimeError("network disabled")), \
+                   patch.object(socket.socket, "connect_ex", side_effect=RuntimeError("network disabled")):
+                  try:
+                      import httpx
+                  except ModuleNotFoundError:
+                      import httpx2 as httpx
+                  from app.main import app
+
+                  async def check_endpoint():
+                      async with app.router.lifespan_context(app):
+                          async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                              for build, provider, expected in [
+                                  ("a" * 40, "b" * 40, "a" * 40),
+                                  ("unknown", "b" * 40, "b" * 40),
+                                  ("bad", "bad", "unknown"),
+                              ]:
+                                  with patch.dict(os.environ, {"APP_REVISION": build, "RENDER_GIT_COMMIT": provider}):
+                                      response = await client.get("/version")
+                                      if response.status_code != 200 or response.json() != {"revision": expected}:
+                                          raise ValueError("version endpoint returned incorrect identity")
+                  loop.run_until_complete(check_endpoint())
+                  loop.close()
+
+                  verifier = runpy.run_path("../scripts/wait_for_deployment.py")
+                  wait = verifier["wait_for_revision"]
+                  error = verifier["DeploymentVerificationError"]
+                  for actual, status, should_pass in [
+                      ("a" * 40, "ready", True),
+                      ("b" * 40, "ready", False),
+                      ("a" * 40, "not_ready", False),
+                  ]:
+                      now = [0.0]
+                      calls = []
+                      def fetch(url):
+                          calls.append(url)
+                          return {"revision": actual} if url.endswith("/version") else {"status": status}
+                      def pause(seconds):
+                          now[0] += seconds
+                      try:
+                          wait("https://example.invalid", "a" * 40, timeout=1, interval=1,
+                               fetch=fetch, clock=lambda: now[0], pause=pause)
+                      except error:
+                          if should_pass:
+                              raise
+                      else:
+                          if not should_pass:
+                              raise ValueError("verifier accepted an incorrect revision or readiness")
+                      if calls[:2] != ["https://example.invalid/version", "https://example.invalid/ready"]:
+                          raise ValueError("verifier did not check both endpoints")
+
+          try:
+              check_identity()
+          except Exception as error:
+              print(f"Identity preflight failed ({type(error).__name__}).")
+              raise SystemExit(1)
+          PY
+          then
+            echo "::error::This legacy revision lacks deployment identity support or failed the compatibility check; no migration or deployment was triggered."
+            exit 1
+          fi
 
       - name: Run production database migrations
-        if: steps.config.outputs.configured == 'true'
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
-          uv sync --locked --group dev
           uv run alembic upgrade head
 
       - name: Trigger production backend deployment
-        if: steps.config.outputs.configured == 'true'
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
           SELECTED_REF: ${{ steps.revision.outputs.sha }}
@@ -98,14 +212,12 @@ jobs:
           python scripts/render_deploy_hook.py
 
       - name: Wait for the intended backend revision
-        if: steps.config.outputs.configured == 'true'
         env:
           SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
           EXPECTED_REVISION: ${{ steps.revision.outputs.sha }}
         run: python scripts/wait_for_deployment.py
 
       - name: Run production smoke tests
-        if: steps.config.outputs.configured == 'true'
         env:
           SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
           SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}

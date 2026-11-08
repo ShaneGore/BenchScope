@@ -13,6 +13,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Field, Select, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import {
+  DemoLoading,
   EmptyState,
   ErrorState,
   Skeleton,
@@ -87,7 +88,7 @@ export function RunsPage({ initialStatus }: { initialStatus?: string }) {
         {error ? (
           <ErrorState onRetry={refetch} description="Could not load runs." />
         ) : loading ? (
-          <RunsSkeleton />
+          APP_MODE === 'hosted' ? <DemoLoading personal /> : <RunsSkeleton />
         ) : runs.length === 0 ? (
           <EmptyState
             icon={<ListTree className="h-9 w-9" strokeWidth={1.5} />}

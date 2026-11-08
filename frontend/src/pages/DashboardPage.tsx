@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowRight,
   FlaskConical,
@@ -15,7 +15,7 @@ import { metricAvailable, runProfileLabel } from '@/lib/metrics';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
+import { DemoLoading, DemoMethodology, EmptyState, ErrorState, Skeleton, SkeletonText } from '@/components/ui/State';
 
 export function DashboardPage({
   serviceMode = APP_MODE,
@@ -28,29 +28,15 @@ export function DashboardPage({
   const canLaunch = serviceMode === 'local' && benchmarkEnabled;
   const canImport = !isDemo;
   const store = getBenchmarkService(serviceMode);
-  const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), []);
-  const [showWakeUp, setShowWakeUp] = useState(false);
-
-  useEffect(() => {
-    if (!loading) {
-      setShowWakeUp(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setShowWakeUp(true), 2000);
-    return () => window.clearTimeout(timer);
-  }, [loading]);
+  const { data, loading, error, refetch } = useAsync(() => store.listRuns({ limit: 50 }), [serviceMode]);
 
   const summary = useMemo(() => computeSummary(data?.items ?? []), [data]);
 
   if (loading)
     return (
-      <div role="status" aria-live="polite">
+      <div>
         <DashboardSkeleton />
-        {showWakeUp && (
-          <p className="mt-4 text-sm text-text-secondary">
-            Waking the hosted API on Render Free can take about one minute after inactivity.
-          </p>
-        )}
+        {serviceMode !== 'local' ? <DemoLoading personal={!isDemo} /> : <span role="status">Loading dashboard data.</span>}
       </div>
     );
   if (error) return <ErrorState onRetry={refetch} description="Could not load dashboard data." />;
