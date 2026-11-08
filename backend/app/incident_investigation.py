@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
+from sqlalchemy import update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.incident_audit import append_incident_audit_event
 from app.models import IncidentRecord
 
 MODEL = "gpt-6-luna"
@@ -397,6 +399,36 @@ def investigate_and_store(
         session.rollback()
         raise InvestigationBlocked("summary persistence failed") from None
     return summary
+
+
+def dispatch_investigation(session: Session, record: IncidentRecord) -> str:
+    """Persist the automatic dispatch gate without starting an unverified model."""
+    if record.investigation_status != "not_started":
+        return record.investigation_status
+
+    reason_code = "model_runtime_unverified"
+    result = session.execute(
+        update(IncidentRecord)
+        .where(
+            IncidentRecord.id == record.id,
+            IncidentRecord.investigation_status == "not_started",
+        )
+        .values(investigation_status="blocked")
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        session.refresh(record)
+        return record.investigation_status
+
+    record.investigation_status = "blocked"
+    append_incident_audit_event(
+        session,
+        record.id,
+        event_type="investigation_dispatch",
+        outcome="blocked",
+        reason_code=reason_code,
+    )
+    return record.investigation_status
 
 
 def _run_cli_process(

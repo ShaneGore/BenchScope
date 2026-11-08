@@ -25,6 +25,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from app.database import create_database_engine
+from app.incident_audit import append_incident_audit_event
+from app.incident_investigation import dispatch_investigation
 from app.models import IncidentRecord
 
 ALERT_NAME = "BenchScopeApiUnavailable"
@@ -725,6 +727,13 @@ def create_receiver_app(
                         record.alert_status = "resolved"
                         record.ends_at = alert["ends_at"]
                         record.resolved_at = received_at
+                        append_incident_audit_event(
+                            session,
+                            record.id,
+                            event_type="alert_resolved",
+                            outcome="accepted",
+                            reason_code="resolved_notification",
+                        )
                         session.commit()
             except SQLAlchemyError:
                 return JSONResponse(status_code=503, content={"status": "not_ready"})
@@ -748,19 +757,27 @@ def create_receiver_app(
                     return JSONResponse(
                         status_code=200, content={"status": "duplicate"}
                     )
-                session.add(
-                    IncidentRecord(
-                        id=record_id,
-                        alert_name=ALERT_NAME,
-                        fingerprint=key[0],
-                        starts_at=key[1],
-                        ends_at=alert["ends_at"],
-                        alert_status="firing",
-                        evidence_status="failed",
-                        evidence=initial_evidence,
-                        received_at=received_at,
-                    )
+                record = IncidentRecord(
+                    id=record_id,
+                    alert_name=ALERT_NAME,
+                    fingerprint=key[0],
+                    starts_at=key[1],
+                    ends_at=alert["ends_at"],
+                    alert_status="firing",
+                    evidence_status="failed",
+                    evidence=initial_evidence,
+                    investigation_status="not_started",
+                    received_at=received_at,
                 )
+                session.add(record)
+                append_incident_audit_event(
+                    session,
+                    record_id,
+                    event_type="alert_received",
+                    outcome="accepted",
+                    reason_code="authenticated_firing_alert",
+                )
+                investigation_status = dispatch_investigation(session, record)
                 try:
                     session.commit()
                 except IntegrityError:
@@ -787,12 +804,31 @@ def create_receiver_app(
                 if record is not None:
                     record.evidence = evidence
                     record.evidence_status = evidence_status
+                    append_incident_audit_event(
+                        session,
+                        record.id,
+                        event_type="evidence_collected",
+                        outcome=evidence_status,
+                        reason_code={
+                            "complete": "sources_complete",
+                            "partial": "source_failure",
+                            "failed": "sources_unavailable",
+                        }[evidence_status],
+                    )
                     session.commit()
+                else:
+                    return JSONResponse(
+                        status_code=503, content={"status": "not_ready"}
+                    )
         except SQLAlchemyError:
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return JSONResponse(
             status_code=200,
-            content={"status": "recorded", "evidence_status": evidence_status},
+            content={
+                "status": "recorded",
+                "evidence_status": evidence_status,
+                "investigation_status": investigation_status,
+            },
         )
 
     return app

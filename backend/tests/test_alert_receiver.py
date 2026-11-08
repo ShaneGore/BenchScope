@@ -25,7 +25,7 @@ from app.alert_receiver import (
     collect_evidence,
     create_receiver_app,
 )
-from app.models import Base, IncidentRecord
+from app.models import Base, IncidentAuditEvent, IncidentRecord
 
 SECRET = "SYNTHETIC_RECEIVER_BEARER_SECRET"
 NOW = datetime(2026, 10, 27, 23, 37, 31, 867000, tzinfo=UTC)
@@ -92,6 +92,18 @@ def _read_records(database_url: str) -> list[IncidentRecord]:
     engine = create_engine(database_url)
     with Session(engine) as session:
         rows = list(session.scalars(select(IncidentRecord).order_by(IncidentRecord.id)))
+    engine.dispose()
+    return rows
+
+
+def _read_audit_events(database_url: str) -> list[IncidentAuditEvent]:
+    engine = create_engine(database_url)
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(IncidentAuditEvent).order_by(IncidentAuditEvent.event_type)
+            )
+        )
     engine.dispose()
     return rows
 
@@ -190,7 +202,11 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
         response = _post(client, _webhook())
 
     assert response.status_code == 200
-    assert response.json() == {"status": "recorded", "evidence_status": "complete"}
+    assert response.json() == {
+        "status": "recorded",
+        "evidence_status": "complete",
+        "investigation_status": "blocked",
+    }
     assert len(calls) == 4
     assert all(call[0] == "GET" and 0 < call[3] <= 10 for call in calls)
     assert [call[1] for call in calls] == [
@@ -212,6 +228,15 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
     assert record.alert_name == ALERT_NAME
     assert record.alert_status == "firing"
     assert record.evidence_status == "complete"
+    assert record.investigation_status == "blocked"
+    assert {
+        (event.event_type, event.outcome, event.reason_code)
+        for event in _read_audit_events(database_url)
+    } == {
+        ("alert_received", "accepted", "authenticated_firing_alert"),
+        ("investigation_dispatch", "blocked", "model_runtime_unverified"),
+        ("evidence_collected", "complete", "sources_complete"),
+    }
     evidence = json.dumps(record.evidence)
     assert record.evidence["prometheus"]["api"] == "down"
     assert record.evidence["prometheus"]["http_responses"] == [
@@ -382,6 +407,11 @@ def test_resolved_notification_updates_one_record_without_recollecting(tmp_path)
     assert record.resolved_at == NOW.replace(tzinfo=None)
     assert record.evidence_status == "complete"
     assert len(calls) == 4
+    assert any(
+        (event.event_type, event.outcome, event.reason_code)
+        == ("alert_resolved", "accepted", "resolved_notification")
+        for event in _read_audit_events(database_url)
+    )
 
 
 def test_firing_deduplication_survives_receiver_restart(tmp_path):
@@ -405,6 +435,7 @@ def test_firing_deduplication_survives_receiver_restart(tmp_path):
     assert len(first_calls) == 4
     assert second_calls == []
     assert len(_read_records(database_url)) == 1
+    assert len(_read_audit_events(database_url)) == 3
 
 
 def test_injection_strings_are_ignored_and_telemetry_output_is_allowlisted(
@@ -489,7 +520,11 @@ def test_datasource_failures_are_explicit_and_never_complete(tmp_path):
     with TestClient(app) as client:
         response = _post(client, _webhook())
 
-    assert response.json() == {"status": "recorded", "evidence_status": "partial"}
+    assert response.json() == {
+        "status": "recorded",
+        "evidence_status": "partial",
+        "investigation_status": "blocked",
+    }
     (record,) = _read_records(database_url)
     assert record.evidence_status == "partial"
     assert record.evidence["status"] == "partial"
@@ -503,7 +538,16 @@ def test_datasource_failures_are_explicit_and_never_complete(tmp_path):
     )
     with TestClient(all_timeout) as client:
         failed = _post(client, _webhook(fingerprint="1111111111111111"))
-    assert failed.json() == {"status": "recorded", "evidence_status": "failed"}
+    assert failed.json() == {
+        "status": "recorded",
+        "evidence_status": "failed",
+        "investigation_status": "blocked",
+    }
+    assert any(
+        (event.event_type, event.outcome, event.reason_code)
+        == ("investigation_dispatch", "blocked", "model_runtime_unverified")
+        for event in _read_audit_events(database_url)
+    )
     assert any(
         record.evidence["status"] == "failed" for record in _read_records(database_url)
     )
@@ -526,7 +570,11 @@ def test_datasource_errors_are_sanitized_and_mark_partial(tmp_path, caplog):
         response = _post(client, _webhook())
 
     (record,) = _read_records(database_url)
-    assert response.json() == {"status": "recorded", "evidence_status": "partial"}
+    assert response.json() == {
+        "status": "recorded",
+        "evidence_status": "partial",
+        "investigation_status": "blocked",
+    }
     assert record.evidence["status"] == "partial"
     assert record.evidence["logs"] == {"status": "failed"}
     assert (

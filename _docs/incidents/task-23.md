@@ -382,3 +382,71 @@ These observations are snapshots, not race-safe ownership or authorization.
 Recovery execution remains disabled even after a clean observation; approval
 is neither consumed nor marked attempted. No live Docker or recovery test is
 claimed; tests use synthetic inspection and listener output.
+
+## Current automatic-dispatch status (2026-11-08)
+
+A new, authenticated firing alert is deduplicated by the existing database
+constraint, then its sanitized evidence is collected and persisted. The
+receiver automatically enters the investigation dispatch gate exactly once
+for that incident. The gate records `investigation_status=blocked` and an
+`investigation_dispatch` audit event:
+
+- `model_runtime_unverified`; the dispatch gate is recorded atomically with
+  the new incident, before bounded evidence collection starts.
+
+The webhook response includes the evidence and investigation statuses.
+Duplicate alerts do not add another dispatch event. If the receiver is
+cancelled during evidence collection, the blocked dispatch remains durable;
+the evidence status remains failed and requires operator inspection. A
+duplicate notification does not retry collection.
+Audit rows contain only
+the incident reference, fixed event/outcome/reason codes, and timestamp; they
+do not copy alert payloads, evidence, prompts, model output, or credentials.
+The `0007_incident_audit` migration must be applied before running the updated
+receiver against an existing database.
+
+This is deterministic orchestration, **not an AI investigation**. No model
+provider or subprocess is started. The existing Copilot CLI provider still
+cannot verify pre-request authentication/entitlement, enforceable tool
+restrictions, or a hard usage limit; its direct invocation remains fail-closed.
+There is consequently no model worker, no model concurrency, and no
+background model task to outlive cancellation. Existing evidence collection
+has a 10-second total budget. Do not report a live AI assessment.
+
+Recovery remains disabled. Its typed approval is not exposed through an
+operator-authenticated API, and a valid in-memory approval still cannot pass
+the race-safe Docker ownership gate. Calls through `recover_incident` persist
+sanitized blocked/rejected audit outcomes; no Docker command is executed.
+Independent readiness/alert checks remain required before any future recovery
+can be enabled.
+
+Run the deterministic positive and negative checks from `backend/`:
+
+```powershell
+uv run pytest -q tests\test_alert_receiver.py tests\test_incident_investigation.py tests\test_incident_recovery.py
+```
+
+For the local incident walkthrough, use the isolated Stage 1 procedure under
+[Issue #32 — Stage 1 authenticated alert intake](#issue-32-stage-1-authenticated-alert-intake).
+After observing the firing alert, verify that one incident has one
+`investigation_dispatch` audit row with the blocked reason above. Stop there:
+the model gate and Docker recovery gate must not be bypassed.
+
+### Current-source live attempt (2026-11-08)
+
+An isolated project, `benchscope-oncall-e50f521aa51d`, started with the API,
+database, receiver, Prometheus, Loki, Tempo, and Grafana healthy; the API
+Prometheus target was initially up. After stopping only that project's API,
+the Prometheus mirror reached firing. The receiver access log showed a
+`POST /grafana/v1`, but the disposable database had no incident row after
+four minutes. The diagnostic did not establish the Grafana rule's notification
+state or the receiver response body, so this is **not** evidence of accepted
+authenticated intake or an automatic dispatch. The delivery cause remains
+unresolved; investigate Grafana's evaluated rule and the exact receiver result
+before claiming a live alert-to-audit run.
+
+The project-scoped cleanup removed its containers, images, volumes, network,
+and temporary credentials/configuration. No recovery command was run, no model
+request was made, and the pre-existing local Compose project was not changed.
+The live incident workflow is therefore incomplete and remains **0/2** for
+AI-assisted on-call recovery.

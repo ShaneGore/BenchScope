@@ -5,8 +5,11 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from app import incident_recovery as recovery
+from app.models import Base, IncidentAuditEvent, IncidentRecord
 
 DISPOSABLE_ENV = {
     "POSTGRES_DB": "x",
@@ -119,6 +122,70 @@ def test_no_command_on_invalid_approval(monkeypatch):
             env_config=dict(DISPOSABLE_ENV),
         )
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("approved", "expected_outcome", "expected_reason"),
+    [
+        (False, "rejected", "approval_invalid"),
+        (True, "blocked", "recovery_safety_gate"),
+    ],
+)
+def test_recovery_outcome_is_persisted_without_running_command(
+    tmp_path, monkeypatch, approved, expected_outcome, expected_reason
+):
+    database_url = f"sqlite:///{tmp_path / 'recovery-audit.sqlite'}"
+    engine = create_engine(database_url)
+    Base.metadata.create_all(engine)
+    incident_id = uuid4()
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add(
+            IncidentRecord(
+                id=incident_id,
+                alert_name="BenchScopeApiUnavailable",
+                fingerprint="0123456789abcdef",
+                starts_at=now,
+                ends_at=now,
+                alert_status="firing",
+                evidence_status="failed",
+                evidence={"status": "failed"},
+                received_at=now,
+            )
+        )
+        session.commit()
+
+        approval = recovery.request_recovery_approval(incident_id, now=now)
+        recovery.approve_recovery_approval(approval, approved=approved, now=now)
+        executed = []
+        if approved:
+            monkeypatch.setattr(
+                recovery,
+                "inspect_disposable_project",
+                lambda: {
+                    "conflicting_ports": [],
+                    "unproven_listener_ports": [],
+                },
+            )
+        with pytest.raises(recovery.RecoveryError):
+            recovery.recover_incident(
+                session,
+                incident_id,
+                approval,
+                executor=lambda *args, **kwargs: executed.append(args),
+                env_config=dict(DISPOSABLE_ENV),
+                now=now,
+            )
+
+        event = session.scalar(select(IncidentAuditEvent))
+        assert event is not None
+        assert (event.event_type, event.outcome, event.reason_code) == (
+            "recovery_attempt",
+            expected_outcome,
+            expected_reason,
+        )
+        assert executed == []
+    engine.dispose()
 
 
 def test_wrong_project_identity():
