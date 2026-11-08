@@ -21,6 +21,7 @@ from app.models import Base, IncidentRecord
 
 def test_incident_migration_revisions_fit_postgres_version_column_offline(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr("logging.config.fileConfig", lambda *args, **kwargs: None)
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
     context = MigrationContext.configure(
@@ -36,7 +37,7 @@ def test_incident_migration_revisions_fit_postgres_version_column_offline(monkey
     assert all(
         len(revision.revision) <= capacity for revision in scripts.walk_revisions()
     )
-    assert scripts.get_current_head() == "0007_incident_audit"
+    assert scripts.get_current_head() == "0008_incident_repair_jobs"
 
     upgrade = StringIO()
     config.output_buffer = upgrade
@@ -45,7 +46,9 @@ def test_incident_migration_revisions_fit_postgres_version_column_offline(monkey
     assert "ADD COLUMN investigation_summary TEXT" in upgrade.getvalue()
     assert "ADD COLUMN investigation_status VARCHAR(16)" in upgrade.getvalue()
     assert "CREATE TABLE incident_audit_events" in upgrade.getvalue()
-    assert "'0007_incident_audit'" in upgrade.getvalue()
+    assert "CREATE TABLE incident_repair_jobs" in upgrade.getvalue()
+    assert "ADD COLUMN application_revision VARCHAR(64)" in upgrade.getvalue()
+    assert "'0008_incident_repair_jobs'" in upgrade.getvalue()
 
     downgrade = StringIO()
     config.output_buffer = downgrade
@@ -53,6 +56,8 @@ def test_incident_migration_revisions_fit_postgres_version_column_offline(monkey
     assert "DROP TABLE incident_audit_events" in downgrade.getvalue()
     assert "DROP COLUMN investigation_status" in downgrade.getvalue()
     assert "DROP COLUMN investigation_summary" in downgrade.getvalue()
+    assert "DROP TABLE incident_repair_jobs" in downgrade.getvalue()
+    assert "DROP COLUMN application_revision" in downgrade.getvalue()
     assert "'0005_cancelled_run_status'" in downgrade.getvalue()
 
 
@@ -502,22 +507,18 @@ def test_copilot_cli_preflight_fails_closed_when_help_lacks_required_flags(
 def test_copilot_cli_args_use_pinned_model_empty_tools_and_usage_capture(tmp_path):
     shim = tmp_path / "copilot.ps1"
     shim.touch()
+    loader = tmp_path / "node_modules" / "@github" / "copilot" / "npm-loader.js"
+    loader.parent.mkdir(parents=True)
+    loader.touch()
 
     args = investigation._build_cli_args(
         str(shim), "sanitized prompt", tmp_path / "usage.json"
     )
 
     if os.name == "nt":
-        assert "powershell.exe" in args[0].lower()
-        assert args[1:7] == [
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(shim),
-        ]
-        cli_args = args[7:]
+        assert Path(args[0]).name.lower() in {"node.exe", "node"}
+        assert args[1] == str(loader)
+        cli_args = args[2:]
     else:
         assert args[0] == str(shim)
         cli_args = args[1:]
@@ -526,13 +527,38 @@ def test_copilot_cli_args_use_pinned_model_empty_tools_and_usage_capture(tmp_pat
     assert cli_args[3:] == [
         "--output-format=json",
         "--available-tools=",
+        "--deny-tool=shell",
+        "--deny-tool=write",
+        "--deny-tool=url",
         "--disable-builtin-mcps",
+        "--disallow-temp-dir",
         "--no-custom-instructions",
         "--no-ask-user",
+        "--no-auto-update",
+        f"--max-ai-credits={investigation.CLI_MAX_AI_CREDITS}",
         f"--usage-output-file={tmp_path / 'usage.json'}",
         "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
         "--sync-session=off",
     ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows npm shim behaviour")
+def test_windows_npm_launcher_preserves_multiline_quoted_prompt(tmp_path):
+    shim = tmp_path / "copilot.cmd"
+    shim.touch()
+    loader = tmp_path / "node_modules" / "@github" / "copilot" / "npm-loader.js"
+    loader.parent.mkdir(parents=True)
+    loader.write_text(
+        "console.log(JSON.stringify(process.argv.slice(2)))", encoding="utf-8"
+    )
+    prompt = 'Synthetic prompt with "quoted data"\n{"status":"error"}'
+
+    args = investigation._build_cli_args(str(shim), prompt, tmp_path / "usage.json")
+    output, _ = investigation._run_cli_process(args, tmp_path, timeout=10)
+
+    actual = json.loads(output)
+    assert actual[actual.index("--prompt") + 1] == prompt
+    assert actual.count(prompt) == 1
 
 
 def test_cli_usage_parser_accepts_only_one_verified_luna_request(tmp_path):
@@ -658,9 +684,7 @@ def test_real_provider_blocked_without_storing_summary(tmp_path, monkeypatch):
         session.refresh(record)
         assert record.investigation_summary is None
     engine.dispose()
-    assert all(
-        "--prompt" not in args and "--allow-all-tools" not in args for args in calls
-    )
+    assert all("--prompt" not in args for args in calls)
 
 
 def _database_record(session):
@@ -723,6 +747,27 @@ def test_process_runner_rejects_missing_executable(tmp_path):
         investigation._run_cli_process(
             ["definitely-missing-executable"], tmp_path, timeout=10
         )
+
+
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        ("error: unknown option --secret=secret-value", "unsupported option"),
+        ("invalid rule format: secret-value", "unsupported option"),
+        ("invalid command format secret-value", "invalid invocation"),
+        (
+            "authentication failed secret-value",
+            "authentication or authorization failure",
+        ),
+        ("secret-value", "unknown cause"),
+    ],
+)
+def test_process_failure_reports_only_sanitized_category(tmp_path, output, reason):
+    command = ["python", "-c", f"import sys; sys.stderr.write({output!r}); sys.exit(1)"]
+    with pytest.raises(investigation.InvestigationBlocked) as exc:
+        investigation._run_cli_process(command, tmp_path, timeout=10)
+    assert str(exc.value) == f"Copilot CLI exited unsuccessfully: {reason}"
+    assert "secret-value" not in str(exc.value)
 
 
 def test_real_preflight_no_longer_reports_process_blocker(monkeypatch):
@@ -807,6 +852,58 @@ def test_windows_nonzero_exit_fails_closed(tmp_path):
         investigation._run_cli_process(
             ["python", "-c", "raise SystemExit(3)"], tmp_path, 10
         )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")
+def test_windows_interrupt_terminates_child_process(tmp_path):
+    import _thread
+    import ctypes
+    import sys
+    import threading
+    import time
+    from ctypes import wintypes
+
+    marker = tmp_path / "child.pid"
+    code = (
+        "import pathlib,subprocess,sys,time;"
+        "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);"
+        f"pathlib.Path({str(marker)!r}).write_text(str(child.pid));"
+        "time.sleep(60)"
+    )
+
+    def interrupt_when_ready():
+        for _ in range(200):
+            if marker.exists():
+                _thread.interrupt_main()
+                return
+            time.sleep(0.05)
+
+    interrupter = threading.Thread(target=interrupt_when_ready, daemon=True)
+    interrupter.start()
+    with pytest.raises(KeyboardInterrupt):
+        investigation._run_cli_process([sys.executable, "-c", code], tmp_path, 15)
+    interrupter.join(timeout=2)
+    assert marker.exists()
+    pid = int(marker.read_text())
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    handle = kernel.OpenProcess(0x1001, False, pid)
+    if handle:
+        try:
+            exit_code = wintypes.DWORD()
+            assert kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            if exit_code.value == 259:
+                kernel.TerminateProcess(handle, 1)
+                pytest.fail("child survived worker interruption")
+        finally:
+            kernel.CloseHandle(handle)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object behaviour")

@@ -56,6 +56,7 @@ def test_postgres_baseline_migration_and_storage_contract() -> None:
                 "benchmark_runs",
                 "incident_audit_events",
                 "incident_records",
+                "incident_repair_jobs",
                 "model_profiles",
             }
 

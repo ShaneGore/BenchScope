@@ -24,6 +24,7 @@ services:
         condition: service_healthy
     environment:
       ALERT_RECEIVER_SECRET_FILE: /run/secrets/alert-receiver-bearer
+      APP_REVISION: ${APP_REVISION:-unknown}
       DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}
     healthcheck:
       test:

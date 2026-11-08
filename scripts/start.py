@@ -10,6 +10,7 @@ import secrets
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from local_tools import ROOT, read_env, require_local_docker, run
 
@@ -94,8 +95,17 @@ def main() -> int:
         action="store_true",
         help="stop this checkout's stack while retaining PostgreSQL data",
     )
+    parser.add_argument(
+        "--repair-worker",
+        action="store_true",
+        help="run the local repair worker in the foreground with operator supervision",
+    )
     args = parser.parse_args()
     try:
+        if args.repair_worker and (not args.observability or args.stop):
+            raise RuntimeError(
+                "--repair-worker requires --observability and cannot be used with --stop."
+            )
         require_local_docker()
         if args.stop and not (ROOT / ".env").exists():
             print("No local .env exists; no stack was changed.")
@@ -128,7 +138,33 @@ def main() -> int:
             "Stop while retaining data: uv run --no-project python scripts/start.py --stop"
             + (" --observability" if args.observability else "")
         )
+        if args.repair_worker:
+            worker_env = dict(env)
+            user = quote(env["POSTGRES_USER"], safe="")
+            password = quote(env["POSTGRES_PASSWORD"], safe="")
+            database = quote(env["POSTGRES_DB"], safe="")
+            port = env.get("POSTGRES_PORT", "5432")
+            if not port.isdecimal() or not 1 <= int(port) <= 65535:
+                raise RuntimeError("POSTGRES_PORT must be a valid TCP port.")
+            worker_env["DATABASE_URL"] = (
+                f"postgresql+psycopg://{user}:{password}@127.0.0.1:{port}/{database}"
+            )
+            worker_env["BENCHSCOPE_COPILOT_REPAIR_ENABLED"] = "true"
+            print("Starting the operator-supervised repair worker in the foreground.")
+            run(
+                "uv",
+                "run",
+                "--directory",
+                str(ROOT / "backend"),
+                "python",
+                "-m",
+                "app.incident_repair",
+                env=worker_env,
+            )
         return 0
+    except KeyboardInterrupt:
+        print("Repair worker stopped; the application stack remains running.")
+        return 130
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
         # CalledProcessError may contain environment-derived arguments; do not echo it.
         print(
