@@ -176,6 +176,8 @@ def test_open_pull_request_does_not_block_another_fingerprint(tmp_path, monkeypa
         "pull_request",
         "missing_files",
         "missing_then_tests",
+        "invalid_application",
+        "invalid_regression",
     ],
 )
 def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, failure):
@@ -269,6 +271,17 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
 
     monkeypatch.setattr(repair, "run_repair_tests", run_tests)
     monkeypatch.setattr(repair, "_validate_application_change", lambda *args: None)
+    if failure in {"invalid_application", "invalid_regression"}:
+
+        def invalid_change(*args):
+            raise InvestigationRejected("private-log-sentinel")
+
+        target = (
+            "_validate_application_change"
+            if failure == "invalid_application"
+            else "_validate_regression_tests"
+        )
+        monkeypatch.setattr(repair, target, invalid_change)
     if failure == "patch":
 
         def invalid_patch(*args):
@@ -305,7 +318,16 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
         2 if failure in {"missing_files", "missing_then_tests"} else 1
     )
     assert len(test_runs) == (
-        0 if failure in {"model", "patch", "missing_files"} else 1
+        0
+        if failure
+        in {
+            "model",
+            "patch",
+            "missing_files",
+            "invalid_application",
+            "invalid_regression",
+        }
+        else 1
     )
     assert "private-log-sentinel" not in caplog.text
     with factory() as session:
@@ -317,12 +339,14 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             == {
                 "github": "github_permissions_unverified",
                 "model": "model_invocation_blocked",
-                "patch": "patch_rejected",
+                "patch": "patch_apply_failed",
                 "tests": "tests_failed",
                 "base_mismatch": "source_revision_mismatch",
                 "pull_request": "pull_request_failed",
                 "missing_files": "patch_missing_required_files",
                 "missing_then_tests": "tests_failed",
+                "invalid_application": "patch_application_invalid",
+                "invalid_regression": "patch_regression_invalid",
             }[failure]
         )
         assert job.attempts == 1
@@ -354,6 +378,8 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             "tests",
             "missing_files",
             "missing_then_tests",
+            "invalid_application",
+            "invalid_regression",
         }:
             assert events[4] == "tests_passed"
         assert (
@@ -367,6 +393,8 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
                 "pull_request": "pull_request_failed",
                 "missing_files": "patch_rejected",
                 "missing_then_tests": "tests_failed",
+                "invalid_application": "patch_rejected",
+                "invalid_regression": "patch_rejected",
             }[failure]
         )
     engine.dispose()

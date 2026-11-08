@@ -1005,6 +1005,11 @@ def _fail_job(session_factory: sessionmaker, job_id, code: str) -> str:
             reason_code={
                 "patch_rejected": "patch_rejected",
                 "patch_missing_required_files": "patch_rejected",
+                "patch_apply_failed": "patch_rejected",
+                "patch_path_unverified": "patch_rejected",
+                "patch_diff_mismatch": "patch_rejected",
+                "patch_application_invalid": "patch_rejected",
+                "patch_regression_invalid": "patch_rejected",
                 "tests_failed": "tests_failed",
                 "pull_request_failed": "pull_request_failed",
                 "github_permissions_unverified": "github_permissions_unverified",
@@ -1077,7 +1082,7 @@ def _build_test_and_open_pr(
             try:
                 changed = apply_repair_patch(worktree, recommendation.patch)
             except (InvestigationBlocked, InvestigationRejected):
-                return _fail_job(session_factory, job_id, "patch_rejected")
+                return _fail_job(session_factory, job_id, "patch_apply_failed")
             if any(
                 (worktree / relative_path).is_symlink()
                 or not (worktree / relative_path).is_file()
@@ -1085,7 +1090,7 @@ def _build_test_and_open_pr(
                 not in (worktree / relative_path).resolve().parents
                 for relative_path in changed
             ):
-                return _fail_job(session_factory, job_id, "patch_rejected")
+                return _fail_job(session_factory, job_id, "patch_path_unverified")
             diff_paths = set(
                 _run_host_command(
                     ["git", "diff", "--name-only"], cwd=worktree, timeout=10
@@ -1094,7 +1099,7 @@ def _build_test_and_open_pr(
                 .splitlines()
             )
             if changed != diff_paths:
-                return _fail_job(session_factory, job_id, "patch_rejected")
+                return _fail_job(session_factory, job_id, "patch_diff_mismatch")
             try:
                 _validate_application_change(
                     (repo_root / "backend" / "app" / "main.py").read_text(
@@ -1104,6 +1109,9 @@ def _build_test_and_open_pr(
                         encoding="utf-8"
                     ),
                 )
+            except (InvestigationRejected, OSError, UnicodeError):
+                return _fail_job(session_factory, job_id, "patch_application_invalid")
+            try:
                 _validate_regression_tests(
                     (
                         repo_root / "backend" / "tests" / "test_health_contract.py"
@@ -1113,7 +1121,7 @@ def _build_test_and_open_pr(
                     ).read_text(encoding="utf-8"),
                 )
             except (InvestigationRejected, OSError, UnicodeError):
-                return _fail_job(session_factory, job_id, "patch_rejected")
+                return _fail_job(session_factory, job_id, "patch_regression_invalid")
             with session_factory() as session:
                 job = session.get(IncidentRepairJob, job_id)
                 job.status = "testing"
