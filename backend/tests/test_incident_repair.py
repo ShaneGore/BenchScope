@@ -166,7 +166,17 @@ def test_open_pull_request_does_not_block_another_fingerprint(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "failure", ["model", "patch", "github", "tests", "base_mismatch", "pull_request"]
+    "failure",
+    [
+        "model",
+        "patch",
+        "github",
+        "tests",
+        "base_mismatch",
+        "pull_request",
+        "missing_files",
+        "missing_then_tests",
+    ],
 )
 def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, failure):
     monkeypatch.delenv("BENCHSCOPE_REPAIR_GH_TOKEN", raising=False)
@@ -232,11 +242,18 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             self.prompts.append(prompt)
             if failure == "model":
                 raise InvestigationBlocked("private-log-sentinel")
+            candidate_patch = patch
+            if failure == "missing_files" or (
+                failure == "missing_then_tests" and len(self.prompts) == 1
+            ):
+                candidate_patch = patch.split(
+                    "diff --git a/backend/tests/test_health_contract.py", 1
+                )[0]
             return repair.RepairRecommendation(
                 "Health returns an invalid status.",
                 0.9,
                 (("backend/app/main.py", 1),),
-                patch,
+                candidate_patch,
                 usage,
                 repair.MODEL,
                 repair.MODEL,
@@ -247,7 +264,7 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
 
     def run_tests(root, worktree):
         test_runs.append(worktree)
-        if failure == "tests":
+        if failure in {"tests", "missing_then_tests"}:
             raise InvestigationBlocked("synthetic test failure")
 
     monkeypatch.setattr(repair, "run_repair_tests", run_tests)
@@ -284,8 +301,12 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
         if failure == "pull_request":
             monkeypatch.setattr(repair, "_create_pull_request", failed_pull_request)
     assert repair.run_next_repair_job(factory, repo, provider=provider) == "escalated"
-    assert len(provider.prompts) == 1
-    assert len(test_runs) == (0 if failure in {"model", "patch"} else 1)
+    assert len(provider.prompts) == (
+        2 if failure in {"missing_files", "missing_then_tests"} else 1
+    )
+    assert len(test_runs) == (
+        0 if failure in {"model", "patch", "missing_files"} else 1
+    )
     assert "private-log-sentinel" not in caplog.text
     with factory() as session:
         job = session.scalar(select(IncidentRepairJob))
@@ -300,9 +321,17 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
                 "tests": "tests_failed",
                 "base_mismatch": "source_revision_mismatch",
                 "pull_request": "pull_request_failed",
+                "missing_files": "patch_missing_required_files",
+                "missing_then_tests": "tests_failed",
             }[failure]
         )
         assert job.attempts == 1
+        if failure in {"missing_files", "missing_then_tests"}:
+            assert job.user_requests == 2
+            assert job.premium_request_cost == 2
+            assert job.input_tokens == 200
+            assert job.output_tokens == 20
+            assert "previous proposal omitted" in provider.prompts[1]
         assert record.investigation_status == "failed"
         events = [
             event.reason_code
@@ -317,9 +346,15 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             "sanitized_evidence_ready",
             "repair_started",
         ]
-        if failure != "model":
+        if failure not in {"model", "missing_files"}:
             assert events[3] == "copilot_patch_validated"
-        if failure not in {"model", "patch", "tests"}:
+        if failure not in {
+            "model",
+            "patch",
+            "tests",
+            "missing_files",
+            "missing_then_tests",
+        }:
             assert events[4] == "tests_passed"
         assert (
             events[-1]
@@ -330,6 +365,8 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
                 "tests": "tests_failed",
                 "base_mismatch": "investigation_failed",
                 "pull_request": "pull_request_failed",
+                "missing_files": "patch_rejected",
+                "missing_then_tests": "tests_failed",
             }[failure]
         )
     engine.dispose()

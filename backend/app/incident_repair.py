@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -845,39 +846,49 @@ def run_next_repair_job(
             return _fail_job(session_factory, job_id, "source_revision_mismatch")
         sources = load_repair_sources(root)
         prompt = make_repair_prompt(record, sources)
-        try:
-            recommendation = provider.invoke(prompt)
-        except (InvestigationBlocked, InvestigationRejected) as exc:
-            detail = str(exc)
-            logger.warning(
-                "Copilot repair failed: %s",
-                detail
-                if detail in _SAFE_INVESTIGATION_FAILURES
-                else "unverified failure",
+        for attempt in range(2):
+            try:
+                recommendation = provider.invoke(prompt)
+            except (InvestigationBlocked, InvestigationRejected) as exc:
+                detail = str(exc)
+                logger.warning(
+                    "Copilot repair failed: %s",
+                    detail
+                    if detail in _SAFE_INVESTIGATION_FAILURES
+                    else "unverified failure",
+                )
+                return _fail_job(
+                    session_factory,
+                    job_id,
+                    "model_response_rejected"
+                    if isinstance(exc, InvestigationRejected)
+                    else "model_invocation_blocked",
+                )
+            if (
+                not recommendation.patch
+                or recommendation.selected_model != MODEL
+                or recommendation.effective_model != MODEL
+                or recommendation.usage is None
+            ):
+                return _fail_job(session_factory, job_id, "patch_rejected")
+            usage = _validate_cli_usage(recommendation.usage)
+            _record_model_usage(session_factory, job_id, usage)
+            paths = _patch_paths(recommendation.patch, set(REPAIR_SOURCE_FILES))
+            if any(path.startswith("backend/app/") for path in paths) and any(
+                path.startswith("backend/tests/") for path in paths
+            ):
+                break
+            if attempt == 1:
+                return _fail_job(
+                    session_factory, job_id, "patch_missing_required_files"
+                )
+            prompt = prompt.replace(
+                "### INCIDENT EVIDENCE\n",
+                "The previous proposal omitted an application change or a new "
+                "regression test. Return a complete patch containing both.\n"
+                "### INCIDENT EVIDENCE\n",
+                1,
             )
-            return _fail_job(
-                session_factory,
-                job_id,
-                "model_response_rejected"
-                if isinstance(exc, InvestigationRejected)
-                else "model_invocation_blocked",
-            )
-        if (
-            not recommendation.patch
-            or recommendation.selected_model != MODEL
-            or recommendation.effective_model != MODEL
-            or recommendation.usage is None
-        ):
-            return _fail_job(session_factory, job_id, "patch_rejected")
-        _validate_cli_usage(recommendation.usage)
-        if not any(
-            path.startswith("backend/app/")
-            for path in _patch_paths(recommendation.patch, set(REPAIR_SOURCE_FILES))
-        ) or not any(
-            path.startswith("backend/tests/")
-            for path in _patch_paths(recommendation.patch, set(REPAIR_SOURCE_FILES))
-        ):
-            return _fail_job(session_factory, job_id, "patch_rejected")
         if _contains_credential(recommendation.root_cause):
             return _fail_job(session_factory, job_id, "patch_rejected")
         return _build_test_and_open_pr(
@@ -959,6 +970,24 @@ def _fail_claimed_job(session, job, record, code: str) -> str:
     return "escalated"
 
 
+def _record_model_usage(
+    session_factory: sessionmaker, job_id, usage: CopilotUsage
+) -> None:
+    with session_factory() as session:
+        job = session.get(IncidentRepairJob, job_id)
+        if job is None:
+            raise InvestigationBlocked("repair job is unavailable")
+        job.model_name = usage.current_model
+        job.user_requests = (job.user_requests or 0) + usage.total_user_requests
+        job.premium_request_cost = (job.premium_request_cost or Decimal(0)) + Decimal(
+            str(usage.total_premium_request_cost)
+        )
+        job.nano_aiu = (job.nano_aiu or Decimal(0)) + Decimal(str(usage.total_nano_aiu))
+        job.input_tokens = (job.input_tokens or 0) + usage.last_call_input_tokens
+        job.output_tokens = (job.output_tokens or 0) + usage.last_call_output_tokens
+        session.commit()
+
+
 def _fail_job(session_factory: sessionmaker, job_id, code: str) -> str:
     with session_factory() as session:
         job = session.get(IncidentRepairJob, job_id)
@@ -975,6 +1004,7 @@ def _fail_job(session_factory: sessionmaker, job_id, code: str) -> str:
             outcome="failed",
             reason_code={
                 "patch_rejected": "patch_rejected",
+                "patch_missing_required_files": "patch_rejected",
                 "tests_failed": "tests_failed",
                 "pull_request_failed": "pull_request_failed",
                 "github_permissions_unverified": "github_permissions_unverified",
@@ -1015,12 +1045,6 @@ def _build_test_and_open_pr(
         if job is None or record is None:
             return "escalated"
         job.root_cause = recommendation.root_cause
-        job.model_name = recommendation.effective_model
-        job.user_requests = recommendation.usage.total_user_requests
-        job.premium_request_cost = recommendation.usage.total_premium_request_cost
-        job.nano_aiu = recommendation.usage.total_nano_aiu
-        job.input_tokens = recommendation.usage.last_call_input_tokens
-        job.output_tokens = recommendation.usage.last_call_output_tokens
         record.investigation_summary = recommendation.root_cause
         record.investigation_status = "completed"
         append_incident_audit_event(
