@@ -299,6 +299,32 @@ def test_cli_event_parser_reads_selected_and_effective_model_metadata():
     assert result.summary == "Summary."
 
 
+def test_repair_event_parser_uses_final_message_and_checks_every_model():
+    def message(content, model="gpt-6-luna"):
+        return {
+            "type": "assistant.message",
+            "data": {"content": content, "model": model, "serverTools": []},
+        }
+
+    events = [
+        {"type": "model.call_start", "data": {"model": "gpt-6-luna"}},
+        message("Intermediate."),
+        message("Final."),
+        {"type": "model.call_final_result", "data": {"model": "gpt-6-luna"}},
+    ]
+    raw = "\n".join(json.dumps(event) for event in events).encode()
+    with pytest.raises(investigation.InvestigationRejected, match="effective model"):
+        investigation._parse_cli_events(raw)
+    assert (
+        investigation._parse_cli_events(raw, allow_multiple_messages=True).summary
+        == "Final."
+    )
+    events[1] = message("Intermediate.", model="other")
+    raw = "\n".join(json.dumps(event) for event in events).encode()
+    with pytest.raises(investigation.InvestigationRejected, match="effective model"):
+        investigation._parse_cli_events(raw, allow_multiple_messages=True)
+
+
 @pytest.mark.parametrize(
     "events",
     [

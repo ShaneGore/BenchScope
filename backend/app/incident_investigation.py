@@ -463,7 +463,9 @@ def _run_cli_process(
     return _run_cli_process_posix(args, cwd, timeout, output_limit, start, env)
 
 
-def _parse_cli_events(raw: bytes) -> ProviderResponse:
+def _parse_cli_events(
+    raw: bytes, *, allow_multiple_messages: bool = False
+) -> ProviderResponse:
     try:
         text = raw.decode("utf-8", errors="strict")
         events = [
@@ -525,7 +527,8 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
     if len(selected_models) != 1 or selected_models[0] != MODEL:
         raise InvestigationRejected("selected model identity unavailable or mismatched")
     if (
-        len(messages) != 1
+        not messages
+        or (not allow_multiple_messages and len(messages) != 1)
         or len(final_models) != 1
         or any(model != MODEL for model in effective_models)
         or final_models[0] != MODEL
@@ -535,8 +538,8 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
         )
     return ProviderResponse(
         MODEL,
-        messages[0][0],
-        "\n".join(content for _, content in messages),
+        messages[-1][0],
+        messages[-1][1],
     )
 
 

@@ -281,7 +281,7 @@ class CopilotRepairProvider:
                 output_limit=_REPAIR_CLI_OUTPUT_LIMIT_BYTES,
                 env=environment,
             )
-            response = _parse_cli_events(stdout)
+            response = _parse_cli_events(stdout, allow_multiple_messages=True)
             if response.selected_model != MODEL or response.effective_model != MODEL:
                 raise InvestigationRejected("Copilot repair model identity mismatch")
             usage = _parse_cli_usage(usage_file)
