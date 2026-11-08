@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -28,6 +29,8 @@ from app.database import create_database_engine
 from app.incident_audit import append_incident_audit_event
 from app.incident_investigation import dispatch_investigation
 from app.models import IncidentRecord
+
+logger = logging.getLogger(__name__)
 
 ALERT_NAME = "BenchScopeApiUnavailable"
 WEBHOOK_PATH = "/grafana/v1"
@@ -645,6 +648,13 @@ def create_receiver_app(
     def configured_secret() -> str | None:
         return secret if secret is not None else _read_secret(secret_file)
 
+    def log_database_failure(stage: str, error: SQLAlchemyError) -> None:
+        logger.error(
+            "alert_receiver_database_failure stage=%s error_type=%s",
+            stage,
+            type(error).__name__,
+        )
+
     def database_ready() -> bool:
         if factory is None:
             return False
@@ -735,7 +745,8 @@ def create_receiver_app(
                             reason_code="resolved_notification",
                         )
                         session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as exc:
+                log_database_failure("resolution_persist", exc)
                 return JSONResponse(status_code=503, content={"status": "not_ready"})
             return JSONResponse(status_code=200, content={"status": "resolved"})
 
@@ -770,6 +781,8 @@ def create_receiver_app(
                     received_at=received_at,
                 )
                 session.add(record)
+                # Persist the parent before dispatch adds its foreign-key audit event.
+                session.flush()
                 append_incident_audit_event(
                     session,
                     record_id,
@@ -782,10 +795,19 @@ def create_receiver_app(
                     session.commit()
                 except IntegrityError:
                     session.rollback()
-                    return JSONResponse(
-                        status_code=200, content={"status": "duplicate"}
+                    existing = session.scalar(
+                        select(IncidentRecord.id).where(
+                            IncidentRecord.fingerprint == key[0],
+                            IncidentRecord.starts_at == key[1],
+                        )
                     )
-        except SQLAlchemyError:
+                    if existing is not None:
+                        return JSONResponse(
+                            status_code=200, content={"status": "duplicate"}
+                        )
+                    raise
+        except SQLAlchemyError as exc:
+            log_database_failure("incident_persist", exc)
             return JSONResponse(status_code=503, content={"status": "not_ready"})
 
         evidence = await evidence_collector(received_at)
@@ -820,7 +842,8 @@ def create_receiver_app(
                     return JSONResponse(
                         status_code=503, content={"status": "not_ready"}
                     )
-        except SQLAlchemyError:
+        except SQLAlchemyError as exc:
+            log_database_failure("evidence_persist", exc)
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return JSONResponse(
             status_code=200,

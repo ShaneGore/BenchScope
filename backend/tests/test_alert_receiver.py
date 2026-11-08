@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from app.alert_receiver import (
@@ -83,6 +83,13 @@ def _webhook(
 def _database(tmp_path):
     url = f"sqlite:///{tmp_path / 'alerts.sqlite'}"
     engine = create_engine(url)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(connection, _record):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     engine.dispose()
     return url
@@ -248,6 +255,42 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
         sentinel not in evidence + response.text + caplog.text
         for sentinel in (SECRET, TOKEN, OWNER, PROMPT, OUTPUT)
     )
+
+
+def test_database_integrity_failure_is_not_reported_as_duplicate(
+    tmp_path, caplog, monkeypatch
+) -> None:
+    database_url = _database(tmp_path)
+    fetch_json, calls = _fetcher()
+    app = create_receiver_app(
+        database_url, secret=SECRET, fetch_json=fetch_json, clock=lambda: NOW
+    )
+
+    def add_invalid_dispatch_event(session, record):
+        session.add(
+            IncidentAuditEvent(
+                incident_id=record.id,
+                event_type="invalid",
+                outcome="blocked",
+                reason_code="test_failure",
+            )
+        )
+        return "blocked"
+
+    monkeypatch.setattr(
+        "app.alert_receiver.dispatch_investigation", add_invalid_dispatch_event
+    )
+    with caplog.at_level(logging.ERROR), TestClient(app) as client:
+        response = _post(client, _webhook())
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+    assert calls == []
+    assert _read_records(database_url) == []
+    assert _read_audit_events(database_url) == []
+    assert "stage=incident_persist" in caplog.text
+    assert "error_type=IntegrityError" in caplog.text
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -434,19 +434,51 @@ the model gate and Docker recovery gate must not be bypassed.
 
 ### Current-source live attempt (2026-11-08)
 
-An isolated project, `benchscope-oncall-e50f521aa51d`, started with the API,
-database, receiver, Prometheus, Loki, Tempo, and Grafana healthy; the API
-Prometheus target was initially up. After stopping only that project's API,
-the Prometheus mirror reached firing. The receiver access log showed a
-`POST /grafana/v1`, but the disposable database had no incident row after
-four minutes. The diagnostic did not establish the Grafana rule's notification
-state or the receiver response body, so this is **not** evidence of accepted
-authenticated intake or an automatic dispatch. The delivery cause remains
-unresolved; investigate Grafana's evaluated rule and the exact receiver result
-before claiming a live alert-to-audit run.
+The first isolated run used project `benchscope-alert-ingest-pr61`, the local
+Docker context, distinct loopback ports, and a disposable PostgreSQL database.
+The API and receiver both connected to `benchscope_incident_pr61`; the database
+reported migration `0007_incident_audit` before the exercise. Prometheus fired
+and Grafana's managed rule was active. Grafana retried `POST /grafana/v1`;
+the receiver returned HTTP 503 on each attempt and no incident or audit rows
+were committed.
 
-The project-scoped cleanup removed its containers, images, volumes, network,
-and temporary credentials/configuration. No recovery command was run, no model
-request was made, and the pre-existing local Compose project was not changed.
-The live incident workflow is therefore incomplete and remains **0/2** for
-AI-assisted on-call recovery.
+The sanitized receiver access log showed the HTTP statuses. PostgreSQL's
+diagnostic identified `incident_audit_events_incident_id_fkey`: the dispatch
+gate's ORM update autoflushed a pending audit row before its new incident
+parent had been inserted. The transaction rolled back. This was a persistence
+ordering defect, not an authentication, route, database-target, migration, or
+deduplication failure.
+
+The receiver now explicitly flushes the new `IncidentRecord` before adding its
+audit event. It also reports an integrity failure as a duplicate only if a
+row with the same fingerprint and start time exists after rollback; other
+integrity failures return HTTP 503. Database error logs expose only the
+operation stage and exception class, not the webhook, SQL parameters, or
+credentials.
+
+The isolated stack was rebuilt from the PR worktree based on
+`ce9664aec8d6b013f036a25ea21834550cf3bc96` (working-tree changes included),
+without pulling images. The second Grafana-managed outage produced HTTP 200
+and one durable row with fingerprint `caf1593e7bd159d2`, `firing`,
+`evidence_status=complete`, and `investigation_status=blocked`. Its audit
+events were `alert_received/accepted`, `investigation_dispatch/blocked`
+(`model_runtime_unverified`), and `evidence_collected/complete`. A repeated
+authenticated delivery returned `200 {"status":"duplicate"}` without adding
+rows or events. An unauthenticated request returned HTTP 401 without side
+effects.
+
+After restarting the receiver, the one incident and its three initial audit
+events remained. The API was manually restarted to restore the disposable
+environment; Grafana then delivered the resolved alert, which returned HTTP
+200 and appended `alert_resolved/accepted`. The final row was `resolved`,
+Prometheus reported `up=1`, and Grafana had no active alert. No model provider
+or Docker recovery operation was invoked.
+
+The added integrity-failure test verifies an unrelated database constraint
+failure returns HTTP 503, does not create records, and emits only the
+sanitized `incident_persist` stage and `IntegrityError` type. The incident
+flow is now demonstrated through authenticated receipt, durable dispatch-gate
+audit, duplicate suppression, restart persistence, and alert resolution. It
+still does **not** demonstrate an actual model assessment or AI-assisted
+recovery; those remain blocked by unverified model authentication and
+tool-restriction guarantees.
