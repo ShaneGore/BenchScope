@@ -198,6 +198,7 @@ def parse_repair_recommendation(
         or not isinstance(patch, str)
         or not patch.strip()
         or patch_size > _PATCH_LIMIT_BYTES
+        or _contains_credential(patch)
     ):
         raise InvestigationRejected("repair response fields are invalid")
 
@@ -450,7 +451,8 @@ def make_repair_prompt(record: IncidentRecord, source_files: dict[str, str]) -> 
         "evidence, and patch. confidence must be a number from 0 to 1; evidence "
         "must be a non-empty array of {path,line} references to the supplied "
         "files; patch must be a git-format unified diff with a "
-        "'diff --git a/PATH b/PATH' header for each file, changing only supplied "
+        "'diff --git a/PATH b/PATH' header for each file, accurate unified-diff "
+        "hunk line counts, and a final newline, changing only supplied "
         "files under backend/app or backend/tests. Include both an application "
         "change and a new asserting regression test; leave existing test functions "
         "unchanged. In main.py change only the metrics enable condition or literal "
@@ -495,7 +497,7 @@ def apply_repair_patch(worktree: Path, patch: str) -> set[str]:
     changed = _patch_paths(patch, set(REPAIR_SOURCE_FILES))
     with tempfile.TemporaryDirectory(prefix="benchscope-patch-") as directory:
         patch_file = Path(directory) / "repair.patch"
-        patch_file.write_text(patch, encoding="utf-8")
+        patch_file.write_bytes(patch.encode("utf-8"))
         _run_host_command(
             ["git", "apply", "--check", "--whitespace=error-all", str(patch_file)],
             cwd=worktree,
@@ -1023,13 +1025,26 @@ def _build_test_and_open_pr(
 
     with tempfile.TemporaryDirectory(prefix="benchscope-worktree-") as directory:
         worktree = Path(directory) / "checkout"
-        _run_host_command(
-            ["git", "worktree", "add", "--detach", str(worktree), job.source_revision],
-            cwd=repo_root,
-            timeout=30,
-        )
         try:
-            changed = apply_repair_patch(worktree, recommendation.patch)
+            _run_host_command(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(worktree),
+                    job.source_revision,
+                ],
+                cwd=repo_root,
+                timeout=30,
+            )
+        except InvestigationBlocked:
+            return _fail_job(session_factory, job_id, "worktree_unavailable")
+        try:
+            try:
+                changed = apply_repair_patch(worktree, recommendation.patch)
+            except (InvestigationBlocked, InvestigationRejected):
+                return _fail_job(session_factory, job_id, "patch_rejected")
             if any(
                 (worktree / relative_path).is_symlink()
                 or not (worktree / relative_path).is_file()

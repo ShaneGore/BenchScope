@@ -166,7 +166,7 @@ def test_open_pull_request_does_not_block_another_fingerprint(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "failure", ["model", "github", "tests", "base_mismatch", "pull_request"]
+    "failure", ["model", "patch", "github", "tests", "base_mismatch", "pull_request"]
 )
 def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, failure):
     monkeypatch.delenv("BENCHSCOPE_REPAIR_GH_TOKEN", raising=False)
@@ -252,6 +252,12 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
 
     monkeypatch.setattr(repair, "run_repair_tests", run_tests)
     monkeypatch.setattr(repair, "_validate_application_change", lambda *args: None)
+    if failure == "patch":
+
+        def invalid_patch(*args):
+            raise repair.RepairCommandError("failed")
+
+        monkeypatch.setattr(repair, "apply_repair_patch", invalid_patch)
 
     def missing_github():
         raise InvestigationBlocked("GitHub CLI authentication is unavailable")
@@ -279,7 +285,7 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             monkeypatch.setattr(repair, "_create_pull_request", failed_pull_request)
     assert repair.run_next_repair_job(factory, repo, provider=provider) == "escalated"
     assert len(provider.prompts) == 1
-    assert len(test_runs) == (0 if failure == "model" else 1)
+    assert len(test_runs) == (0 if failure in {"model", "patch"} else 1)
     assert "private-log-sentinel" not in caplog.text
     with factory() as session:
         job = session.scalar(select(IncidentRepairJob))
@@ -290,6 +296,7 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             == {
                 "github": "github_permissions_unverified",
                 "model": "model_invocation_blocked",
+                "patch": "patch_rejected",
                 "tests": "tests_failed",
                 "base_mismatch": "source_revision_mismatch",
                 "pull_request": "pull_request_failed",
@@ -312,13 +319,14 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
         ]
         if failure != "model":
             assert events[3] == "copilot_patch_validated"
-        if failure not in {"model", "tests"}:
+        if failure not in {"model", "patch", "tests"}:
             assert events[4] == "tests_passed"
         assert (
             events[-1]
             == {
                 "github": "github_permissions_unverified",
                 "model": "investigation_failed",
+                "patch": "patch_rejected",
                 "tests": "tests_failed",
                 "base_mismatch": "investigation_failed",
                 "pull_request": "pull_request_failed",
@@ -354,6 +362,7 @@ def test_repair_response_requires_strict_schema_and_allowlisted_paths():
         content.replace('"confidence": 0.9', '"confidence": true'),
         content.replace('"line": 1', '"line": 3'),
         content.replace("Health route", "token=ghp_abcdefghijklmnopqrstuvwxyz012345"),
+        json.dumps({**json.loads(content), "patch": patch + "+token=example-secret\n"}),
     ]
     for bad in bad_values:
         with pytest.raises(InvestigationRejected):
