@@ -39,11 +39,13 @@ reads `.env`; every Compose invocation supplies the temporary env file and
 explicit project/file paths. It refuses a non-local Docker endpoint, missing
 cached service images or Dockerfile bases, or unavailable ports; it never pulls
 images or touches an existing Compose project. It builds a uniquely tagged API
-image with `--pull=false` and build network disabled; the locked dependency
-install layer must also already be cached, or the build fails. It records the
-Git revision and a SHA-256 fingerprint of the Dockerfile and copied backend
-inputs (including dirty checkout changes), checks the fingerprint after build
-and verification, and checks the running container image ID against the build.
+image with `--pull=false`, while allowing the locked dependency install to reach
+its configured package index over TLS. `uv sync --frozen` uses the committed
+lockfile and its artifact hashes; Docker base and service images must already be
+local. It records the Git revision and a SHA-256 fingerprint of the Dockerfile
+and copied backend inputs (including dirty checkout changes), checks the
+fingerprint after build and verification, and checks the running container image
+ID against the build.
 It starts only that disposable local project with `--no-build --pull never`, runs
 `GET /api/v1/runs` with a generated W3C `traceparent`, and removes only its own
 containers, volumes, image tag and files afterward. Cleanup failures cause a
@@ -71,10 +73,8 @@ Docker-free verifier checks run with
 
 The local bases and service images were present, but the offline fresh build
 could not reuse the locked dependency layer and failed fetching `idna==3.20`
-with build networking disabled. No image was pulled and the disposable stack
-was not started. Therefore the new source/image and Loki correlation checks
-have not yet passed end-to-end; the cached-image evidence below does not prove
-them. Prepare the exact dependency layer locally before rerunning.
+with build networking disabled. This attempt was superseded by the successful
+current-source run recorded below.
 
 ## Viewer-safe trace access and Explore limitation
 
@@ -135,3 +135,48 @@ that the OpenMetrics counter sample's exemplar exactly matches the exported
 span trace ID. Existing tests continue to check that trace IDs, owner IDs, and
 run IDs are absent from metric labels and that trace/log correlation is
 preserved.
+
+## Current-source verification (2026-11-08)
+
+The earlier fresh-build failure was caused by the verifier's `--network none`
+build setting, not a Compose parsing or Docker DNS defect. Windows DNS and
+TLS-verified HTTPS requests to `pypi.org` and the locked wheel URL on
+`files.pythonhosted.org` succeeded (HTTP 200). The Docker BuildKit environment
+resolved both hosts and also returned HTTP 200 with TLS verification enabled.
+Docker's bridge network had no custom DNS option; a Docker Desktop HTTP(S)
+proxy was configured. The Windows uv cache contained the locked
+`opentelemetry-api==1.45.1` wheel, but that host cache was not mounted into
+BuildKit and did not provide the complete Linux image dependency cache.
+
+The verifier now allows normal network access only for the Dockerfile's
+`uv sync --frozen` dependency install while retaining `--pull=false`; package
+selection and artifact hashes remain controlled by `uv.lock`, and all base and
+observability images must already be local.
+
+Command:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\backend\scripts\verify_metric_trace.ps1
+```
+
+Verified from main revision `5f3a151b7b963c2e703e41b7b5150c13b0f86606`,
+API build-input SHA-256
+`d54e05fa4e566a70a36c2661e6b4efb93a7a7fbc7dec409beb245511ba591c9f`,
+fresh API image ID
+`sha256:831adfda1c34354e723891e06c49121f773eff55d32f4772c69beb4bd5edfbcf`.
+The isolated synthetic `GET /api/v1/runs` returned an empty page. Prometheus
+exemplar, Tempo span, Loki `HTTP request completed` stream metadata, and the
+anonymous Grafana Tempo proxy all matched trace ID
+`950ff61eb92744d488d0097a40068c08`; the Tempo/request span ID was
+`6382e442c78ee310`. The Loki response placed trace/span and HTTP attributes in
+the stream metadata, with the log body and timestamp as a two-element value;
+the verifier had incorrectly expected metadata as a third value element.
+The verifier now checks the actual Loki response shape and fails if the trace,
+span, route, method, status, or log body differs.
+
+The run used Prometheus `3.5.0`, Grafana `12.1.1`, Collector Contrib `0.136.0`,
+Tempo `2.8.1`, Loki `3.5.3`, PostgreSQL `17-alpine`, and the locked API
+telemetry versions above. Project `benchscope-metric-trace-b1effe78937c` was
+removed with its containers, volumes, network, temporary files, and image.
+The pre-existing local Compose services remained running. The PowerShell
+verifier regression tests and `backend/tests/test_observability.py` passed.

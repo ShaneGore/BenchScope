@@ -1,9 +1,12 @@
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\..\scripts\verify_metric_trace.ps1" -LibraryOnly
+$verifierSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\scripts\verify_metric_trace.ps1") -Raw
 
 function Assert($condition, $message) {
     if (-not $condition) { throw $message }
 }
+
+Assert ($verifierSource.Contains("build --pull=false --network default")) "Fresh image build must allow locked dependency access without pulling base images."
 
 $trace = "0123456789abcdef0123456789abcdef"
 $span = "0123456789abcdef"
@@ -25,8 +28,11 @@ $rejected = $false
 try { Assert-ImageMatches "sha256:fresh" "sha256:stale" } catch { $rejected = $true }
 Assert $rejected "Wrong image accepted."
 $metadata = @{ trace_id = $trace; span_id = $span; http_route = "/api/v1/runs"; http_request_method = "GET"; http_response_status_code = "200" }
-$logs = @{ data = @{ result = @(@{ values = ,@("123", "HTTP request completed", $metadata) }) } }
+$logs = @{ data = @{ result = @(@{ stream = $metadata; values = ,@("123", "HTTP request completed") }) } }
 Assert (Test-CorrelatedLog $logs $trace $spans) "Expected correlated log."
+$metadata.trace_id = "ffffffffffffffffffffffffffffffff"
+Assert (-not (Test-CorrelatedLog $logs $trace $spans)) "Wrong log trace accepted."
+$metadata.trace_id = $trace
 $metadata.span_id = "ffffffffffffffff"
 Assert (-not (Test-CorrelatedLog $logs $trace $spans)) "Wrong span accepted."
 $metadata.span_id = $span
