@@ -453,7 +453,9 @@ def make_repair_prompt(record: IncidentRecord, source_files: dict[str, str]) -> 
         "'diff --git a/PATH b/PATH' header for each file, changing only supplied "
         "files under backend/app or backend/tests. Include both an application "
         "change and a new asserting regression test; leave existing test functions "
-        "unchanged. If a safe, testable repair is not justified, "
+        "unchanged. In main.py change only the metrics enable condition or literal "
+        "health response; do not modify imports or other code. If a safe, testable "
+        "repair is not justified, "
         "return an empty patch and explain the uncertainty in root_cause.\n"
         "### INCIDENT EVIDENCE\n"
         + json.dumps(evidence, separators=(",", ":"), ensure_ascii=False)
@@ -543,6 +545,89 @@ def _validate_regression_tests(original: str, modified: str) -> None:
         isinstance(node, ast.Assert) for test in added for node in ast.walk(test)
     ):
         raise InvestigationRejected("repair must add an asserting regression test")
+
+
+def _validate_application_change(original: str, modified: str) -> None:
+    try:
+        before, after = ast.parse(original), ast.parse(modified)
+    except SyntaxError:
+        raise InvestigationRejected("repair application has invalid syntax") from None
+
+    def normalize(tree: ast.Module, *, candidate: bool) -> None:
+        apps = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "create_app"
+        ]
+        if len(apps) != 1:
+            raise InvestigationRejected("repair application boundary is invalid")
+        health = [
+            node
+            for node in apps[0].body
+            if isinstance(node, ast.FunctionDef) and node.name == "health"
+        ]
+        metrics = [
+            node
+            for node in apps[0].body
+            if isinstance(node, ast.If)
+            and len(node.body) == 1
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Call)
+            and ast.unparse(node.body[0].value.func) == "app.mount"
+            and node.body[0].value.args
+            and isinstance(node.body[0].value.args[0], ast.Constant)
+            and node.body[0].value.args[0].value == "/metrics"
+        ]
+        if len(health) != 1 or len(metrics) != 1:
+            raise InvestigationRejected("repair application boundary is invalid")
+        if candidate:
+            body = health[0].body
+            if (
+                len(body) != 1
+                or not isinstance(body[0], ast.Return)
+                or not isinstance(body[0].value, ast.Dict)
+                or any(
+                    not isinstance(item, ast.Constant)
+                    or not isinstance(item.value, str)
+                    for item in [*body[0].value.keys, *body[0].value.values]
+                )
+            ):
+                raise InvestigationRejected("repair health response is not literal")
+            for node in ast.walk(metrics[0].test):
+                if isinstance(node, ast.Name) and node.id != "request_telemetry":
+                    raise InvestigationRejected("repair metrics condition is unsafe")
+                if isinstance(node, ast.Attribute) and (
+                    node.attr != "enabled"
+                    or not isinstance(node.value, ast.Name)
+                    or node.value.id != "request_telemetry"
+                ):
+                    raise InvestigationRejected("repair metrics condition is unsafe")
+                if isinstance(node, ast.Constant) and type(node.value) is not bool:
+                    raise InvestigationRejected("repair metrics condition is unsafe")
+                if not isinstance(
+                    node,
+                    (
+                        ast.Name,
+                        ast.Load,
+                        ast.Attribute,
+                        ast.Constant,
+                        ast.BoolOp,
+                        ast.And,
+                        ast.Or,
+                        ast.UnaryOp,
+                        ast.Not,
+                    ),
+                ):
+                    raise InvestigationRejected("repair metrics condition is unsafe")
+        health[0].body = [ast.Pass()]
+        metrics[0].test = ast.Constant(value=True)
+
+    normalize(before, candidate=False)
+    normalize(after, candidate=True)
+    if ast.dump(before, include_attributes=False) != ast.dump(
+        after, include_attributes=False
+    ):
+        raise InvestigationRejected("repair changes protected application code")
 
 
 def run_repair_tests(repo_root: Path, worktree: Path) -> None:
@@ -963,6 +1048,14 @@ def _build_test_and_open_pr(
             if changed != diff_paths:
                 return _fail_job(session_factory, job_id, "patch_rejected")
             try:
+                _validate_application_change(
+                    (repo_root / "backend" / "app" / "main.py").read_text(
+                        encoding="utf-8"
+                    ),
+                    (worktree / "backend" / "app" / "main.py").read_text(
+                        encoding="utf-8"
+                    ),
+                )
                 _validate_regression_tests(
                     (
                         repo_root / "backend" / "tests" / "test_health_contract.py"

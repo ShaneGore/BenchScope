@@ -64,6 +64,30 @@ def test_regression_validation_accepts_new_asserting_test():
     )
 
 
+def test_application_change_boundary_rejects_auth_and_side_effects():
+    original = (
+        "def create_app():\n"
+        "    if request_telemetry.enabled and False:\n"
+        '        app.mount("/metrics", request_telemetry.metrics_app)\n'
+        '    @app.get("/health")\n'
+        "    def health():\n"
+        '        return {"status": "ok"}\n'
+        "    configure_auth()\n"
+    )
+    fixed = original.replace(
+        "request_telemetry.enabled and False", "request_telemetry.enabled"
+    )
+    repair._validate_application_change(original, fixed)
+    for modified in (
+        fixed.replace("configure_auth()", "pass"),
+        fixed.replace('{"status": "ok"}', '__import__("os").environ'),
+        fixed.replace("request_telemetry.enabled:", "dangerous_call():"),
+        "import os\n" + fixed,
+    ):
+        with pytest.raises(InvestigationRejected):
+            repair._validate_application_change(original, modified)
+
+
 def test_repair_queue_requires_complete_revision_bound_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(
         repair, "_check_evidence_schema", lambda evidence, status: evidence
@@ -227,6 +251,7 @@ def test_worker_escalates_failures_after_model(tmp_path, monkeypatch, caplog, fa
             raise InvestigationBlocked("synthetic test failure")
 
     monkeypatch.setattr(repair, "run_repair_tests", run_tests)
+    monkeypatch.setattr(repair, "_validate_application_change", lambda *args: None)
 
     def missing_github():
         raise InvestigationBlocked("GitHub CLI authentication is unavailable")
