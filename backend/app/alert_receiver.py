@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -25,7 +26,11 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from app.database import create_database_engine
+from app.incident_audit import append_incident_audit_event
+from app.incident_investigation import dispatch_investigation
 from app.models import IncidentRecord
+
+logger = logging.getLogger(__name__)
 
 ALERT_NAME = "BenchScopeApiUnavailable"
 WEBHOOK_PATH = "/grafana/v1"
@@ -643,6 +648,13 @@ def create_receiver_app(
     def configured_secret() -> str | None:
         return secret if secret is not None else _read_secret(secret_file)
 
+    def log_database_failure(stage: str, error: SQLAlchemyError) -> None:
+        logger.error(
+            "alert_receiver_database_failure stage=%s error_type=%s",
+            stage,
+            type(error).__name__,
+        )
+
     def database_ready() -> bool:
         if factory is None:
             return False
@@ -725,8 +737,16 @@ def create_receiver_app(
                         record.alert_status = "resolved"
                         record.ends_at = alert["ends_at"]
                         record.resolved_at = received_at
+                        append_incident_audit_event(
+                            session,
+                            record.id,
+                            event_type="alert_resolved",
+                            outcome="accepted",
+                            reason_code="resolved_notification",
+                        )
                         session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as exc:
+                log_database_failure("resolution_persist", exc)
                 return JSONResponse(status_code=503, content={"status": "not_ready"})
             return JSONResponse(status_code=200, content={"status": "resolved"})
 
@@ -748,27 +768,46 @@ def create_receiver_app(
                     return JSONResponse(
                         status_code=200, content={"status": "duplicate"}
                     )
-                session.add(
-                    IncidentRecord(
-                        id=record_id,
-                        alert_name=ALERT_NAME,
-                        fingerprint=key[0],
-                        starts_at=key[1],
-                        ends_at=alert["ends_at"],
-                        alert_status="firing",
-                        evidence_status="failed",
-                        evidence=initial_evidence,
-                        received_at=received_at,
-                    )
+                record = IncidentRecord(
+                    id=record_id,
+                    alert_name=ALERT_NAME,
+                    fingerprint=key[0],
+                    starts_at=key[1],
+                    ends_at=alert["ends_at"],
+                    alert_status="firing",
+                    evidence_status="failed",
+                    evidence=initial_evidence,
+                    investigation_status="not_started",
+                    received_at=received_at,
                 )
+                session.add(record)
+                # Persist the parent before dispatch adds its foreign-key audit event.
+                session.flush()
+                append_incident_audit_event(
+                    session,
+                    record_id,
+                    event_type="alert_received",
+                    outcome="accepted",
+                    reason_code="authenticated_firing_alert",
+                )
+                investigation_status = dispatch_investigation(session, record)
                 try:
                     session.commit()
                 except IntegrityError:
                     session.rollback()
-                    return JSONResponse(
-                        status_code=200, content={"status": "duplicate"}
+                    existing = session.scalar(
+                        select(IncidentRecord.id).where(
+                            IncidentRecord.fingerprint == key[0],
+                            IncidentRecord.starts_at == key[1],
+                        )
                     )
-        except SQLAlchemyError:
+                    if existing is not None:
+                        return JSONResponse(
+                            status_code=200, content={"status": "duplicate"}
+                        )
+                    raise
+        except SQLAlchemyError as exc:
+            log_database_failure("incident_persist", exc)
             return JSONResponse(status_code=503, content={"status": "not_ready"})
 
         evidence = await evidence_collector(received_at)
@@ -787,12 +826,32 @@ def create_receiver_app(
                 if record is not None:
                     record.evidence = evidence
                     record.evidence_status = evidence_status
+                    append_incident_audit_event(
+                        session,
+                        record.id,
+                        event_type="evidence_collected",
+                        outcome=evidence_status,
+                        reason_code={
+                            "complete": "sources_complete",
+                            "partial": "source_failure",
+                            "failed": "sources_unavailable",
+                        }[evidence_status],
+                    )
                     session.commit()
-        except SQLAlchemyError:
+                else:
+                    return JSONResponse(
+                        status_code=503, content={"status": "not_ready"}
+                    )
+        except SQLAlchemyError as exc:
+            log_database_failure("evidence_persist", exc)
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return JSONResponse(
             status_code=200,
-            content={"status": "recorded", "evidence_status": evidence_status},
+            content={
+                "status": "recorded",
+                "evidence_status": evidence_status,
+                "investigation_status": investigation_status,
+            },
         )
 
     return app

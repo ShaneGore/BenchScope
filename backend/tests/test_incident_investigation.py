@@ -36,18 +36,22 @@ def test_incident_migration_revisions_fit_postgres_version_column_offline(monkey
     assert all(
         len(revision.revision) <= capacity for revision in scripts.walk_revisions()
     )
-    assert scripts.get_current_head() == "0006_incident_summary"
+    assert scripts.get_current_head() == "0007_incident_audit"
 
     upgrade = StringIO()
     config.output_buffer = upgrade
     command.upgrade(config, "head", sql=True)
     assert "VARCHAR(32)" in upgrade.getvalue()
     assert "ADD COLUMN investigation_summary TEXT" in upgrade.getvalue()
-    assert "'0006_incident_summary'" in upgrade.getvalue()
+    assert "ADD COLUMN investigation_status VARCHAR(16)" in upgrade.getvalue()
+    assert "CREATE TABLE incident_audit_events" in upgrade.getvalue()
+    assert "'0007_incident_audit'" in upgrade.getvalue()
 
     downgrade = StringIO()
     config.output_buffer = downgrade
     command.downgrade(config, "head:0005_cancelled_run_status", sql=True)
+    assert "DROP TABLE incident_audit_events" in downgrade.getvalue()
+    assert "DROP COLUMN investigation_status" in downgrade.getvalue()
     assert "DROP COLUMN investigation_summary" in downgrade.getvalue()
     assert "'0005_cancelled_run_status'" in downgrade.getvalue()
 

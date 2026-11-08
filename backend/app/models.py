@@ -17,6 +17,7 @@ from sqlalchemy import (
     Uuid,
     desc,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -135,6 +136,12 @@ class IncidentRecord(Base):
     evidence_status: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     investigation_summary: Mapped[str | None] = mapped_column(Text)
+    investigation_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="not_started",
+        server_default=text("'not_started'"),
+    )
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -151,5 +158,44 @@ class IncidentRecord(Base):
         CheckConstraint(
             "evidence_status IN ('complete', 'partial', 'failed')",
             name="ck_incident_records_evidence_status",
+        ),
+        CheckConstraint(
+            "investigation_status IN ('not_started', 'blocked', 'completed', 'failed')",
+            name="ck_incident_records_investigation_status",
+        ),
+    )
+
+
+class IncidentAuditEvent(Base):
+    __tablename__ = "incident_audit_events"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("incident_records.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(48), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('alert_received', 'alert_resolved', "
+            "'evidence_collected', 'investigation_dispatch', 'recovery_attempt')",
+            name="ck_incident_audit_events_type",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'complete', 'partial', 'failed', "
+            "'blocked', 'rejected')",
+            name="ck_incident_audit_events_outcome",
+        ),
+        Index(
+            "ix_incident_audit_events_incident_created",
+            "incident_id",
+            "created_at",
         ),
     )

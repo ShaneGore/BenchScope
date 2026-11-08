@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
+from app.incident_audit import append_incident_audit_event
+from app.models import IncidentRecord
 
 RECOVERY_COMMAND = (
     "docker",
@@ -841,17 +845,39 @@ def recover_incident(
     ports: Any = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    return execute_fixed_recovery(
-        approval=approval,
-        incident_id=record_id,
-        executor=executor,
-        env_config=env_config,
-        env_path=env_path,
-        project_identity=project_identity,
-        ports=ports,
-        now=now,
-        session=session,
-    )
+    parsed_id = _as_uuid(record_id)
+    if parsed_id is None or session.get(IncidentRecord, parsed_id) is None:
+        raise RecoveryBlocked("incident record not found")
+    try:
+        return execute_fixed_recovery(
+            approval=approval,
+            incident_id=parsed_id,
+            executor=executor,
+            env_config=env_config,
+            env_path=env_path,
+            project_identity=project_identity,
+            ports=ports,
+            now=now,
+            session=session,
+        )
+    except RecoveryError as error:
+        append_incident_audit_event(
+            session,
+            parsed_id,
+            event_type="recovery_attempt",
+            outcome="rejected" if isinstance(error, ApprovalInvalid) else "blocked",
+            reason_code=(
+                "approval_invalid"
+                if isinstance(error, ApprovalInvalid)
+                else "recovery_safety_gate"
+            ),
+        )
+        try:
+            session.commit()
+        except SQLAlchemyError:
+            session.rollback()
+            raise RecoveryBlocked("recovery outcome audit failed") from None
+        raise
 
 
 def recover_and_store(*args: Any, **kwargs: Any) -> dict[str, Any]:

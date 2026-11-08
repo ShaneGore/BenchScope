@@ -382,3 +382,103 @@ These observations are snapshots, not race-safe ownership or authorization.
 Recovery execution remains disabled even after a clean observation; approval
 is neither consumed nor marked attempted. No live Docker or recovery test is
 claimed; tests use synthetic inspection and listener output.
+
+## Current automatic-dispatch status (2026-11-08)
+
+A new, authenticated firing alert is deduplicated by the existing database
+constraint, then its sanitized evidence is collected and persisted. The
+receiver automatically enters the investigation dispatch gate exactly once
+for that incident. The gate records `investigation_status=blocked` and an
+`investigation_dispatch` audit event:
+
+- `model_runtime_unverified`; the dispatch gate is recorded atomically with
+  the new incident, before bounded evidence collection starts.
+
+The webhook response includes the evidence and investigation statuses.
+Duplicate alerts do not add another dispatch event. If the receiver is
+cancelled during evidence collection, the blocked dispatch remains durable;
+the evidence status remains failed and requires operator inspection. A
+duplicate notification does not retry collection.
+Audit rows contain only
+the incident reference, fixed event/outcome/reason codes, and timestamp; they
+do not copy alert payloads, evidence, prompts, model output, or credentials.
+The `0007_incident_audit` migration must be applied before running the updated
+receiver against an existing database.
+
+This is deterministic orchestration, **not an AI investigation**. No model
+provider or subprocess is started. The existing Copilot CLI provider still
+cannot verify pre-request authentication/entitlement, enforceable tool
+restrictions, or a hard usage limit; its direct invocation remains fail-closed.
+There is consequently no model worker, no model concurrency, and no
+background model task to outlive cancellation. Existing evidence collection
+has a 10-second total budget. Do not report a live AI assessment.
+
+Recovery remains disabled. Its typed approval is not exposed through an
+operator-authenticated API, and a valid in-memory approval still cannot pass
+the race-safe Docker ownership gate. Calls through `recover_incident` persist
+sanitized blocked/rejected audit outcomes; no Docker command is executed.
+Independent readiness/alert checks remain required before any future recovery
+can be enabled.
+
+Run the deterministic positive and negative checks from `backend/`:
+
+```powershell
+uv run pytest -q tests\test_alert_receiver.py tests\test_incident_investigation.py tests\test_incident_recovery.py
+```
+
+For the local incident walkthrough, use the isolated Stage 1 procedure under
+[Issue #32 — Stage 1 authenticated alert intake](#issue-32-stage-1-authenticated-alert-intake).
+After observing the firing alert, verify that one incident has one
+`investigation_dispatch` audit row with the blocked reason above. Stop there:
+the model gate and Docker recovery gate must not be bypassed.
+
+### Current-source live attempt (2026-11-08)
+
+The first isolated run used project `benchscope-alert-ingest-pr61`, the local
+Docker context, distinct loopback ports, and a disposable PostgreSQL database.
+The API and receiver both connected to `benchscope_incident_pr61`; the database
+reported migration `0007_incident_audit` before the exercise. Prometheus fired
+and Grafana's managed rule was active. Grafana retried `POST /grafana/v1`;
+the receiver returned HTTP 503 on each attempt and no incident or audit rows
+were committed.
+
+The sanitized receiver access log showed the HTTP statuses. PostgreSQL's
+diagnostic identified `incident_audit_events_incident_id_fkey`: the dispatch
+gate's ORM update autoflushed a pending audit row before its new incident
+parent had been inserted. The transaction rolled back. This was a persistence
+ordering defect, not an authentication, route, database-target, migration, or
+deduplication failure.
+
+The receiver now explicitly flushes the new `IncidentRecord` before adding its
+audit event. It also reports an integrity failure as a duplicate only if a
+row with the same fingerprint and start time exists after rollback; other
+integrity failures return HTTP 503. Database error logs expose only the
+operation stage and exception class, not the webhook, SQL parameters, or
+credentials.
+
+The isolated stack was rebuilt from the PR worktree based on
+`ce9664aec8d6b013f036a25ea21834550cf3bc96` (working-tree changes included),
+without pulling images. The second Grafana-managed outage produced HTTP 200
+and one durable row with fingerprint `caf1593e7bd159d2`, `firing`,
+`evidence_status=complete`, and `investigation_status=blocked`. Its audit
+events were `alert_received/accepted`, `investigation_dispatch/blocked`
+(`model_runtime_unverified`), and `evidence_collected/complete`. A repeated
+authenticated delivery returned `200 {"status":"duplicate"}` without adding
+rows or events. An unauthenticated request returned HTTP 401 without side
+effects.
+
+After restarting the receiver, the one incident and its three initial audit
+events remained. The API was manually restarted to restore the disposable
+environment; Grafana then delivered the resolved alert, which returned HTTP
+200 and appended `alert_resolved/accepted`. The final row was `resolved`,
+Prometheus reported `up=1`, and Grafana had no active alert. No model provider
+or Docker recovery operation was invoked.
+
+The added integrity-failure test verifies an unrelated database constraint
+failure returns HTTP 503, does not create records, and emits only the
+sanitized `incident_persist` stage and `IntegrityError` type. The incident
+flow is now demonstrated through authenticated receipt, durable dispatch-gate
+audit, duplicate suppression, restart persistence, and alert resolution. It
+still does **not** demonstrate an actual model assessment or AI-assisted
+recovery; those remain blocked by unverified model authentication and
+tool-restriction guarantees.
