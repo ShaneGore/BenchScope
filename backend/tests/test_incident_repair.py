@@ -523,6 +523,41 @@ def test_patch_application_rejects_paths_outside_allowlist(tmp_path):
         repair.apply_repair_patch(tmp_path, patch)
 
 
+def test_patch_application_normalizes_crlf_worktree_without_relaxing_context(tmp_path):
+    source = tmp_path / "backend" / "app" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"before\r\nold\r\nafter\r\n")
+    patch = (
+        "diff --git a/backend/app/main.py b/backend/app/main.py\n"
+        "--- a/backend/app/main.py\n"
+        "+++ b/backend/app/main.py\n"
+        "@@ -1,4 +1,4 @@\n"
+        " before\n"
+        "-old\n"
+        "+new\n"
+        " after\n"
+    )
+    assert repair.apply_repair_patch(tmp_path, patch) == {"backend/app/main.py"}
+    assert source.read_bytes() == b"before\nnew\nafter\n"
+
+    source.write_bytes(b"before\r\ndifferent\r\nafter\r\n")
+    with pytest.raises(InvestigationBlocked):
+        repair.apply_repair_patch(tmp_path, patch)
+    assert source.read_bytes() == b"before\ndifferent\nafter\n"
+
+
+def test_load_repair_sources_strips_carriage_returns(tmp_path):
+    main = tmp_path / "backend" / "app" / "main.py"
+    test = tmp_path / "backend" / "tests" / "test_health_contract.py"
+    main.parent.mkdir(parents=True)
+    test.parent.mkdir(parents=True)
+    main.write_bytes(b"alpha\r\nbeta\r\n")
+    test.write_bytes(b"gamma\r\n")
+    sources = repair.load_repair_sources(tmp_path)
+    assert sources["backend/app/main.py"] == "alpha\nbeta\n"
+    assert sources["backend/tests/test_health_contract.py"] == "gamma\n"
+
+
 def test_patch_application_recounts_hunks_without_relaxing_context(tmp_path):
     source = tmp_path / "backend" / "app" / "main.py"
     source.parent.mkdir(parents=True)
@@ -733,7 +768,6 @@ def test_ci_requires_all_five_passing_checks_and_matching_sha(
             case, "failed"
         )
     engine.dispose()
-
 
 
 def test_repair_prompt_instructs_pep8_blank_lines_between_functions(monkeypatch):
