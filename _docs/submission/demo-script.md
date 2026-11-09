@@ -1,6 +1,8 @@
 # Demo Script
 
-Target length: 5 to 7 minutes. Use only features available in the deployed demo.
+Use the public demo for anonymous comparison. Authenticated import and local
+observability are separate optional segments and require their respective
+environment and credentials; do not imply they are part of the anonymous demo.
 
 ## 1. Problem (30 seconds)
 
@@ -15,21 +17,19 @@ Target length: 5 to 7 minutes. Use only features available in the deployed demo.
 
 ## 3. Dashboard and history (60 seconds)
 
-- Show the dashboard.
-- Open Runs.
-- Filter and inspect a run.
-- Show missing metrics as null rather than zero.
+- Show the public benchmark explorer.
+- Inspect a published result.
+- Explain that missing measurements are unavailable rather than zero.
 
 ## 4. Run detail and comparison (90 seconds)
 
-- Open a run detail page.
-- Show benchmark identity, release, manifest hash, expected task IDs, and task results.
-- Compare two compatible runs.
-- Explain that incompatible manifests/releases are not compared.
+- Select and compare two published configurations.
+- Explain that the public summaries share a benchmark but differ in settings.
+- If showing personal v2 runs, explain their release and manifest compatibility checks.
 
 ## 5. Import flow (60 seconds)
 
-- Show the Import page.
+- If signed in, show the Import page.
 - Explain v1 and v2 contract validation.
 - Show duplicate detection and validation errors.
 - Explain that raw uploaded payload is discarded.
@@ -42,7 +42,7 @@ Target length: 5 to 7 minutes. Use only features available in the deployed demo.
 
 ## 7. Observability (60 seconds)
 
-- Show Grafana dashboard.
+- In the local observability stack, show the Grafana dashboard.
 - Show metrics, traces, and structured logs sharing a trace ID.
 - Show alert rules and alert lifecycle.
 
@@ -75,7 +75,7 @@ Target length: 5 to 7 minutes. Use only features available in the deployed demo.
 - Real benchmark adapter not yet connected to the private runner.
 - Observability demonstrated locally in Docker Compose.
 - Quality score remains null until authoritative.
-- No paid services are used.
+- The deployment uses free-tier services; two historical demo configurations used the paid OpenRouter API.
 
 ## Recording note
 
