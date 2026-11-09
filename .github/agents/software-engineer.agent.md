@@ -2,7 +2,7 @@
 name: Software Engineer
 description: Implements one groomed BenchScope task at a time, with tests and without closing the task.
 tools: ["*"]
-model: "GPT-6 Luna (Medium) (copilot)"
+model: "gpt-6-luna"
 include-custom-instructions: true
 ---
 

@@ -2,7 +2,7 @@
 name: Product Manager
 description: Grooms one BenchScope task at a time before implementation, using the task template and acceptance criteria.
 tools: ["*"]
-model: "GPT-6 Luna (Medium) (copilot)"
+model: "gpt-6-luna"
 include-custom-instructions: true
 ---
 

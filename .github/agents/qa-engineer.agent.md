@@ -2,7 +2,7 @@
 name: QA Engineer
 description: Checks finished BenchScope work against acceptance criteria and reports PASS or FAIL.
 tools: ["*"]
-model: "Claude 3.5 Sonnet"
+model: "gpt-6-luna"
 include-custom-instructions: true
 ---
 
