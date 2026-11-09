@@ -733,3 +733,19 @@ def test_ci_requires_all_five_passing_checks_and_matching_sha(
             case, "failed"
         )
     engine.dispose()
+
+
+
+def test_repair_prompt_instructs_pep8_blank_lines_between_functions(monkeypatch):
+    """make_repair_prompt must instruct Luna to place two blank lines between top-level
+    test functions so the generated patch passes ruff format without manual correction."""
+    monkeypatch.setattr(repair, "_check_evidence_schema", lambda evidence, status: {})
+    prompt = repair.make_repair_prompt(
+        _record(),
+        {
+            "backend/app/main.py": "def health(): return 'bad'\n",
+            "backend/tests/test_health_contract.py": "def test_health(): assert True\n",
+        },
+    )
+    lower = prompt.lower()
+    assert "two blank lines" in lower or "blank lines" in lower

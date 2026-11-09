@@ -99,8 +99,10 @@ _ACTIVE_STATUSES = (
 
 
 class RepairCommandError(InvestigationBlocked):
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, stderr: bytes = b"", stdout: bytes = b""):
         self.reason = reason
+        self.stderr = stderr
+        self.stdout = stdout
         super().__init__("trusted repair command failed")
 
 
@@ -459,8 +461,9 @@ def make_repair_prompt(record: IncidentRecord, source_files: dict[str, str]) -> 
         "files under backend/app or backend/tests. Include both an application "
         "change and a new asserting regression test; leave existing test functions "
         "unchanged. In main.py change only the metrics enable condition or literal "
-        "health response; do not modify imports or other code. If a safe, testable "
-        "repair is not justified, "
+        "health response; do not modify imports or other code. Separate top-level "
+        "functions in test files with exactly two blank lines per PEP 8 and "
+        "Ruff format rules. If a safe, testable repair is not justified, "
         "return an empty patch and explain the uncertainty in root_cause.\n"
         "### INCIDENT EVIDENCE\n"
         + json.dumps(evidence, separators=(",", ":"), ensure_ascii=False)
@@ -501,23 +504,41 @@ def apply_repair_patch(worktree: Path, patch: str) -> set[str]:
     with tempfile.TemporaryDirectory(prefix="benchscope-patch-") as directory:
         patch_file = Path(directory) / "repair.patch"
         patch_file.write_bytes(patch.encode("utf-8"))
-        _run_host_command(
-            [
-                "git",
-                "apply",
-                "--check",
-                "--recount",
-                "--whitespace=error-all",
-                str(patch_file),
-            ],
-            cwd=worktree,
-            timeout=10,
-        )
-        _run_host_command(
-            ["git", "apply", "--recount", "--whitespace=error-all", str(patch_file)],
-            cwd=worktree,
-            timeout=10,
-        )
+        try:
+            _run_host_command(
+                [
+                    "git",
+                    "apply",
+                    "--check",
+                    "--recount",
+                    "--whitespace=error-all",
+                    str(patch_file),
+                ],
+                cwd=worktree,
+                timeout=10,
+            )
+            _run_host_command(
+                [
+                    "git",
+                    "apply",
+                    "--recount",
+                    "--whitespace=error-all",
+                    str(patch_file),
+                ],
+                cwd=worktree,
+                timeout=10,
+            )
+        except RepairCommandError as exc:
+            err_text = exc.stderr.decode("utf-8", errors="replace")
+            sanitized_lines = [
+                line
+                for line in err_text.splitlines()
+                if not _contains_credential(line) and "SENTINEL" not in line.upper()
+            ]
+            git_error = "\n".join(sanitized_lines).strip()
+            if git_error:
+                logger.warning("Git patch application failed: %s", git_error)
+            raise
     return changed
 
 
@@ -783,7 +804,9 @@ def _run_host_command(
         )
     except InvestigationBlocked as exc:
         reason = "timed_out" if "timed out" in str(exc) else "failed"
-        raise RepairCommandError(reason) from None
+        stderr = getattr(exc, "stderr", b"")
+        stdout = getattr(exc, "stdout", b"")
+        raise RepairCommandError(reason, stderr=stderr, stdout=stdout) from None
     except (InvestigationRejected, OSError):
         raise RepairCommandError("failed") from None
     return stdout
@@ -1081,7 +1104,19 @@ def _build_test_and_open_pr(
         try:
             try:
                 changed = apply_repair_patch(worktree, recommendation.patch)
-            except (InvestigationBlocked, InvestigationRejected):
+            except (InvestigationBlocked, InvestigationRejected) as exc:
+                if isinstance(exc, RepairCommandError) and exc.stderr:
+                    err_text = exc.stderr.decode("utf-8", errors="replace")
+                    sanitized_lines = [
+                        line
+                        for line in err_text.splitlines()
+                        if not _contains_credential(line)
+                        and "SENTINEL" not in line.upper()
+                    ]
+                    git_error = "\n".join(sanitized_lines).strip()
+                    if git_error:
+                        logger.warning("Patch apply error: %s", git_error)
+                        print(f"Git apply failure details:\n{git_error}", flush=True)
                 return _fail_job(session_factory, job_id, "patch_apply_failed")
             if any(
                 (worktree / relative_path).is_symlink()

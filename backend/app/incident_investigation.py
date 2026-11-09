@@ -811,6 +811,12 @@ def _cli_environment() -> dict[str, str]:
 
 def _cli_launcher(executable: str) -> list[str]:
     path = Path(executable)
+    if path.suffix.lower() == ".js":
+        local_node = path.parent / "node.exe"
+        node = str(local_node) if local_node.is_file() else shutil.which("node")
+        if not node:
+            raise InvestigationBlocked("Node runtime is unavailable for Copilot CLI")
+        return [node, str(path)]
     if path.suffix.lower() in {".ps1", ".cmd", ".bat"} and os.name == "nt":
         loaders = (
             path.parent / "node_modules" / "@github" / "copilot" / "npm-loader.js",
@@ -845,7 +851,10 @@ def _cli_exit_failure(stdout: bytes, stderr: bytes) -> InvestigationBlocked:
         reason = "authentication or authorization failure"
     else:
         reason = "unknown cause"
-    return InvestigationBlocked(f"Copilot CLI exited unsuccessfully: {reason}")
+    exc = InvestigationBlocked(f"Copilot CLI exited unsuccessfully: {reason}")
+    exc.stdout = stdout
+    exc.stderr = stderr
+    return exc
 
 
 def _run_cli_process_posix(args, cwd, timeout, output_limit, start, env=None):

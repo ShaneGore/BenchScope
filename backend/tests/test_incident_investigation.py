@@ -979,3 +979,44 @@ def test_windows_deadline_includes_startup(tmp_path, monkeypatch):
             ["python", "-c", "import time; time.sleep(30)"], tmp_path, 1, 1000
         )
     assert time.monotonic() - start < 1.2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows .js launcher behaviour")
+def test_js_cli_launcher_wraps_path_with_node(tmp_path, monkeypatch):
+    """_cli_launcher must prefix a .js path with the node executable."""
+    js_file = tmp_path / "cli-main.js"
+    js_file.touch()
+
+    # Simulate node.exe present next to the .js file
+    node_exe = tmp_path / "node.exe"
+    node_exe.touch()
+
+    result = investigation._cli_launcher(str(js_file))
+
+    assert len(result) == 2
+    assert Path(result[0]).name.lower() == "node.exe"
+    assert result[1] == str(js_file)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows .js launcher behaviour")
+def test_js_cli_launcher_falls_back_to_path_node(tmp_path, monkeypatch):
+    """When no bundled node.exe exists, _cli_launcher uses whichever node is on PATH."""
+    js_file = tmp_path / "cli-main.js"
+    js_file.touch()
+    # No node.exe next to js_file — monkeypatch shutil.which
+    monkeypatch.setattr(investigation.shutil, "which", lambda name: "/usr/bin/node")
+
+    result = investigation._cli_launcher(str(js_file))
+
+    assert result == ["/usr/bin/node", str(js_file)]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows .js launcher behaviour")
+def test_js_cli_launcher_raises_when_node_unavailable(tmp_path, monkeypatch):
+    """_cli_launcher must raise InvestigationBlocked when node is not found."""
+    js_file = tmp_path / "cli-main.js"
+    js_file.touch()
+    monkeypatch.setattr(investigation.shutil, "which", lambda name: None)
+
+    with pytest.raises(investigation.InvestigationBlocked, match="Node runtime"):
+        investigation._cli_launcher(str(js_file))
