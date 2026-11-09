@@ -179,7 +179,7 @@ def create_app(
     app.include_router(imports_router, prefix=API_PREFIX)
     app.include_router(run_history_router, prefix=API_PREFIX)
     app.include_router(demo_router, prefix=API_PREFIX)
-    if request_telemetry.enabled and False:
+    if request_telemetry.enabled:
         app.mount("/metrics", request_telemetry.metrics_app)
 
     @app.get("/health")
