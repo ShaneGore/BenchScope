@@ -90,6 +90,8 @@ def main() -> int:
             "TEST_DATABASE_URL",
             "APP_MODE",
             "APP_ENV",
+            "APP_REVISION",
+            "RENDER_GIT_COMMIT",
             "HOST",
             "PORT",
             "LOCAL_AUTH_BYPASS",
@@ -141,12 +143,13 @@ def main() -> int:
                 APP_ENV="development",
                 LOCAL_AUTH_BYPASS="true",
             )
-            env["APP_REVISION"] = run(
+            revision = run(
                 "git", "rev-parse", "HEAD", capture=True
             ).stdout.strip()
             # Only the app containers see development bypass. Unit/E2E harnesses
             # use their own explicit auth settings below.
             stack_env = dict(env)
+            stack_env["APP_REVISION"] = revision
             started = True  # cleanup also covers partial Compose startup failures
             run(*compose, "up", "--build", "--wait", "--detach", env=stack_env)
             verify_persistence(compose, stack_env)

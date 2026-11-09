@@ -202,7 +202,11 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
     database_url = _database(tmp_path)
     fetch_json, calls = _fetcher(_source_payloads(OUTPUT))
     app = create_receiver_app(
-        database_url, secret=SECRET, fetch_json=fetch_json, clock=lambda: NOW
+        database_url,
+        secret=SECRET,
+        fetch_json=fetch_json,
+        clock=lambda: NOW,
+        application_revision="unknown",
     )
 
     with caplog.at_level(logging.INFO), TestClient(app) as client:
