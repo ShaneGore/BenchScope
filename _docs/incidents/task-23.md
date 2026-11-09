@@ -553,6 +553,13 @@ and the disposable stack and its data were removed after evidence capture. The
 repair still requires human review; automated tests cannot prove that the new
 regression test is sufficient.
 
+A later Phase 3C exercise replayed the recorded PR #64 patch against a fresh
+disposable incident, applied it only to the affected disposable checkout with
+owner approval, and independently verified recovery: metrics scrape,
+Prometheus target, Grafana alert resolution, and incident status. That is a
+labelled replay, not a new model run, and it does not change the bounds above;
+see [phase3c-recovery-demo.md](phase3c-recovery-demo.md).
+
 The QA custom agent definition previously named the unavailable model
 `Claude 3.5 Sonnet`. All three agent definitions now use the verified CLI model
 ID `gpt-6-luna`, which was confirmed with a live CLI response. This resolves the
