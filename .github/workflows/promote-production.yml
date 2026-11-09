@@ -15,10 +15,15 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
 jobs:
   promote:
     if: github.event.inputs.confirm == 'promote' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production
     steps:
       - name: Determine promotion ref
@@ -43,18 +48,42 @@ jobs:
         env:
           PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
           PRODUCTION_RENDER_DEPLOY_HOOK_URL: ${{ secrets.PRODUCTION_RENDER_DEPLOY_HOOK_URL }}
+          PRODUCTION_CLERK_SECRET_KEY: ${{ secrets.PRODUCTION_CLERK_SECRET_KEY }}
           PRODUCTION_SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
-          PRODUCTION_SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
           PRODUCTION_SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
+          PRODUCTION_SMOKE_TEST_USER_A_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_A_ID }}
+          PRODUCTION_SMOKE_TEST_USER_B_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_B_ID }}
         run: |
           missing=0
-          for name in PRODUCTION_DATABASE_URL PRODUCTION_RENDER_DEPLOY_HOOK_URL PRODUCTION_SMOKE_API_URL PRODUCTION_SMOKE_TEST_TOKEN PRODUCTION_SMOKE_FRONTEND_URL; do
+          for name in PRODUCTION_DATABASE_URL PRODUCTION_RENDER_DEPLOY_HOOK_URL PRODUCTION_CLERK_SECRET_KEY PRODUCTION_SMOKE_API_URL PRODUCTION_SMOKE_FRONTEND_URL PRODUCTION_SMOKE_TEST_USER_A_ID PRODUCTION_SMOKE_TEST_USER_B_ID; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is required."
               missing=1
             fi
           done
           if [ "$missing" -ne 0 ]; then exit 1; fi
+          case "$PRODUCTION_SMOKE_API_URL" in
+            https://*) ;;
+            *)
+              echo "::error::PRODUCTION_SMOKE_API_URL must be an HTTPS URL."
+              exit 1
+              ;;
+          esac
+          case "$PRODUCTION_SMOKE_FRONTEND_URL" in
+            https://*) ;;
+            *)
+              echo "::error::PRODUCTION_SMOKE_FRONTEND_URL must be an HTTPS URL."
+              exit 1
+              ;;
+          esac
+          if [ "$PRODUCTION_SMOKE_API_URL" = "https://benchscope-staging-api.onrender.com" ]; then
+            echo "::error::PRODUCTION_SMOKE_API_URL must not be the staging API URL."
+            exit 1
+          fi
+          if [ "$PRODUCTION_SMOKE_TEST_USER_A_ID" = "$PRODUCTION_SMOKE_TEST_USER_B_ID" ]; then
+            echo "::error::Production smoke-test users must be distinct."
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with:
@@ -217,11 +246,17 @@ jobs:
           EXPECTED_REVISION: ${{ steps.revision.outputs.sha }}
         run: python scripts/wait_for_deployment.py
 
+      - name: Generate production smoke credentials
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.PRODUCTION_CLERK_SECRET_KEY }}
+          SMOKE_TEST_USER_A_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_A_ID }}
+          SMOKE_TEST_USER_B_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_B_ID }}
+        run: |
+          python scripts/generate_smoke_tokens.py --write-github-env --expires-in 300
+
       - name: Run production smoke tests
         env:
           SMOKE_API_URL: ${{ vars.PRODUCTION_SMOKE_API_URL }}
-          SMOKE_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_TEST_TOKEN }}
-          SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}
           SMOKE_FRONTEND_URL: ${{ vars.PRODUCTION_SMOKE_FRONTEND_URL }}
         run: |
-          python scripts/smoke_test.py --mode production
+          python scripts/smoke_test.py --mode full

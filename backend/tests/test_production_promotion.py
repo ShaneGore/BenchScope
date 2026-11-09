@@ -15,9 +15,11 @@ WORKFLOW = (ROOT / ".github" / "workflows" / "promote-production.yml").read_text
 REQUIRED = (
     "PRODUCTION_DATABASE_URL",
     "PRODUCTION_RENDER_DEPLOY_HOOK_URL",
+    "PRODUCTION_CLERK_SECRET_KEY",
     "PRODUCTION_SMOKE_API_URL",
-    "PRODUCTION_SMOKE_TEST_TOKEN",
     "PRODUCTION_SMOKE_FRONTEND_URL",
+    "PRODUCTION_SMOKE_TEST_USER_A_ID",
+    "PRODUCTION_SMOKE_TEST_USER_B_ID",
 )
 
 
@@ -190,7 +192,15 @@ def promotion(repo, ref, config, ci=None, ci_exit=0):
     return result, log.read_text().splitlines()
 
 
-CONFIG = {name: "fixture-secret-value" for name in REQUIRED}
+CONFIG = {
+    "PRODUCTION_DATABASE_URL": "fixture-secret-value",
+    "PRODUCTION_RENDER_DEPLOY_HOOK_URL": "fixture-secret-value",
+    "PRODUCTION_CLERK_SECRET_KEY": "fixture-secret-value",
+    "PRODUCTION_SMOKE_API_URL": "https://production.example.invalid",
+    "PRODUCTION_SMOKE_FRONTEND_URL": "https://frontend.example.invalid",
+    "PRODUCTION_SMOKE_TEST_USER_A_ID": "user-a",
+    "PRODUCTION_SMOKE_TEST_USER_B_ID": "user-b",
+}
 
 
 @pytest.mark.parametrize("missing", REQUIRED)
@@ -200,6 +210,27 @@ def test_missing_configuration_fails_without_exposing_values(repository, missing
     assert result.returncode != 0
     assert missing in result.stdout
     assert "fixture-secret-value" not in result.stdout + result.stderr
+    assert not effects
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("PRODUCTION_SMOKE_API_URL", "http://production.example.invalid"),
+        ("PRODUCTION_SMOKE_FRONTEND_URL", "http://frontend.example.invalid"),
+        (
+            "PRODUCTION_SMOKE_API_URL",
+            "https://benchscope-staging-api.onrender.com",
+        ),
+        ("PRODUCTION_SMOKE_TEST_USER_B_ID", "user-a"),
+    ],
+)
+def test_unsafe_production_configuration_fails_before_side_effects(
+    repository, name, value
+):
+    repo, _ = repository
+    result, effects = promotion(repo, "main", {**CONFIG, name: value})
+    assert result.returncode != 0
     assert not effects
 
 
@@ -407,6 +438,8 @@ def test_workflow_gates_side_effects_and_wires_the_same_revision():
         "Run production database migrations",
         "Trigger production backend deployment",
         "Wait for the intended backend revision",
+        "Generate production smoke credentials",
+        "Run production smoke tests",
     ]
     assert [WORKFLOW.index(name) for name in names] == sorted(
         WORKFLOW.index(name) for name in names
@@ -415,11 +448,32 @@ def test_workflow_gates_side_effects_and_wires_the_same_revision():
     assert "EXPECTED_REVISION: ${{ steps.revision.outputs.sha }}" in WORKFLOW
     assert "SELECTED_SHA: ${{ steps.revision.outputs.sha }}" in WORKFLOW
     assert "actions: read" in WORKFLOW
+    assert "group: production-release" in WORKFLOW
+    assert "cancel-in-progress: false" in WORKFLOW
+    assert "timeout-minutes: 30" in WORKFLOW
     assert (
         "PRODUCTION_SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}"
         not in WORKFLOW
     )
     assert (
         "SMOKE_OTHER_TEST_TOKEN: ${{ secrets.PRODUCTION_SMOKE_OTHER_TEST_TOKEN }}"
+        not in WORKFLOW
+    )
+    assert (
+        "          CLERK_SECRET_KEY: ${{ secrets.PRODUCTION_CLERK_SECRET_KEY }}"
         in WORKFLOW
     )
+    assert (
+        "          SMOKE_TEST_USER_A_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_A_ID }}"
+        in WORKFLOW
+    )
+    assert (
+        "          SMOKE_TEST_USER_B_ID: ${{ vars.PRODUCTION_SMOKE_TEST_USER_B_ID }}"
+        in WORKFLOW
+    )
+    assert (
+        "python scripts/generate_smoke_tokens.py --write-github-env --expires-in 300"
+        in WORKFLOW
+    )
+    assert "python scripts/smoke_test.py --mode full" in WORKFLOW
+    assert "https://benchscope-staging-api.onrender.com" in WORKFLOW

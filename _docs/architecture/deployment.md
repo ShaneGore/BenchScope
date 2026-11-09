@@ -2,10 +2,17 @@
 
 This document describes the hosted layout and the manual production-release
 path. As of 2026-11-09 the Pages frontend and the Render staging API are
-deployed and SHA-verified from `main`; there is still no distinct production
-target, no GitHub `production` environment, and no production promotion or
-rollback has been executed. See [production-release.md](./production-release.md)
-for the review findings, owner decisions, and exact release/rollback runbook.
+deployed and SHA-verified from `main`. The production demonstration is
+**prepared but not provisioned**: there is no GitHub `production` environment,
+no production Render service, no production Neon database, no production Clerk
+application, and no production promotion or rollback. See
+[production-release.md](./production-release.md) for the simplified architecture,
+owner checklist, and exact release/rollback runbook.
+
+The production target is a **course demonstration environment**, not
+enterprise-grade production. It uses Render Free, Neon Free, and a Clerk
+Development application, and it hosts only synthetic smoke data. The public
+GitHub Pages frontend remains connected to staging.
 
 On 2026-10-27 the owner approved GitHub Pages for the public static frontend,
 Render Free for the API, Neon Free for a disposable database, and Clerk Hobby
@@ -16,12 +23,13 @@ approval.
 
 ## Hosted layout
 
-| Component | Candidate | What it serves |
+| Component | Staging | Production demonstration |
 |---|---|---|
-| Static frontend | GitHub Pages | Public Vite build only; never the FastAPI API |
-| API | Render web service | Separately hosted FastAPI container |
-| Database | Neon PostgreSQL | Persistent application records through `DATABASE_URL` |
-| Authentication | Clerk, if enabled | Frontend sign-in; API verifies Clerk JWTs |
+| Static frontend | GitHub Pages, pointing at the staging API | Not included; public Pages remains staging-backed |
+| API | Existing Render Free web service | New Render Free web service, automatic deploys disabled |
+| Database | Existing Neon Free project | New Neon Free project, separate credentials |
+| Authentication | Existing Clerk Development instance | New Clerk Development application, synthetic users only |
+| Deployment | Automatic after successful `main` CI | Manual `workflow_dispatch` with typed confirmation and `production` environment approval |
 
 GitHub Pages cannot run the backend, database, or benchmark runner. The
 browser's `VITE_API_URL` must point to the approved API origin. The API's
@@ -81,20 +89,25 @@ a successful deployment.
   configuration.
 ## Smoke-test credentials
 
-- `CLERK_SECRET_KEY` is a GitHub Actions secret used only by the backend
-  deployment workflow to mint fresh smoke-test credentials.
-- `SMOKE_TEST_USER_A_ID` and `SMOKE_TEST_USER_B_ID` are GitHub Actions
-  variables identifying the two synthetic Clerk test users.
-- `.github/workflows/deploy-backend.yml` generates fresh, short-lived Clerk
-  session tokens during deployment. The obsolete `SMOKE_TEST_TOKEN` and
-  `SMOKE_OTHER_TEST_TOKEN` secrets are no longer required.
+- Staging uses the GitHub Actions secret `CLERK_SECRET_KEY` and the variables
+  `SMOKE_TEST_USER_A_ID` and `SMOKE_TEST_USER_B_ID`.
+- The production environment uses the secret `PRODUCTION_CLERK_SECRET_KEY` and
+  the variables `PRODUCTION_SMOKE_TEST_USER_A_ID` and
+  `PRODUCTION_SMOKE_TEST_USER_B_ID`.
+- Both `.github/workflows/deploy-backend.yml` and
+  `.github/workflows/promote-production.yml` mint fresh, short-lived Clerk
+  session tokens at runtime with `scripts/generate_smoke_tokens.py`. The
+  obsolete pre-minted `SMOKE_TEST_TOKEN`, `SMOKE_OTHER_TEST_TOKEN`,
+  `PRODUCTION_SMOKE_TEST_TOKEN`, and `PRODUCTION_SMOKE_OTHER_TEST_TOKEN` secrets
+  are not required.
 - The token-generation API is testing-only and requires a Clerk Development
-  instance; it must not be used with a Production instance.
+  instance; it must not be used with a Production instance. The production
+  demonstration therefore uses a separate Clerk Development application.
 - `VITE_CLERK_PUBLISHABLE_KEY` remains a public frontend build-time variable
   for GitHub Pages.
 - Render's runtime Clerk settings (`CLERK_JWKS_URL`, `CLERK_ISSUER`, and
-  `CLERK_AUDIENCE`) are configured separately in the Render service and are
-  not GitHub Actions secrets.
+  `CLERK_AUTHORIZED_PARTIES`) are configured separately in the Render service
+  and are not GitHub Actions secrets. `CLERK_AUDIENCE` is not used.
 
 
 ## Runtime, persistence, and migrations
@@ -102,72 +115,71 @@ a successful deployment.
 Current code behavior is limited to the following known facts:
 
 - `/health` reports process health; `/ready` checks whether the configured
-  database is reachable. These endpoints have not been tested against a hosted
-  service.
+  database is reachable. Both are live-verified on staging. They have not yet
+  been exercised against the production demonstration service.
 - The hosted settings validator requires a PostgreSQL `DATABASE_URL`, a
   non-empty CORS allowlist, a public bind host, and all three Clerk settings.
   Wildcard CORS origins are rejected in hosted mode.
-- The local Compose API command runs `alembic upgrade head` before starting
-  Uvicorn. A hosted release/migration command and its ordering, locking,
-  recovery, and backward-compatibility policy are not selected or verified.
-  Review migrations and choose an explicit migration procedure before a
-  hosted database is provisioned.
-- Application records are stored through the configured database. The
-  selected API host's filesystem persistence, restart behavior, cold starts,
-  quotas, and database plan limits are provider-dependent and unverified.
-  Do not rely on API-local files for durable user data.
-- The code and CI do not establish provider backup guarantees, restore
-  procedures, free-tier sleep timing, cold-start duration, or service limits.
-  Verify each against current official provider documentation before use.
+- The hosted migration procedure is now selected: the manual promotion workflow
+  runs `alembic upgrade head` against `PRODUCTION_DATABASE_URL` before triggering
+  the deploy hook. It has not yet been exercised against a production database.
+  Migrations are forward-only in this workflow; rollback is safe only between
+  schema-compatible revisions.
+- Application records are stored through the configured database. The selected
+  API host's filesystem persistence, restart behavior, cold starts, quotas, and
+  database plan limits are provider-dependent. Render Free may sleep or restart;
+  do not rely on API-local files for durable user data.
+- Provider limits were checked against current official documentation on
+  2026-11-09, but the owner's account capacity has not been verified. Confirm
+  Render's shared monthly instance-hour usage, Neon project limits, and Clerk
+  Hobby eligibility before provisioning.
 
-## Staged promotion, rollback, and recreation
+## Automatic staging and manual production promotion
 
-1. Keep development local; review a pull request and require its backend,
-   frontend, and container image build jobs to pass.
-2. The owner has authorized this isolated hosted development environment.
-   Provision only the services in the table above, with synthetic fixtures,
-   separate test credentials, no payment method, and no paid upgrade.
-3. Before smoke tests, configure GitHub Pages with a Vite build containing the
-   public API URL and Pages base path; configure the API with hosted mode,
-   explicit Pages CORS origin, test Clerk issuer/audience/JWKS values, and
-   `BENCHMARK_ENABLED=false`. Keep all backend secrets outside GitHub Pages and
-   the repository.
-4. Use issue #21 to record health/readiness, anonymous demo, auth, import,
-   comparison, owner-isolation, and rollback results. Promote to production
-   only after that review and separate explicit owner approval.
+1. Keep development local; review a pull request and require its `backend`,
+   `frontend`, `journey`, `container-images`, and `backend-windows` checks to
+   pass.
+2. Staging deploys automatically after a successful `main` CI run. The public
+   Pages frontend remains connected to the staging API and continues to deploy
+   automatically.
+3. Production is a separate Render Free API and Neon Free database. The public
+   Pages frontend is not part of the production release, so production
+   frontend-to-API connectivity is not exercised. The production API is verified
+   directly.
+4. The manual promotion workflow requires the `production` GitHub environment,
+   typed `confirm=promote`, a selected `main`-ancestor SHA or tag with a
+   successful exact-SHA `main` CI run, and the environment-scoped settings below.
+5. The workflow uses `concurrency: production-release` (no cancellation), a
+   30-minute timeout, and fails closed on missing configuration, a staging API
+   URL, non-HTTPS smoke URLs, identical smoke users, failed identity preflight,
+   failed migrations, a failed deploy hook, a `/version` mismatch, or failed
+   smoke tests.
+6. After deployment it mints fresh synthetic Clerk tokens and runs
+   `scripts/smoke_test.py --mode full`, covering health, readiness, anonymous
+   demo, authenticated access, synthetic import, persistence, run detail,
+   comparison, and owner isolation.
 
-5. **Frontend rollback:** redeploy the Pages site from the last-known-good
-   source commit using the Pages deployment workflow, or revert through a PR
-   and redeploy. Keep the source commit and successful deployment URL in
-   issue #21.
-6. **API rollback:** use Render's rollback to a known-good deploy when it is
-   available; otherwise redeploy the last-known-good source commit. Free
-   service rollback history is limited, so do not depend on old deployment
-   entries remaining available.
-7. **Database recovery:** Neon Free is disposable test storage, not a backup
-   target. For a failed migration or contaminated test data, stop smoke tests,
-   discard the test branch/database, create a fresh disposable database, run
-   the reviewed Alembic migrations, and seed synthetic fixtures again. Do not
-   rely on point-in-time restore or assume migrations are reversible.
-8. **Auth recreation:** use only the separate Clerk test application and
-   synthetic identities. If its test state is unusable, recreate the test
-   identities in that application; never copy production identities or
-   credentials.
+### Production environment settings
 
-The manual production promotion workflow fails if any of
-`PRODUCTION_DATABASE_URL`, `PRODUCTION_RENDER_DEPLOY_HOOK_URL`,
-`PRODUCTION_SMOKE_API_URL`, `PRODUCTION_SMOKE_TEST_TOKEN`, or
-`PRODUCTION_SMOKE_FRONTEND_URL` is missing. The first, second, and fourth are
-secrets; the two smoke URLs are GitHub environment variables.
-`PRODUCTION_SMOKE_OTHER_TEST_TOKEN` is an optional secret. Missing values are
-identified by name without printing their contents.
+- Secrets: `PRODUCTION_DATABASE_URL`,
+  `PRODUCTION_RENDER_DEPLOY_HOOK_URL`, `PRODUCTION_CLERK_SECRET_KEY`.
+- Variables: `PRODUCTION_SMOKE_API_URL`, `PRODUCTION_SMOKE_FRONTEND_URL`,
+  `PRODUCTION_SMOKE_TEST_USER_A_ID`, `PRODUCTION_SMOKE_TEST_USER_B_ID`.
+- The `production` environment should allow only `main`, require the owner as
+  reviewer, allow self-review (sole owner), disallow admin bypass, and have no
+  automatic deployment trigger.
+
+Missing values are identified by name without printing their contents. The
+environment gate is technically enforced by GitHub, but because the owner is the
+sole reviewer it is a self-approval gate, not independent second-person review.
+The main ruleset still requires zero approving reviews.
 
 As of 2026-11-09 none of those settings exists and the `production` environment
-has not been created, so the workflow has never run. The smoke token is a
-short-lived read-only Clerk session token and must be refreshed immediately
-before each promotion; it is not generated by the workflow. Creating the
-environment and the production target requires the owner approval described in
+has not been created, so the workflow has never run. Creating the environment
+and the production target requires the owner approval described in
 [production-release.md](./production-release.md).
+
+### Promotion guards
 
 Promotion accepts `main`, `refs/heads/main`, a versioned `v...` tag (optionally
 prefixed with `refs/tags/`), or a full lowercase 40-character commit SHA.
@@ -179,48 +191,67 @@ read-only Actions access, rejects missing, pending, unsuccessful, malformed,
 unavailable, or more than 100 matching runs, and fails closed on API errors.
 A successful run reflects the CI definition at that revision, not an
 independent guarantee that its checks were adequate; protecting main and
-reviewing changes to CI remain necessary. GitHub environment protection and
-separate owner approval are still required.
+reviewing changes to CI remain necessary.
 
-After these checks, the workflow installs the
-selected revision's locked development dependencies. Before migration or
-deployment, a bounded local check starts the actual app in isolated local test
-configuration with no database URL, benchmark execution disabled and socket
-connections blocked. It sends in-process HTTP requests to `/version` with
-synthetic revision values, and exercises the deployment verifier against
-synthetic ready, wrong-revision and not-ready responses. A failed or unsupported
-preflight fails closed. Harmless changes do not require pin updates. This check
-does not prove deployment-provider behavior or every possible implementation is
-compatible. The checked-out SHA is used for both
-the deploy hook and the readiness/revision check. These guards do not
-constitute owner approval or evidence that production deployment has been
-exercised.
+After these checks, the workflow installs the selected revision's locked
+development dependencies. Before migration or deployment, a bounded local check
+starts the actual app in isolated local test configuration with no database URL,
+benchmark execution disabled and socket connections blocked. It sends in-process
+HTTP requests to `/version` with synthetic revision values, and exercises the
+deployment verifier against synthetic ready, wrong-revision and not-ready
+responses. A failed or unsupported preflight fails closed. The checked-out SHA
+is used for the deploy hook, the readiness/revision check, and the smoke test.
+These guards do not constitute owner approval or evidence that production
+deployment has been exercised.
+
+### Rollback
+
+1. Identify the current production SHA and a previously verified,
+   schema-compatible SHA. A safe demonstration pair is the current `main` SHA
+   and `c47adc16aa3f4135a2cc1da81ff4cab16b6753b6`, which has a successful `main`
+   CI run and the same Alembic head (`0008`); the difference is documentation
+   only.
+2. Re-run the promotion workflow with the rollback SHA and approve the
+   `production` environment.
+3. Verify `/version`, `/ready`, the full smoke test, and that previously
+   imported synthetic data still exists.
+4. Restore the latest approved revision through the same workflow and verify
+   again.
+5. Do not run `alembic downgrade` or a destructive database operation. If the
+   schema is incompatible, stop and keep the current revision; use a forward fix
+   or an approved database recovery procedure.
+6. Neon Free history and its single manual snapshot are not a production backup.
 
 The staging API and Pages frontend have been deployed from `main`, and the
 staging `/version` endpoint matched the source SHA on 2026-11-09. No production
 promotion, production health/readiness check, production migration, production
 smoke test, production rollback, or recreation has been exercised. Record
-production URLs and rehearsal results in #21; do not mark its acceptance
-criteria complete until verified.
+production URLs and rehearsal results in the release evidence; do not mark them
+complete until verified.
 
 ## Provider terms to recheck before provisioning
 
-Current documented free-tier limits were checked on 2026-10-27; they do not
+Current documented free-tier limits were checked on 2026-11-09; they do not
 guarantee that account onboarding will avoid a payment-method prompt. Stop at
 any such prompt. Do not add a provider or fallback outside the approved list.
 
 - Render Free web services sleep after 15 minutes without inbound traffic and
-  take about a minute to start again. Free web services have a 750
-  instance-hour monthly workspace allowance and are explicitly not for
-  production. Free Render Postgres expires after 30 days and has no backups;
-  do not use it.
+  take about a minute to start again. Free web services share a 750
+  instance-hour monthly workspace allowance. One always-awake service consumes
+  about 720 hours in a 30-day month; two always-awake services can exhaust the
+  allowance around mid-month. Check the Render dashboard's monthly included
+  usage before creating the production service. Free Render Postgres expires
+  after 30 days and has no backups; do not use it.
 - Neon Free is permanent and does not require a credit card according to its
-  pricing page. Limits include 100 CU-hours/project, 1 GB/project, scale-to-
-  zero after five minutes, and a six-hour history window; Instant Restore is
-  not included. Do not treat this as backup/PITR.
+  pricing page. Limits include 100 CU-hours/project, 1 GB/project, 20 GB account
+  total, 5 GB egress/project, scale-to-zero after five minutes, a six-hour
+  history window, and one manual snapshot; Instant Restore is not included. Do
+  not treat this as backup/PITR.
 - Clerk Hobby is free and does not require a credit card according to its
   pricing page; the current allowance is 50,000 MRUs per app. Use a separate
-  test application.
+  Development application for the production demonstration. The testing-only
+  session-token API requires a Development instance and must not be used with a
+  Production instance.
 
 - GitHub Pages eligibility, terms, and usage restrictions:
   [GitHub Pages documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)
