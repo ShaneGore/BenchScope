@@ -159,12 +159,15 @@ staging API. If the owner approves using Pages as the production frontend:
 
 ```powershell
 gh variable set VITE_API_URL --body "https://<production-api-host>"
+gh variable set VITE_CLERK_PUBLISHABLE_KEY --body "<production-clerk-publishable-key>"
 gh workflow run deploy-frontend.yml --ref main -f ref=main
 ```
 
-This changes the public demo and removes the separate staging frontend. If the
-owner wants to keep a staging frontend, do not change the variable; scope
-production to the backend and record the frontend limitation.
+Update `VITE_CLERK_PUBLISHABLE_KEY` only if the production backend uses a
+different Clerk application; the frontend and API auth configuration must
+match. This changes the public demo and removes the separate staging frontend.
+If the owner wants to keep a staging frontend, do not change the variables;
+scope production to the backend and record the frontend limitation.
 
 ## Release procedure
 
