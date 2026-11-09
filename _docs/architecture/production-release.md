@@ -1,268 +1,403 @@
 # Production release path and owner runbook
 
-**Status: not provisioned.** As of 2026-11-09 there is no distinct production
-target, no GitHub `production` environment, and no successful production
-promotion. This document is an owner-approval runbook, not evidence that a
-production release or rollback has occurred. Do not run the commands below
-until the owner has approved the target, the environment protection rules, and
-the release/rollback rehearsal.
+**Status: prepared, not provisioned.** As of 2026-11-09 the manual production
+demonstration is prepared but not executed. There is no GitHub `production`
+environment, no production Render service, no production Neon database, no
+production Clerk application, and no `PRODUCTION_*` configuration. The promotion
+workflow has never run. This document is the owner runbook and evidence
+contract; it is not proof that a production deployment or rollback occurred.
+
+## Scope and honest description
+
+The production target is a **course demonstration environment**, not
+enterprise-grade commercial production. It uses:
+
+- Render Free for the production API;
+- Neon Free for the production database;
+- Clerk Hobby with a separate Development application for synthetic
+  authentication tests;
+- a protected GitHub `production` environment and the existing manual
+  `Promote Production` workflow.
+
+The production API and database are separate from staging and use separate
+credentials. Only synthetic smoke data is used. The free-tier services have no
+SLA, can sleep or restart, have limited history and storage, and are explicitly
+not marketed by their providers as production-grade.
 
 ## Current verified state
 
 | Item | Verified state |
 |---|---|
-| `main` revision | `2be61f5cfc502a0425719f5f97705e716fb2061e` |
-| Staging API | `https://benchscope-staging-api.onrender.com`; `/version` returns the exact `main` SHA and `/ready` returns `{"status":"ready"}` |
-| Public frontend | `https://shanegore.github.io/BenchScope/` returns HTTP 200 |
-| Staging deployment | `Deploy Backend` run at `2026-11-09T03:13:51Z` for `2be61f5`, completed successfully |
-| Pages deployment | `Deploy GitHub Pages` run at `2026-11-09T03:13:51Z` for `2be61f5`, completed successfully |
+| `main` revision | `3e03a7b5208dae9ca6f411bdd3cc78e97b961a46` |
+| Main CI | run `42619574144`; `backend`, `frontend`, `journey`, `container-images`, and `backend-windows` all succeeded |
+| Staging API | `https://benchscope-staging-api.onrender.com`; `/version` returns `3e03a7b5208dae9ca6f411bdd3cc78e97b961a46`; `/health` returns HTTP 200; `/ready` returns `{"status":"ready"}` |
+| Staging deployment | `Deploy Backend` run `42619781983` succeeded for `3e03a7b` |
+| Public frontend | `https://shanegore.github.io/BenchScope/` returns HTTP 200; Pages deployment run `42619781869` succeeded for `3e03a7b` |
+| Frontend source evidence | The Pages deployment record identifies the source SHA; the live static content is not SHA-stamped |
+| Production environment | Absent (GitHub API returns 404) |
+| Production configuration | No `PRODUCTION_*` secrets or variables are configured |
 | Promotion workflow | `.github/workflows/promote-production.yml` has never produced a run |
-| GitHub environments | `staging` and `github-pages` allow only `main`; neither has required reviewers. `production` does not exist (API returns 404) |
-| Production configuration | No `PRODUCTION_*` repository or environment variables/secrets are configured |
-| Main branch rules | Active ruleset requires a pull request and the five CI checks, blocks deletion and non-fast-forward pushes, and has no bypass actors. Required approving reviews: 0 |
-| Release tags | None |
+| Main ruleset | Active; PR plus the five required checks; strict checks; no bypass actors; **0 required approving reviews** |
 
-The staging API is therefore a real, independently SHA-verified deployment.
-It is **not** a production target: it deploys automatically after successful
-`main` CI, and the public frontend uses the same service.
+The staging API is a real, independently SHA-verified deployment. It is
+**not** the production target: it deploys automatically after successful `main`
+CI, and the public frontend uses the same service.
 
-## Review findings
+## Demonstration architecture
 
-1. **Distinct production target:** No. The only live backend is the staging
-   Render service. The promotion workflow names a `production` environment that
-   does not exist and expects `PRODUCTION_*` settings that are not configured.
-2. **Selected, tested revision:** The workflow is designed to do this. It
-   accepts `main`, a versioned tag, or an exact SHA; requires the SHA to be an
-   ancestor of `main`; requires the latest `main` push CI run for that exact SHA
-   to be successful; runs a bounded identity preflight; applies migrations;
-   triggers a Render deploy hook with `?ref=<sha>`; waits for `/version` to
-   match; and runs smoke tests. None of this has been executed end to end.
-3. **Explicit human action:** Partly. Promotion is a `workflow_dispatch` job
-   with a typed `confirm=promote` input, but the `production` environment has no
-   required reviewers. The workflow's environment gate is therefore not
-   enforced and would fail or create an unprotected environment on first use.
-4. **Independent source-SHA check:** Yes for the backend, via `/version` and the
-   `wait_for_deployment.py` check. The frontend deployment record identifies the
-   source SHA, but the live static content itself is not SHA-stamped or
-   independently verified.
-5. **Previous known-good revision:** The backend can be restored by re-running
-   the promotion workflow with a known-good SHA, or by using Render's rollback.
-   The frontend can be restored by re-running the Pages workflow with a
-   known-good SHA. Neither rollback has been rehearsed. Database migrations are
-   forward-only in the current workflow and are not automatically reversed.
-6. **Environments and branch rules:** Main is protected by an active ruleset
-   with the five CI checks and no bypass. Staging and Pages are main-only but
-   have no required reviewers. A production environment with required reviewers
-   and a main-only branch policy still has to be created.
+```
+GitHub main (PR + five required CI checks)
+   |
+   +-- automatic after successful CI --> Render staging API --> Neon staging DB
+   |                                          ^
+   |                                          +-- GitHub Pages (staging API)
+   |
+   +-- manual workflow_dispatch (confirm=promote, production environment)
+          --> Promote Production
+                |-- selected SHA must be an ancestor of main and CI-green
+                |-- alembic upgrade head --> Neon production DB
+                |-- Render deploy hook ?ref=<SHA> --> Render production API
+                +-- /version + /ready + full synthetic API smoke
+```
 
-## Smallest credible path
+| Component | Staging | Production demonstration |
+|---|---|---|
+| API | Existing Render Free web service | New Render Free web service, automatic deploys disabled |
+| Database | Existing Neon Free project | New Neon Free project, separate credentials |
+| Auth | Existing Clerk Development instance | New Clerk Development application, synthetic users only |
+| Frontend | GitHub Pages, pointed at staging API | Not included; public Pages remains staging-backed |
+| Deployment | Automatic after successful `main` CI | Manual `workflow_dispatch` with typed confirmation and `production` environment approval |
+| Data | Demo/synthetic | Synthetic smoke data only; no staging data copy |
 
-Use the already approved free providers, not a new platform:
+### Frontend decision
 
-- **Option A (recommended, distinct target):** add one free Render web service
-  and one free Neon PostgreSQL database for production. Keep staging separate.
-  Point the public Pages build at the production API. This is the clearest
-  interpretation of a distinct production target and costs $0 at current free
-  tiers, subject to provider terms.
-- **Option B (absolute minimum, no new service):** treat the existing Render
-  service and Pages site as production, disable automatic deploys, and require
-  manual promotion. This uses existing infrastructure but removes the separate
-  staging service and weakens the evidence that production was tested apart from
-  staging.
+The public Pages frontend remains connected to the staging API and continues to
+deploy automatically. This avoids disrupting the public demo and avoids turning
+the frontend into an automatic production deployment. A separate production
+frontend is **not** part of this demonstration.
 
-The runbook below uses **Option A**. If the owner chooses Option B, substitute
-the existing service URLs and record that staging is no longer separate.
+The production release therefore covers the API and database. The production API
+is verified directly through `/version`, `/health`, `/ready`, and the full
+synthetic smoke test. The smoke test's frontend check only confirms that the
+public Pages URL is reachable; it does **not** prove production frontend-to-API
+connectivity. This limitation is intentional and must be stated in the release
+evidence.
 
-## Owner decisions required
+## GitHub production environment
 
-1. Approve Option A or Option B in writing.
-2. Approve creating the `production` GitHub environment with a required
-   reviewer. If a second trusted reviewer is available, set
-   `prevent_self_review=true`; otherwise document owner self-review as a
-   limitation.
-3. Approve the production provider resources. Stop if Render, Neon, or Clerk
-   requests payment details or a paid upgrade.
-4. Decide whether the public Pages site should point at the production API. If
-   yes, changing `VITE_API_URL` and redeploying Pages is a live setting change.
-5. Decide how the production smoke token is refreshed. The current workflow
-   expects a pre-minted read-only `PRODUCTION_SMOKE_TEST_TOKEN`; a short-lived
-   token must be refreshed before each run. Runtime generation would require a
-   Clerk Development instance and a workflow change.
+Create one environment named `production` with:
 
-## One-time setup (owner-approved)
+- a selected-branch deployment policy allowing only `main`;
+- the repository owner as the required reviewer;
+- `prevent_self_review=false` (the owner is the sole reviewer);
+- `can_admins_bypass=false`;
+- no automatic deployment trigger.
 
-### 1. Create and protect the `production` environment
+The workflow remains `workflow_dispatch` only, requires the typed input
+`confirm=promote`, and only runs from `refs/heads/main`. The selected `ref` input
+may be `main`, a versioned tag, or an exact 40-character SHA; the checked-out
+commit must be an ancestor of `main` and must have a successful `main` push CI
+run for that exact SHA.
 
-Run from the repository root after confirming the owner decision. The reviewer
-ID is the GitHub user ID, not the login.
+**Approval claim:** GitHub technically enforces the environment reviewer gate;
+the job pauses until the owner approves. Because the owner is also the reviewer,
+this is a **self-approval gate**, not independent second-person review. The main
+ruleset still requires zero approving reviews, so independent code review is not
+enforced and must not be claimed.
 
-```powershell
-$ownerId = gh api user --jq .id
-@"
+### Required environment settings
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `PRODUCTION_DATABASE_URL` | secret | Separate Neon production PostgreSQL URL |
+| `PRODUCTION_RENDER_DEPLOY_HOOK_URL` | secret | Production Render deploy hook |
+| `PRODUCTION_CLERK_SECRET_KEY` | secret | Mints short-lived synthetic smoke tokens |
+| `PRODUCTION_SMOKE_API_URL` | variable | Production API origin, HTTPS |
+| `PRODUCTION_SMOKE_FRONTEND_URL` | variable | Public Pages URL checked for reachability |
+| `PRODUCTION_SMOKE_TEST_USER_A_ID` | variable | Synthetic Clerk user A |
+| `PRODUCTION_SMOKE_TEST_USER_B_ID` | variable | Synthetic Clerk user B, distinct from A |
+
+The obsolete `PRODUCTION_SMOKE_TEST_TOKEN` and
+`PRODUCTION_SMOKE_OTHER_TEST_TOKEN` secrets are not used. Tokens are minted at
+runtime with `scripts/generate_smoke_tokens.py`, the same testing-only Clerk API
+used by staging. That API requires a Clerk **Development** instance and must not
+be used with a Clerk Production instance.
+
+## Owner provisioning checklist
+
+No production resource may be created until the owner explicitly authorises it.
+The owner must confirm free-tier capacity and that no payment method is required.
+Stop at any payment-method or paid-upgrade prompt.
+
+### 1. Render
+
+Create one **Free** web service:
+
+- Name: `benchscope-production-api` (or the nearest available name).
+- Repository: `ShaneGore/BenchScope`; branch `main`.
+- Runtime: Docker; Dockerfile `backend/Dockerfile`; build context `backend`.
+- Instance type: **Free**.
+- **Automatic deploys: disabled.** Deploy only through the deploy hook.
+- Health check path: `/health`.
+- Region: same region as the existing staging service where possible.
+
+Set these runtime environment variables:
+
+```text
+APP_MODE=hosted
+APP_ENV=production
+HOST=0.0.0.0
+DATABASE_URL=<production Neon direct connection string>
+CORS_ORIGINS=https://shanegore.github.io
+CLERK_JWKS_URL=<production Clerk JWKS URL>
+CLERK_ISSUER=<production Clerk issuer>
+CLERK_AUTHORIZED_PARTIES=https://shanegore.github.io
+BENCHMARK_ENABLED=false
+```
+
+Do not set `LOCAL_AUTH_BYPASS`. Do not configure the AI repair worker, GitHub
+credentials, OpenRouter credentials, or private benchmark paths on this service.
+Confirm Render supplies `RENDER_GIT_COMMIT`; `/version` prefers `APP_REVISION`
+and falls back to `RENDER_GIT_COMMIT`.
+
+Create a deploy hook and store its URL only as the
+`PRODUCTION_RENDER_DEPLOY_HOOK_URL` GitHub environment secret.
+
+### 2. Neon
+
+Create one separate **Free** project:
+
+- Name: `benchscope-production`.
+- Region: matching the Render service region.
+- Database: `benchscope`.
+- Use the project-scoped direct PostgreSQL connection string with SSL.
+- Do not copy staging data.
+- Run schema creation only through `alembic upgrade head` from the promotion
+  workflow.
+
+Store the connection string only as the `PRODUCTION_DATABASE_URL` GitHub
+environment secret.
+
+### 3. Clerk
+
+Create one separate **Development** application:
+
+- Name: `BenchScope Production` (or similar).
+- Create two synthetic users, for example `smoke-a@example.com` and
+  `smoke-b@example.com`; record both user IDs.
+- Copy the issuer, JWKS URL, and secret key.
+- Do not reuse the staging Clerk application.
+- Do not change the staging Clerk configuration.
+- Do not upgrade to a Clerk Production instance for this demonstration.
+
+Use the owner's GitHub UI or local `gh secret set` to store the secret key. Never
+paste secrets into chat, commit them, or place them in `VITE_*` variables.
+
+### 4. GitHub
+
+After explicit owner approval, the environment and non-secret variables can be
+configured with GitHub CLI/API. Secrets are set by the owner through the GitHub
+UI or an interactive local `gh secret set` prompt.
+
+The environment payload should be equivalent to:
+
+```json
 {
+  "can_admins_bypass": false,
   "prevent_self_review": false,
-  "reviewers": [{"type": "User", "id": $ownerId}],
+  "reviewers": [{"type": "User", "id": "<owner-user-id>"}],
   "deployment_branch_policy": {
     "protected_branches": false,
     "custom_branch_policies": true
   }
 }
-"@ | Set-Content -Encoding utf8 production-environment.json
-gh api --method PUT repos/ShaneGore/BenchScope/environments/production --input production-environment.json
-gh api --method POST repos/ShaneGore/BenchScope/environments/production/deployment-branch-policies -f name=main
-Remove-Item production-environment.json
-gh api repos/ShaneGore/BenchScope/environments/production --jq '{name, protection_rules}'
 ```
 
-The final command must show a required-reviewer rule. If it does not, stop;
-do not promote.
+Then add a `main` deployment branch policy.
 
-### 2. Provision the production backend and database
+## Workflow behaviour
 
-Use the owner-approved free Render and Neon accounts. Record every URL and
-resource name in the release evidence, never in a public issue.
+`.github/workflows/promote-production.yml` now:
 
-- Create a Neon PostgreSQL database named for production. Keep it separate from
-  staging. Store its pooled connection string as `PRODUCTION_DATABASE_URL`.
-- Create a Render web service from this repository with **auto-deploy disabled**
-  and deploy only through its deploy hook. Set:
-  - `APP_MODE=hosted`
-  - `APP_ENV=production`
-  - `DATABASE_URL=<production Neon URL>`
-  - `CORS_ORIGINS=https://shanegore.github.io`
-  - `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES` from the
-    separate Clerk test application
-  - `BENCHMARK_ENABLED=false`
-- Confirm Render supplies `RENDER_GIT_COMMIT` so `/version` reports the deployed
-  SHA.
-- Store the deploy hook URL as `PRODUCTION_RENDER_DEPLOY_HOOK_URL`.
-- Do not reuse the staging database, deploy hook, or Clerk application.
+- triggers only through `workflow_dispatch`;
+- requires `confirm=promote` and `github.ref == refs/heads/main`;
+- validates the selected ref format;
+- requires `PRODUCTION_DATABASE_URL`, `PRODUCTION_RENDER_DEPLOY_HOOK_URL`,
+  `PRODUCTION_CLERK_SECRET_KEY`, both smoke URLs, and both synthetic user IDs;
+- rejects non-HTTPS smoke URLs, the staging API URL, and identical smoke users;
+- uses deployment concurrency `production-release` with
+  `cancel-in-progress: false`;
+- has a 30-minute job timeout;
+- checks out the selected revision and requires main ancestry;
+- requires the latest `main` push CI run for the exact SHA to be successful;
+- runs a bounded identity/deployment-verifier preflight;
+- runs `alembic upgrade head` against the production database;
+- triggers the Render deploy hook with `?ref=<selected-sha>`;
+- waits for `/version` to match the selected SHA and `/ready` to be ready;
+- mints fresh synthetic Clerk tokens at runtime;
+- runs `scripts/smoke_test.py --mode full`, covering health, readiness,
+  anonymous demo, authenticated access, synthetic import, persistence, run
+  detail, comparison, and owner isolation.
 
-### 3. Configure GitHub production settings
-
-```powershell
-gh variable set PRODUCTION_SMOKE_API_URL --env production --body "https://<production-api-host>"
-gh variable set PRODUCTION_SMOKE_FRONTEND_URL --env production --body "https://shanegore.github.io/BenchScope/"
-gh secret set PRODUCTION_DATABASE_URL --env production
-gh secret set PRODUCTION_RENDER_DEPLOY_HOOK_URL --env production
-gh secret set PRODUCTION_SMOKE_TEST_TOKEN --env production
-```
-
-`PRODUCTION_SMOKE_TEST_TOKEN` is a read-only Clerk session token for one
-synthetic test user. Refresh it immediately before each promotion. The workflow
-does not currently generate it at runtime.
-
-### 4. Point the public frontend at production (if approved)
-
-The public Pages site is currently built with `VITE_API_URL` pointing at the
-staging API. If the owner approves using Pages as the production frontend:
-
-```powershell
-gh variable set VITE_API_URL --body "https://<production-api-host>"
-gh variable set VITE_CLERK_PUBLISHABLE_KEY --body "<production-clerk-publishable-key>"
-gh workflow run deploy-frontend.yml --ref main -f ref=main
-```
-
-Update `VITE_CLERK_PUBLISHABLE_KEY` only if the production backend uses a
-different Clerk application; the frontend and API auth configuration must
-match. This changes the public demo and removes the separate staging frontend.
-If the owner wants to keep a staging frontend, do not change the variables;
-scope production to the backend and record the frontend limitation.
+The workflow fails closed. A failure before the deploy hook prevents deployment;
+a failure after it leaves the new revision live, so the owner must follow the
+rollback procedure and record the failed release.
 
 ## Release procedure
 
-1. Select a full 40-character SHA from `main` with a successful `main` push CI
-   run. Prefer a versioned tag created after the previous successful release.
-2. Refresh `PRODUCTION_SMOKE_TEST_TOKEN` if it has expired.
-3. Start the promotion from `main`:
+1. Confirm the selected full SHA is on `main` and has all five required CI checks
+   green.
+2. Confirm automatic staging deployment succeeded for the same SHA and record
+   staging `/version`, `/ready`, workflow runs, and smoke evidence.
+3. Trigger the promotion from `main`:
 
    ```powershell
-   gh workflow run promote-production.yml --ref main -f confirm=promote -f ref=<sha-or-tag>
+   gh workflow run promote-production.yml --ref main -f confirm=promote -f ref=<selected-sha>
    ```
 
-4. Open the run and approve the `production` environment deployment. If GitHub
-   does not show an approval prompt, stop and inspect the environment; do not
-   let the job continue.
-5. Wait for the workflow. It must pass:
-   - selected ref validation and `main` ancestry;
-   - successful `main` CI for the exact SHA;
-   - deployment identity compatibility preflight;
-   - production migrations;
-   - SHA-pinned Render deploy;
-   - `/version` and `/ready` verification;
-   - production smoke tests.
-6. Deploy the frontend from the same SHA if it is part of the release:
+4. Approve the `production` environment deployment in GitHub. If no approval
+   prompt appears, stop and inspect the environment; do not let the job continue.
+5. Wait for the run to pass.
+6. Independently verify and record:
 
-   ```powershell
-   gh workflow run deploy-frontend.yml --ref main -f ref=<sha>
-   ```
+   - production `GET /version` returns the selected SHA;
+   - production `GET /health` and `/ready` succeed;
+   - migrations completed;
+   - the full synthetic smoke test passed, including import, persistence, run
+     detail, comparison, and owner isolation;
+   - the production deployment record shows the same SHA;
+   - staging remains available and unchanged;
+   - no secret appears in the logs.
 
-7. Verify independently and record:
-   - `GET <production-api>/version` returns the exact SHA;
-   - `GET <production-api>/ready` returns `{"status":"ready"}`;
-   - the smoke output and run URL;
-   - `gh api "repos/ShaneGore/BenchScope/deployments?environment=production&per_page=5"` shows the SHA;
-   - the Pages deployment record shows the same SHA and the site returns HTTP 200.
-8. Only after all checks pass, create and push an annotated release tag for the
-   SHA, and record the tag, URLs, run IDs, and SHAs in the release evidence.
+7. Optionally create an annotated release tag only after successful verification.
 
 ## Rollback procedure
 
-1. Identify the last-known-good tagged SHA and its recorded successful
-   deployment evidence.
-2. Refresh the production smoke token if needed.
-3. Re-run the promotion with the known-good SHA:
+Use the existing promotion workflow to redeploy a previously verified,
+schema-compatible revision. Do not introduce a separate rollback service or
+database migration framework.
+
+A safe demonstration pair is:
+
+- current revision: the selected `main` SHA;
+- rollback revision: `c47adc16aa3f4135a2cc1da81ff4cab16b6753b6`, the previous
+  `main` revision, which has a successful `main` CI run and the same Alembic head
+  (`0008`) as the current revision. The difference between those revisions is
+  documentation only, so the rollback is schema-compatible.
+
+Procedure:
+
+1. Record the current production `/version` and deployment record.
+2. Trigger promotion with the rollback SHA:
 
    ```powershell
-   gh workflow run promote-production.yml --ref main -f confirm=promote -f ref=<known-good-sha>
+   gh workflow run promote-production.yml --ref main -f confirm=promote -f ref=c47adc16aa3f4135a2cc1da81ff4cab16b6753b6
    ```
 
-4. Approve the `production` environment deployment.
-5. Redeploy the frontend from the same known-good SHA:
+3. Approve the `production` environment deployment.
+4. Verify `/version` returns the rollback SHA, `/ready` succeeds, the full smoke
+   test passes, and previously imported synthetic runs still exist.
+5. Restore the latest approved revision through the same workflow.
+6. Verify `/version`, readiness, smoke, and the deployment record again.
 
-   ```powershell
-   gh workflow run deploy-frontend.yml --ref main -f ref=<known-good-sha>
-   ```
+Do **not** run `alembic downgrade` or any destructive database operation. If the
+schema is incompatible, stop and keep the current revision; use a forward fix or
+an approved database recovery procedure. Neon Free history and its single manual
+snapshot are not a substitute for a production backup.
 
-6. Verify `/version`, `/ready`, smoke tests, the production deployment record,
-   and the Pages record against the known-good SHA.
-7. Database rollback: the workflow runs `alembic upgrade head` before deploying,
-   so code rollback does not reverse schema changes. Take a logical backup before
-   every promotion. If the failed release introduced an incompatible migration,
-   stop and use a forward fix or the approved database recovery procedure. Do not
-   rely on Neon Free history as a backup.
-8. Record the rollback as a separate incident/release entry with its own run URL
-   and verification output.
+## Cost and free-tier limits
+
+Current terms reviewed on 2026-11-09:
+
+| Provider | Resource | Relevant limits | Cost |
+|---|---|---|---|
+| Render | Free Web Service | 0.1 CPU / 512 MB; sleeps after 15 minutes idle (~1 minute cold start); **750 instance-hours per workspace per month**, shared across free web services; shared bandwidth and build pipeline minutes; rollback only to the two most recent deploys | $0 within limits |
+| Neon | Free project | 100 CU-hours per project per month; 1 GB storage per project and 20 GB account total; 5 GB egress per project; scale-to-zero after 5 minutes; 6-hour history; 1 manual snapshot | $0 within limits |
+| Clerk | Hobby, Development application | 50,000 MRU per app; unlimited applications; no card | $0 within limits |
+| GitHub | Public repository | Actions, Pages, environments, and required reviewers available for public repositories | $0 |
+
+**Critical Render check:** 750 hours is roughly 31.25 service-days. One
+always-awake service consumes about 720 hours in a 30-day month; two
+always-awake services would exhaust the allowance around mid-month. The owner
+must inspect the Render dashboard's monthly included usage before creating the
+second service. If capacity is insufficient, stop and report the blocker rather
+than provisioning paid infrastructure.
+
+Render Free Postgres is not used: it allows only one database per workspace,
+expires after 30 days, and has no backups.
+
+Do not add a payment method or upgrade a plan for this demonstration. If a
+provider requests payment details or a paid upgrade, stop.
+
+## Security and privacy
+
+- Production secrets are environment-scoped and available only after the
+  `production` environment gate is approved.
+- The workflow uses read-only `actions` and `contents` permissions.
+- `generate_smoke_tokens.py` writes tokens only to `GITHUB_ENV`; it does not
+  print them.
+- The production database URL, Render deploy hook, and Clerk secret key are never
+  placed in frontend variables, committed files, or logs.
+- Production CORS is an explicit HTTPS origin, never a wildcard.
+- Render provides HTTPS; Neon requires SSL.
+- The smoke test verifies owner isolation by confirming that the second
+  synthetic user cannot read the first user's run.
+- Only synthetic smoke data is created. No customer, private, or benchmark data
+  is copied or exposed.
+- `BENCHMARK_ENABLED=false`; the AI repair worker is not hosted, not configured,
+  and has no production credentials.
 
 ## Abort criteria
 
-Stop before any side effect if any of these is true:
+Stop before any side effect if:
 
-- the owner has not approved the target, environment, or promotion;
+- the owner has not authorised the target, environment, or promotion;
 - the `production` environment has no required reviewer;
 - the selected SHA is not an ancestor of `main`;
 - the exact SHA has no successful `main` push CI run;
+- any required production setting is missing;
+- a smoke URL is not HTTPS or points at the staging API;
+- the smoke users are not distinct;
 - the identity preflight fails;
-- production secrets or variables are missing;
-- the migration step fails or the pre-migration backup is absent;
+- production migrations fail;
 - the deploy hook rejects the SHA;
-- `/version` does not match within 300 seconds;
+- `/version` does not match within the verifier timeout;
 - `/ready` is not ready;
 - any smoke test fails;
-- the frontend deployment record does not match the promoted SHA;
-- any secret or credential would be printed.
+- a secret or credential would be printed;
+- Render or Neon reports a payment requirement or quota exhaustion.
 
 ## What this does not prove
 
-- No production target, environment, promotion, or rollback exists or has been
-  executed.
-- The workflow definition and its unit tests are not evidence of a working
+- No production environment, API, database, promotion, or rollback exists yet.
+- Workflow definitions and this runbook are not evidence of a successful
   production release.
-- The frontend's live content is not SHA-stamped; the deployment record is the
-  current source-SHA evidence.
-- The main ruleset requires zero approving reviews. Production approval is
-  provided by the environment reviewer, not by a second code reviewer.
-- Render Free is not a production-grade service; free-tier sleep, limits, and
-  provider terms apply.
-- Database migrations are forward-only here; rollback safety depends on a backup
-  and backward-compatible schema changes.
+- Render Free and Clerk Development are demonstration services, not
+  enterprise-grade production infrastructure.
+- The public frontend remains staging-backed; production frontend-to-API
+  connectivity is not exercised.
+- The environment reviewer gate is enforced by GitHub, but the sole owner reviews
+  their own deployment; independent human review is not enforced.
+- The main ruleset requires zero approving reviews.
+- Database migrations are forward-only in this workflow; rollback is safe only
+  between schema-compatible revisions.
+- Neon Free history and its single manual snapshot are not a production backup.
+
+## Evidence to record after execution
+
+- CI run for the promoted SHA (all five checks).
+- Automatic staging deployment run, staging `/version`, `/ready`, and smoke
+  result.
+- Manual production promotion run URL, actor, event, selected SHA, environment
+  approval timestamp, and deployment record.
+- Production `/version`, `/health`, `/ready`, migration result, and full smoke
+  output.
+- Rollback run URL, rollback `/version`, post-rollback verification, and the
+  restored revision.
+- Confirmation that staging remained available and unchanged.
+- Sanitised Render/Neon usage evidence and the infrastructure diagram.
+- Final documentation updates to `deployment.md`, `submission-checklist.md`, and
+  `known-limitations.md`, including the provisional rubric assessment.
+
+Do not record secrets, raw environment files, database connection strings, or
+private data in the evidence.
