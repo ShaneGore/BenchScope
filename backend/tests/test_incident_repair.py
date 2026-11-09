@@ -713,7 +713,7 @@ def test_pull_request_is_draft_and_contains_incident_evidence(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "case", ["passed", "missing", "wrong_sha", "failed", "timeout"]
+    "case", ["passed", "missing", "wrong_sha", "failed", "timeout", "not_started"]
 )
 def test_ci_requires_all_five_passing_checks_and_matching_sha(
     tmp_path, monkeypatch, case
@@ -740,33 +740,107 @@ def test_ci_requires_all_five_passing_checks_and_matching_sha(
     names = ["backend", "frontend", "journey", "container-images", "backend-windows"]
     if case == "missing":
         names.pop()
-    checks = [{"name": name, "workflow": "CI", "bucket": "pass"} for name in names]
+    checks = [
+        {
+            "name": name,
+            "workflowName": "CI",
+            "status": "IN_PROGRESS" if case == "timeout" else "COMPLETED",
+            "conclusion": (
+                None
+                if case == "timeout"
+                else "FAILURE"
+                if case == "failed" and name == "backend-windows"
+                else "SUCCESS"
+            ),
+        }
+        for name in names
+    ]
+    if case == "not_started":
+        checks = []
 
     def fake_run(args, **kwargs):
-        if "--watch" in args:
-            if case in {"failed", "timeout"}:
-                raise repair.RepairCommandError(
-                    "timed_out" if case == "timeout" else "failed"
-                )
-            return b""
-        if "view" in args:
-            return json.dumps(
-                {"headRefOid": "b" * 40 if case == "wrong_sha" else sha}
-            ).encode()
-        return json.dumps(checks).encode()
+        assert args[:4] == ["gh", "pr", "view", "https://example.invalid"]
+        return json.dumps(
+            {
+                "headRefOid": "b" * 40 if case == "wrong_sha" else sha,
+                "statusCheckRollup": checks,
+            }
+        ).encode()
 
     monkeypatch.setattr(repair, "_run_host_command", fake_run)
+    monkeypatch.setattr(repair, "_CI_CHECK_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(repair, "_CI_POLL_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(repair.time, "sleep", lambda _seconds: None)
     result = repair._wait_for_ci(
         factory, job_id, incident_id, "https://example.invalid", tmp_path, {}
     )
-    assert result == {"passed": "ci_passed", "timeout": "pr_open"}.get(
-        case, "ci_failed"
-    )
+    assert result == {
+        "passed": "ci_passed",
+        "timeout": "pr_open",
+        "not_started": "pr_open",
+    }.get(case, "ci_failed")
     with factory() as session:
         job = session.get(IncidentRepairJob, job_id)
-        assert job.ci_status == {"passed": "passed", "timeout": "timed_out"}.get(
-            case, "failed"
+        assert job.ci_status == {
+            "passed": "passed",
+            "timeout": "timed_out",
+            "not_started": "timed_out",
+        }.get(case, "failed")
+    engine.dispose()
+
+
+def test_ci_wait_tolerates_checks_not_yet_registered(tmp_path, monkeypatch):
+    engine = _engine(tmp_path)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    sha = "a" * 40
+    with factory() as session:
+        record = _record()
+        session.add(record)
+        session.flush()
+        job = IncidentRepairJob(
+            incident_id=record.id,
+            fingerprint=record.fingerprint,
+            source_revision=sha,
+            status="pr_open",
+            attempts=1,
+            pull_request_sha=sha,
         )
+        session.add(job)
+        session.commit()
+        job_id, incident_id = job.id, record.id
+
+    passing = [
+        {
+            "name": name,
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+        }
+        for name in (
+            "backend",
+            "frontend",
+            "journey",
+            "container-images",
+            "backend-windows",
+        )
+    ]
+    responses = [[], passing]
+
+    def fake_run(args, **kwargs):
+        rollup = responses.pop(0)
+        return json.dumps({"headRefOid": sha, "statusCheckRollup": rollup}).encode()
+
+    monkeypatch.setattr(repair, "_run_host_command", fake_run)
+    monkeypatch.setattr(repair, "_CI_POLL_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(repair.time, "sleep", lambda _seconds: None)
+    assert (
+        repair._wait_for_ci(
+            factory, job_id, incident_id, "https://example.invalid", tmp_path, {}
+        )
+        == "ci_passed"
+    )
+    with factory() as session:
+        assert session.get(IncidentRepairJob, job_id).ci_status == "passed"
     engine.dispose()
 
 

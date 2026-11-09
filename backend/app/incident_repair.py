@@ -96,6 +96,17 @@ _ACTIVE_STATUSES = (
     "ci_passed",
     "ci_failed",
 )
+_CI_REQUIRED_CHECKS = frozenset(
+    {
+        "backend",
+        "frontend",
+        "journey",
+        "container-images",
+        "backend-windows",
+    }
+)
+_CI_POLL_INTERVAL_SECONDS = 10
+_CI_CHECK_TIMEOUT_SECONDS = 900
 
 
 class RepairCommandError(InvestigationBlocked):
@@ -1364,103 +1375,148 @@ def _pr_safe_text(value: str) -> str:
     return value[:_ROOT_CAUSE_LIMIT]
 
 
-def _wait_for_ci(
-    session_factory, job_id, incident_id, pull_request_url, worktree, environment
+def _finish_ci(
+    session_factory, job_id, incident_id, status, ci_status, outcome, reason
 ):
-    try:
-        _run_host_command(
-            [
-                "gh",
-                "pr",
-                "checks",
-                pull_request_url,
-                "--watch",
-                "--fail-fast",
-            ],
-            cwd=worktree,
-            timeout=900,
-            env=environment,
-        )
-        with session_factory() as session:
-            job = session.get(IncidentRepairJob, job_id)
-            expected_sha = job.pull_request_sha if job else None
-        head = json.loads(
-            _run_host_command(
-                ["gh", "pr", "view", pull_request_url, "--json", "headRefOid"],
-                cwd=worktree,
-                timeout=30,
-                env=environment,
-            )
-        )
-        checks = json.loads(
-            _run_host_command(
-                [
-                    "gh",
-                    "pr",
-                    "checks",
-                    pull_request_url,
-                    "--json",
-                    "name,bucket,workflow",
-                ],
-                cwd=worktree,
-                timeout=30,
-                env=environment,
-            )
-        )
-        required = {
-            "backend",
-            "frontend",
-            "journey",
-            "container-images",
-            "backend-windows",
-        }
-        if (
-            not isinstance(head, dict)
-            or not expected_sha
-            or head.get("headRefOid") != expected_sha
-            or not isinstance(checks, list)
-            or not required.issubset(
-                {
-                    check.get("name")
-                    for check in checks
-                    if isinstance(check, dict)
-                    and check.get("workflow") == "CI"
-                    and check.get("bucket") == "pass"
-                }
-            )
-        ):
-            raise RepairCommandError("failed")
-    except (RepairCommandError, ValueError, UnicodeError, TypeError) as exc:
-        timed_out = isinstance(exc, RepairCommandError) and exc.reason == "timed_out"
-        status = "pr_open" if timed_out else "ci_failed"
-        outcome = "partial" if timed_out else "failed"
-        reason = "checks_timed_out" if timed_out else "checks_failed"
-        with session_factory() as session:
-            job = session.get(IncidentRepairJob, job_id)
-            job.status = status
-            job.ci_status = "failed" if outcome == "failed" else "timed_out"
-            append_incident_audit_event(
-                session,
-                incident_id,
-                event_type="repair_ci",
-                outcome=outcome,
-                reason_code=reason,
-            )
-            session.commit()
-        return status
     with session_factory() as session:
         job = session.get(IncidentRepairJob, job_id)
-        job.status = "ci_passed"
-        job.ci_status = "passed"
+        job.status = status
+        job.ci_status = ci_status
         append_incident_audit_event(
             session,
             incident_id,
             event_type="repair_ci",
-            outcome="complete",
-            reason_code="checks_passed",
+            outcome=outcome,
+            reason_code=reason,
         )
         session.commit()
-    return "ci_passed"
+    return status
+
+
+def _wait_for_ci(
+    session_factory, job_id, incident_id, pull_request_url, worktree, environment
+):
+    with session_factory() as session:
+        job = session.get(IncidentRepairJob, job_id)
+        expected_sha = job.pull_request_sha if job else None
+    if not expected_sha:
+        return _finish_ci(
+            session_factory,
+            job_id,
+            incident_id,
+            "ci_failed",
+            "failed",
+            "failed",
+            "checks_failed",
+        )
+
+    deadline = time.monotonic() + _CI_CHECK_TIMEOUT_SECONDS
+    observed: set[str] = set()
+    while True:
+        try:
+            view = json.loads(
+                _run_host_command(
+                    [
+                        "gh",
+                        "pr",
+                        "view",
+                        pull_request_url,
+                        "--json",
+                        "headRefOid,statusCheckRollup",
+                    ],
+                    cwd=worktree,
+                    timeout=30,
+                    env=environment,
+                )
+            )
+        except (RepairCommandError, ValueError, UnicodeError, TypeError) as exc:
+            timed_out = (
+                isinstance(exc, RepairCommandError) and exc.reason == "timed_out"
+            )
+            return _finish_ci(
+                session_factory,
+                job_id,
+                incident_id,
+                "pr_open" if timed_out else "ci_failed",
+                "timed_out" if timed_out else "failed",
+                "partial" if timed_out else "failed",
+                "checks_timed_out" if timed_out else "checks_failed",
+            )
+
+        rollup = view.get("statusCheckRollup") if isinstance(view, dict) else None
+        if (
+            not isinstance(view, dict)
+            or view.get("headRefOid") != expected_sha
+            or not isinstance(rollup, list)
+        ):
+            return _finish_ci(
+                session_factory,
+                job_id,
+                incident_id,
+                "ci_failed",
+                "failed",
+                "failed",
+                "checks_failed",
+            )
+
+        current = {
+            check.get("name"): check
+            for check in rollup
+            if isinstance(check, dict)
+            and check.get("workflowName") == "CI"
+            and check.get("name") in _CI_REQUIRED_CHECKS
+        }
+        observed.update(current)
+        if any(
+            check.get("status") == "COMPLETED" and check.get("conclusion") != "SUCCESS"
+            for check in current.values()
+        ):
+            return _finish_ci(
+                session_factory,
+                job_id,
+                incident_id,
+                "ci_failed",
+                "failed",
+                "failed",
+                "checks_failed",
+            )
+        passed = {
+            name
+            for name, check in current.items()
+            if check.get("status") == "COMPLETED"
+            and check.get("conclusion") == "SUCCESS"
+        }
+        if passed >= _CI_REQUIRED_CHECKS:
+            return _finish_ci(
+                session_factory,
+                job_id,
+                incident_id,
+                "ci_passed",
+                "passed",
+                "complete",
+                "checks_passed",
+            )
+        if time.monotonic() >= deadline:
+            if observed and observed < _CI_REQUIRED_CHECKS:
+                return _finish_ci(
+                    session_factory,
+                    job_id,
+                    incident_id,
+                    "ci_failed",
+                    "failed",
+                    "failed",
+                    "checks_failed",
+                )
+            return _finish_ci(
+                session_factory,
+                job_id,
+                incident_id,
+                "pr_open",
+                "timed_out",
+                "partial",
+                "checks_timed_out",
+            )
+        time.sleep(_CI_POLL_INTERVAL_SECONDS)
 
 
 def _recover_interrupted_jobs(factory: sessionmaker) -> None:
