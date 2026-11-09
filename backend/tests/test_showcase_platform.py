@@ -184,6 +184,37 @@ def test_verification_rejects_skipped_database_tests(tmp_path):
         module.verify_backend_report(report)
 
 
+def test_verifier_keeps_deployment_revision_out_of_test_environment(monkeypatch):
+    module = script("verify")
+    revision = "a" * 40
+    environments = {}
+    monkeypatch.setenv("APP_REVISION", "b" * 40)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "c" * 40)
+    monkeypatch.setattr(module, "require_local_docker", lambda: None)
+    monkeypatch.setattr(
+        module, "free_ports", lambda count: list(map(str, range(count)))
+    )
+    monkeypatch.setattr(module, "verify_persistence", lambda *args: None)
+    monkeypatch.setattr(module, "verify_backend_report", lambda *args: None)
+
+    def fake_run(*args, **kwargs):
+        if args[:3] == ("git", "rev-parse", "HEAD"):
+            return type("Result", (), {"stdout": revision})()
+        if args[0] == "docker" and "up" in args:
+            environments["stack"] = dict(kwargs["env"])
+        if args[:3] == ("uv", "run", "pytest"):
+            environments["tests"] = dict(kwargs["env"])
+        return type("Result", (), {"stdout": ""})()
+
+    monkeypatch.setattr(module, "run", fake_run)
+
+    assert module.main() == 0
+    assert environments["stack"]["APP_REVISION"] == revision
+    assert "RENDER_GIT_COMMIT" not in environments["stack"]
+    assert "APP_REVISION" not in environments["tests"]
+    assert "RENDER_GIT_COMMIT" not in environments["tests"]
+
+
 def test_selected_ports_are_distinct_and_free():
     module = script("verify")
     ports = module.free_ports(8)

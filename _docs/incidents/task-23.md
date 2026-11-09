@@ -491,7 +491,7 @@ only on branch `demo/incident-repair-outage-20261109` (commit `fcb26c1`), which
 changes `backend/app/main.py` to
 `if request_telemetry.enabled and False:`. That branch is evidence only and must
 not be merged or released. PR #62, which contains the repair worker changes but
-not the outage, targets `main` and is the reviewable change set.
+not the outage, was merged into `main` as `12c3206`.
 
 Both runs followed the real path: Grafana's managed `BenchScopeApiUnavailable`
 rule fired, the authenticated receiver persisted an incident with complete
@@ -548,7 +548,7 @@ checks passed.
 This demonstrates a genuine alert-to-draft-PR repair, including persisted
 audit events, an applied model patch, isolated tests, and green CI. It does not
 demonstrate merge, release, deployment, or independent post-release recovery:
-both PRs remain draft, the base branch is the intentionally faulty demo branch,
+both PRs are closed, unmerged evidence-only drafts against the intentionally faulty demo branch,
 and the disposable stack and its data were removed after evidence capture. The
 repair still requires human review; automated tests cannot prove that the new
 regression test is sufficient.

@@ -1,5 +1,17 @@
 # Local metric-to-trace link
 
+## Verification at merged revision `12c3206` (2026-11-09)
+
+The documented isolated verifier below built the current API from
+`12c32064f9ef3ac36539fa26cd7a9ccd5315b82b` with build-input fingerprint
+`f2aea6ae2b921f084a3df3434985600597c7eb71464e9d7ec42900c237fed00f`.
+A synthetic `GET /api/v1/runs` returned an empty page from a disposable
+database. The Prometheus exemplar, Tempo span, Loki request log and anonymous
+Grafana Tempo proxy matched trace `802cccdd7ebb4fc79cdd9750c0f8063d`; the
+request span ID was `20e0cee9bf281408`. The verifier exited successfully and
+removed its disposable project, volumes and image. This is local evidence,
+not hosted observability verification.
+
 The request counter carries a W3C trace ID as an OpenMetrics exemplar, not as a
 metric label. The route, method, and status-code labels remain bounded. The
 Prometheus scrape negotiates OpenMetrics, and Grafana maps the exemplar's
