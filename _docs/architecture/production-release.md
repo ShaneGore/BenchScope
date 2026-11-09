@@ -1,11 +1,13 @@
 # Production release path and owner runbook
 
-**Status: prepared, not provisioned.** As of 2026-11-09 the manual production
-demonstration is prepared but not executed. There is no GitHub `production`
-environment, no production Render service, no production Neon database, no
-production Clerk application, and no `PRODUCTION_*` configuration. The promotion
-workflow has never run. This document is the owner runbook and evidence
-contract; it is not proof that a production deployment or rollback occurred.
+**Status: Neon provisioned; release path not provisioned.** As of 2026-11-09 the
+Neon production project `benchscope-production` exists, its `production` branch
+is at schema head `0008`, and the app has been exercised against it locally.
+There is still no GitHub `production` environment, no production Render service,
+no production Clerk application, and no `PRODUCTION_*` configuration. The
+promotion workflow has never run. This document is the owner runbook and
+evidence contract; it is not proof that a production deployment or rollback
+occurred.
 
 ## Scope and honest description
 
@@ -36,6 +38,7 @@ not marketed by their providers as production-grade.
 | Frontend source evidence | The Pages deployment record identifies the source SHA; the live static content is not SHA-stamped |
 | Production environment | Absent (GitHub API returns 404) |
 | Production configuration | No `PRODUCTION_*` secrets or variables are configured |
+| Neon production project | `benchscope-production` (`long-leaf-22616183`); branch `production` is the default; Postgres 18; schema `0008_incident_repair_jobs`; two synthetic verification runs persisted |
 | Promotion workflow | `.github/workflows/promote-production.yml` has never produced a run |
 | Main ruleset | Active; PR plus the five required checks; strict checks; no bypass actors; **0 required approving reviews** |
 
@@ -109,7 +112,7 @@ enforced and must not be claimed.
 
 | Name | Kind | Purpose |
 |---|---|---|
-| `PRODUCTION_DATABASE_URL` | secret | Separate Neon production PostgreSQL URL |
+| `PRODUCTION_DATABASE_URL` | secret | Neon production **direct** URL, used for Alembic migrations |
 | `PRODUCTION_RENDER_DEPLOY_HOOK_URL` | secret | Production Render deploy hook |
 | `PRODUCTION_CLERK_SECRET_KEY` | secret | Mints short-lived synthetic smoke tokens |
 | `PRODUCTION_SMOKE_API_URL` | variable | Production API origin, HTTPS |
@@ -147,7 +150,7 @@ Set these runtime environment variables:
 APP_MODE=hosted
 APP_ENV=production
 HOST=0.0.0.0
-DATABASE_URL=<production Neon direct connection string>
+DATABASE_URL=<production Neon pooled connection string>
 CORS_ORIGINS=https://shanegore.github.io
 CLERK_JWKS_URL=<production Clerk JWKS URL>
 CLERK_ISSUER=<production Clerk issuer>
@@ -155,8 +158,11 @@ CLERK_AUTHORIZED_PARTIES=https://shanegore.github.io
 BENCHMARK_ENABLED=false
 ```
 
-Do not set `LOCAL_AUTH_BYPASS`. Do not configure the AI repair worker, GitHub
-credentials, OpenRouter credentials, or private benchmark paths on this service.
+Use the **pooled** Neon URL for Render application traffic. The
+`PRODUCTION_DATABASE_URL` GitHub secret must be the **direct** URL instead,
+because the promotion workflow runs migrations. Do not set `LOCAL_AUTH_BYPASS`.
+Do not configure the AI repair worker, GitHub credentials, OpenRouter
+credentials, or private benchmark paths on this service.
 Confirm Render supplies `RENDER_GIT_COMMIT`; `/version` prefers `APP_REVISION`
 and falls back to `RENDER_GIT_COMMIT`.
 
@@ -165,18 +171,20 @@ Create a deploy hook and store its URL only as the
 
 ### 2. Neon
 
-Create one separate **Free** project:
+The project already exists as `benchscope-production` in `aws-eu-central-1`,
+with its default branch named `production` and the default database `neondb`
+(Postgres 18). The schema is at Alembic head `0008_incident_repair_jobs`.
 
-- Name: `benchscope-production`.
-- Region: matching the Render service region.
-- Database: `benchscope`.
-- Use the project-scoped direct PostgreSQL connection string with SSL.
-- Do not copy staging data.
-- Run schema creation only through `alembic upgrade head` from the promotion
-  workflow.
+`neon deploy` writes both connection strings to the git-ignored `.env.local`:
 
-Store the connection string only as the `PRODUCTION_DATABASE_URL` GitHub
-environment secret.
+- `DATABASE_URL` — pooled (PgBouncer) URL for application traffic;
+- `DATABASE_URL_UNPOOLED` — direct URL for migrations.
+
+Set Render's `DATABASE_URL` to the **pooled** string. Store the **direct**
+string only as the `PRODUCTION_DATABASE_URL` GitHub environment secret. Alembic
+prefers `DATABASE_URL_UNPOOLED` when present and otherwise falls back to
+`DATABASE_URL`, so local migration runs need no extra flag. Do not copy staging
+data, and never run destructive migrations.
 
 ### 3. Clerk
 
