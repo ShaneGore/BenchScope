@@ -25,3 +25,4 @@ playwright-report/
 /benchmarks/private/
 /benchmark-artifacts/
 /raw-benchmark-artifacts/
+.neon

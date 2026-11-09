@@ -2,10 +2,11 @@
 
 This document describes the hosted layout and the manual production-release
 path. As of 2026-11-09 the Pages frontend and the Render staging API are
-deployed and SHA-verified from `main`. The production demonstration is
-**prepared but not provisioned**: there is no GitHub `production` environment,
-no production Render service, no production Neon database, no production Clerk
-application, and no production promotion or rollback. See
+deployed and SHA-verified from `main`. The Neon production project
+`benchscope-production` exists with its `production` branch at schema head
+`0008`, but the rest of the production demonstration is **not provisioned**:
+there is no GitHub `production` environment, no production Render service, no
+production Clerk application, and no production promotion or rollback. See
 [production-release.md](./production-release.md) for the simplified architecture,
 owner checklist, and exact release/rollback runbook.
 
@@ -120,11 +121,13 @@ Current code behavior is limited to the following known facts:
 - The hosted settings validator requires a PostgreSQL `DATABASE_URL`, a
   non-empty CORS allowlist, a public bind host, and all three Clerk settings.
   Wildcard CORS origins are rejected in hosted mode.
-- The hosted migration procedure is now selected: the manual promotion workflow
-  runs `alembic upgrade head` against `PRODUCTION_DATABASE_URL` before triggering
-  the deploy hook. It has not yet been exercised against a production database.
-  Migrations are forward-only in this workflow; rollback is safe only between
-  schema-compatible revisions.
+- The hosted migration procedure is selected: the manual promotion workflow runs
+  `alembic upgrade head` against `PRODUCTION_DATABASE_URL` before triggering the
+  deploy hook. Put the **direct** Neon URL in that secret and the **pooled** URL
+  in Render's `DATABASE_URL`; Alembic also prefers `DATABASE_URL_UNPOOLED` when
+  present. The migration has been verified locally against the production Neon
+  branch, but not yet through the GitHub workflow. Migrations are forward-only;
+  rollback is safe only between schema-compatible revisions.
 - Application records are stored through the configured database. The selected
   API host's filesystem persistence, restart behavior, cold starts, quotas, and
   database plan limits are provider-dependent. Render Free may sleep or restart;
