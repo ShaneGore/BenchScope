@@ -14,9 +14,7 @@ if config.config_file_name is not None:
 # Neon exposes a pooled URL for application traffic and a direct URL for
 # migrations. Prefer the direct one when present, because PgBouncer's
 # transaction pooling does not support everything Alembic may do.
-database_url = os.environ.get("DATABASE_URL_UNPOOLED") or os.environ.get(
-    "DATABASE_URL"
-)
+database_url = os.environ.get("DATABASE_URL_UNPOOLED") or os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option(
         "sqlalchemy.url", sqlalchemy_database_url(database_url).replace("%", "%%")
