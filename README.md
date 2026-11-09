@@ -37,6 +37,8 @@ uv run --no-project python scripts/start.py --observability
 
 Stop the optional stack with `uv run --no-project python scripts/start.py --stop --observability`. This optional stack provisions a missing local receiver secret without replacing existing configuration. See the [incident documentation](_docs/incidents/) for controlled exercises.
 
+The experimental repair worker is **operator-controlled**, not started by default. To run it in the foreground alongside observability, use `uv run --no-project python scripts/start.py --observability --repair-worker`; Ctrl+C stops the worker and leaves the stack running. Set `BENCHSCOPE_COPILOT_CLI` to a compatible local Copilot CLI if the default lacks the required flags. The checkout must be clean and match the remote PR base exactly; `BENCHSCOPE_REPAIR_BASE_BRANCH` selects a controlled demonstration base instead of `main`. Application edits are restricted to the metrics enable condition and literal health response. The worker uses local Copilot and GitHub CLI authentication, and its GitHub credentials are not least-privilege isolated. It must not be left unattended on a primary account; its host process is not an OS sandbox. Draft PRs require human review. See [known limitations](_docs/submission/known-limitations.md) before use.
+
 Try importing the [synthetic example](frontend/public/examples/synthetic-run.json), also downloadable from the Import page. Its values are invented for onboarding and testing; they are not benchmark measurements. Re-importing it demonstrates duplicate detection.
 
 ## Verify the project

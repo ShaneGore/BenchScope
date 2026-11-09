@@ -135,6 +135,7 @@ class IncidentRecord(Base):
     alert_status: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence_status: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    application_revision: Mapped[str | None] = mapped_column(String(64))
     investigation_summary: Mapped[str | None] = mapped_column(Text)
     investigation_status: Mapped[str] = mapped_column(
         String(16),
@@ -160,7 +161,8 @@ class IncidentRecord(Base):
             name="ck_incident_records_evidence_status",
         ),
         CheckConstraint(
-            "investigation_status IN ('not_started', 'blocked', 'completed', 'failed')",
+            "investigation_status IN ('not_started', 'queued', 'investigating', "
+            "'blocked', 'completed', 'failed')",
             name="ck_incident_records_investigation_status",
         ),
     )
@@ -185,7 +187,9 @@ class IncidentAuditEvent(Base):
     __table_args__ = (
         CheckConstraint(
             "event_type IN ('alert_received', 'alert_resolved', "
-            "'evidence_collected', 'investigation_dispatch', 'recovery_attempt')",
+            "'evidence_collected', 'investigation_dispatch', 'recovery_attempt', "
+            "'repair_dispatch', 'repair_attempt', 'repair_pull_request', 'repair_ci', "
+            "'repair_release_check')",
             name="ck_incident_audit_events_type",
         ),
         CheckConstraint(
@@ -197,5 +201,82 @@ class IncidentAuditEvent(Base):
             "ix_incident_audit_events_incident_created",
             "incident_id",
             "created_at",
+        ),
+    )
+
+
+class IncidentRepairJob(Base):
+    __tablename__ = "incident_repair_jobs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("incident_records.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    fingerprint: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(64))
+    user_requests: Mapped[int | None] = mapped_column(Integer)
+    premium_request_cost: Mapped[Decimal | None] = mapped_column(Numeric)
+    nano_aiu: Mapped[Decimal | None] = mapped_column(Numeric)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    root_cause: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric)
+    branch_name: Mapped[str | None] = mapped_column(String(255))
+    pull_request_number: Mapped[int | None] = mapped_column(Integer)
+    pull_request_url: Mapped[str | None] = mapped_column(Text)
+    pull_request_sha: Mapped[str | None] = mapped_column(String(64))
+    ci_status: Mapped[str | None] = mapped_column(String(16))
+    failure_code: Mapped[str | None] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'investigating', 'testing', 'pr_open', "
+            "'ci_running', 'ci_passed', 'ci_failed', 'recovered', 'escalated', "
+            "'failed', 'closed')",
+            name="ck_incident_repair_jobs_status",
+        ),
+        CheckConstraint(
+            "attempts BETWEEN 0 AND 1", name="ck_incident_repair_jobs_attempts"
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_incident_repair_jobs_confidence",
+        ),
+        UniqueConstraint("incident_id", name="uq_incident_repair_jobs_incident"),
+        Index(
+            "uq_incident_repair_jobs_active_fingerprint",
+            "fingerprint",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('queued', 'investigating', 'testing', 'pr_open', "
+                "'ci_running', 'ci_passed', 'ci_failed')"
+            ),
+            sqlite_where=text(
+                "status IN ('queued', 'investigating', 'testing', 'pr_open', "
+                "'ci_running', 'ci_passed', 'ci_failed')"
+            ),
+        ),
+        Index(
+            "uq_incident_repair_jobs_single_worker",
+            text("(1)"),
+            unique=True,
+            postgresql_where=text(
+                "status IN ('investigating', 'testing', 'ci_running')"
+            ),
+            sqlite_where=text("status IN ('investigating', 'testing', 'ci_running')"),
         ),
     )

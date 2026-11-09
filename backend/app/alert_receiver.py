@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import create_database_engine
 from app.incident_audit import append_incident_audit_event
-from app.incident_investigation import dispatch_investigation
+from app.incident_repair import queue_repair_job
 from app.models import IncidentRecord
 
 logger = logging.getLogger(__name__)
@@ -611,6 +611,7 @@ def create_receiver_app(
     secret_file: Path | None = None,
     fetch_json: Callable[[str, str, dict[str, str], float], Any] = _fetch_json,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    application_revision: str | None = None,
 ) -> FastAPI:
     if secret is None:
         configured_path = os.environ.get("ALERT_RECEIVER_SECRET_FILE")
@@ -751,6 +752,12 @@ def create_receiver_app(
             return JSONResponse(status_code=200, content={"status": "resolved"})
 
         record_id = uuid4()
+        revision = (
+            application_revision
+            if application_revision is not None
+            else os.environ.get("APP_REVISION", "unknown")
+        )
+        revision = revision.strip().lower() if isinstance(revision, str) else "unknown"
         initial_evidence = {
             "status": "failed",
             "reason": "collection_not_finished",
@@ -777,6 +784,7 @@ def create_receiver_app(
                     alert_status="firing",
                     evidence_status="failed",
                     evidence=initial_evidence,
+                    application_revision=revision,
                     investigation_status="not_started",
                     received_at=received_at,
                 )
@@ -790,7 +798,6 @@ def create_receiver_app(
                     outcome="accepted",
                     reason_code="authenticated_firing_alert",
                 )
-                investigation_status = dispatch_investigation(session, record)
                 try:
                     session.commit()
                 except IntegrityError:
@@ -821,6 +828,8 @@ def create_receiver_app(
             }
             evidence_status = "failed"
         try:
+            repair_status = "not_queued"
+            investigation_status = "blocked"
             with factory() as session:
                 record = session.get(IncidentRecord, record_id)
                 if record is not None:
@@ -837,6 +846,8 @@ def create_receiver_app(
                             "failed": "sources_unavailable",
                         }[evidence_status],
                     )
+                    repair_status = queue_repair_job(session, record)
+                    investigation_status = record.investigation_status
                     session.commit()
                 else:
                     return JSONResponse(
@@ -851,6 +862,7 @@ def create_receiver_app(
                 "status": "recorded",
                 "evidence_status": evidence_status,
                 "investigation_status": investigation_status,
+                "repair_status": repair_status,
             },
         )
 

@@ -436,6 +436,7 @@ def _run_cli_process(
     cwd: Path,
     timeout: int,
     output_limit: int = CLI_OUTPUT_LIMIT_BYTES,
+    env: dict[str, str] | None = None,
 ) -> tuple[bytes, bytes]:
     if (
         not isinstance(args, list)
@@ -458,11 +459,13 @@ def _run_cli_process(
         raise InvestigationBlocked("Copilot CLI executable is not available")
 
     if os.name == "nt":
-        return _run_cli_process_windows(args, cwd, timeout, output_limit, start)
-    return _run_cli_process_posix(args, cwd, timeout, output_limit, start)
+        return _run_cli_process_windows(args, cwd, timeout, output_limit, start, env)
+    return _run_cli_process_posix(args, cwd, timeout, output_limit, start, env)
 
 
-def _parse_cli_events(raw: bytes) -> ProviderResponse:
+def _parse_cli_events(
+    raw: bytes, *, allow_multiple_messages: bool = False
+) -> ProviderResponse:
     try:
         text = raw.decode("utf-8", errors="strict")
         events = [
@@ -524,7 +527,8 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
     if len(selected_models) != 1 or selected_models[0] != MODEL:
         raise InvestigationRejected("selected model identity unavailable or mismatched")
     if (
-        len(messages) != 1
+        not messages
+        or (not allow_multiple_messages and len(messages) != 1)
         or len(final_models) != 1
         or any(model != MODEL for model in effective_models)
         or final_models[0] != MODEL
@@ -534,8 +538,8 @@ def _parse_cli_events(raw: bytes) -> ProviderResponse:
         )
     return ProviderResponse(
         MODEL,
-        messages[0][0],
-        "\n".join(content for _, content in messages),
+        messages[-1][0],
+        messages[-1][1],
     )
 
 
@@ -757,61 +761,181 @@ def _build_cli_args(executable: str, prompt: str, usage_output_file: Path) -> li
         prompt,
         "--output-format=json",
         "--available-tools=",
+        "--deny-tool=shell",
+        "--deny-tool=write",
+        "--deny-tool=url",
         "--disable-builtin-mcps",
+        "--disallow-temp-dir",
         "--no-custom-instructions",
         "--no-ask-user",
+        "--no-auto-update",
+        f"--max-ai-credits={CLI_MAX_AI_CREDITS}",
         f"--usage-output-file={usage_output_file}",
         "--secret-env-vars=GH_TOKEN,COPILOT_GITHUB_TOKEN,GITHUB_TOKEN",
         "--sync-session=off",
     ]
 
 
+def _cli_environment() -> dict[str, str]:
+    allowed = {
+        "PATH",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "COMSPEC",
+        "PATHEXT",
+    }
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowed and isinstance(value, str)
+    }
+    if os.name == "nt" and environment.get("USERPROFILE"):
+        environment["HOME"] = environment["USERPROFILE"]
+    environment.update(
+        {
+            "COPILOT_ALLOW_ALL": "false",
+            "COPILOT_AUTO_UPDATE": "false",
+        }
+    )
+    return environment
+
+
 def _cli_launcher(executable: str) -> list[str]:
     path = Path(executable)
+    if path.suffix.lower() == ".js":
+        local_node = path.parent / "node.exe"
+        node = str(local_node) if local_node.is_file() else shutil.which("node")
+        if not node:
+            raise InvestigationBlocked("Node runtime is unavailable for Copilot CLI")
+        return [node, str(path)]
     if path.suffix.lower() in {".ps1", ".cmd", ".bat"} and os.name == "nt":
-        script = path.with_suffix(".ps1")
-        if not script.is_file():
-            script = path
-        powershell = shutil.which("powershell.exe") or "powershell.exe"
-        return [
-            powershell,
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-        ]
+        loaders = (
+            path.parent / "node_modules" / "@github" / "copilot" / "npm-loader.js",
+            path.parent.parent / "@github" / "copilot" / "npm-loader.js",
+        )
+        loader = next((candidate for candidate in loaders if candidate.is_file()), None)
+        local_node = path.parent / "node.exe"
+        node = str(local_node) if local_node.is_file() else shutil.which("node")
+        if loader is None or not node:
+            raise InvestigationBlocked("Copilot CLI npm launcher is unavailable")
+        return [node, str(loader)]
     return [executable]
 
 
-def _run_cli_process_posix(args, cwd, timeout, output_limit, start):
+def _cli_exit_failure(stdout: bytes, stderr: bytes) -> InvestigationBlocked:
+    output = (stdout + b"\n" + stderr).lower()
+    if any(
+        phrase in output
+        for phrase in (
+            b"unknown option",
+            b"unexpected argument",
+            b"invalid rule format",
+        )
+    ):
+        reason = "unsupported option"
+    elif b"invalid command format" in output:
+        reason = "invalid invocation"
+    elif any(
+        phrase in output
+        for phrase in (b"not authenticated", b"authentication failed", b"unauthorized")
+    ):
+        reason = "authentication or authorization failure"
+    else:
+        reason = "unknown cause"
+    exc = InvestigationBlocked(f"Copilot CLI exited unsuccessfully: {reason}")
+    exc.stdout = stdout
+    exc.stderr = stderr
+    return exc
+
+
+def _run_cli_process_posix(args, cwd, timeout, output_limit, start, env=None):
+    import threading
+
     proc = subprocess.Popen(
         args,
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env=env,
     )
+    stdout = bytearray()
+    stderr = bytearray()
+    overflow = threading.Event()
+
+    def read_stream(stream, output):
+        while chunk := stream.read(65536):
+            remaining = output_limit + 1 - len(output)
+            output.extend(chunk[:remaining])
+            if len(chunk) > remaining or len(output) > output_limit:
+                overflow.set()
+                return
+
+    readers = (
+        threading.Thread(target=read_stream, args=(proc.stdout, stdout), daemon=True),
+        threading.Thread(target=read_stream, args=(proc.stderr, stderr), daemon=True),
+    )
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
     try:
-        stdout, stderr = proc.communicate(
-            timeout=max(0.001, timeout - (time.monotonic() - start))
-        )
-    except subprocess.TimeoutExpired:
+        while proc.poll() is None:
+            if overflow.is_set():
+                break
+            if time.monotonic() - start >= timeout:
+                timed_out = True
+                break
+            time.sleep(0.01)
+    except BaseException:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            proc.kill()
+        proc.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=2)
+        raise
+
+    if timed_out or overflow.is_set():
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            proc.kill()
+        proc.wait(timeout=5)
+
+    for reader in readers:
+        reader.join(timeout=max(0.001, timeout - (time.monotonic() - start)))
+    if any(reader.is_alive() for reader in readers):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            pass
-        proc.wait()
+            proc.kill()
+        proc.wait(timeout=5)
+        raise InvestigationBlocked("Copilot CLI cleanup could not be verified")
+    if timed_out:
         raise InvestigationBlocked("Copilot CLI timed out")
-    if proc.returncode != 0:
-        raise InvestigationBlocked("Copilot CLI exited unsuccessfully")
-    if len(stdout) > output_limit or len(stderr) > output_limit:
+    if overflow.is_set():
         raise InvestigationBlocked("Copilot CLI output exceeded its limit")
-    return stdout, stderr
+    if proc.returncode != 0:
+        raise _cli_exit_failure(bytes(stdout), bytes(stderr))
+    return bytes(stdout), bytes(stderr)
 
 
-def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
+def _run_cli_process_windows(args, cwd, timeout, output_limit, start, env=None):
     import ctypes
     import msvcrt
     import os
@@ -822,6 +946,7 @@ def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
     CREATE_SUSPENDED = 0x00000004
     STARTF_USESTDHANDLES = 0x00000100
     HANDLE_FLAG_INHERIT = 0x00000001
+    CREATE_UNICODE_ENVIRONMENT = 0x00000400
     WAIT_TIMEOUT = 0x00000102
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
@@ -945,14 +1070,21 @@ def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
     si.hStdError = err_write
     pi = _PROCESS_INFORMATION()
     command_line = subprocess.list2cmdline(args)
+    environment_block = None
+    creation_flags = CREATE_SUSPENDED
+    if env is not None:
+        environment_block = ctypes.create_unicode_buffer(
+            "\0".join(f"{key}={value}" for key, value in sorted(env.items())) + "\0\0"
+        )
+        creation_flags |= CREATE_UNICODE_ENVIRONMENT
     created = kernel32.CreateProcessW(
         None,
         command_line,
         None,
         None,
         True,
-        CREATE_SUSPENDED,
-        None,
+        creation_flags,
+        environment_block,
         str(cwd),
         ctypes.byref(si),
         ctypes.byref(pi),
@@ -996,10 +1128,13 @@ def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
             fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
             with os.fdopen(fd, "rb") as stream:
                 while True:
-                    data = stream.read(65536)
+                    remaining = output_limit + 1 - sum(len(chunk) for chunk in bucket)
+                    data = stream.read(min(65536, max(1, remaining)))
                     if not data:
                         break
                     bucket.append(data)
+                    if sum(len(chunk) for chunk in bucket) > output_limit:
+                        break
         except OSError:
             pass
 
@@ -1013,23 +1148,31 @@ def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
     reader_err.start()
     timed_out = False
     output_exceeded = False
-    while True:
-        remaining = timeout - (time.monotonic() - start)
-        if remaining <= 0:
-            timed_out = True
-            break
-        wait_ms = min(100, max(1, int(remaining * 1000)))
-        result = kernel32.WaitForSingleObject(pi.hProcess, wait_ms)
-        if result == 0:
-            break
-        if result != WAIT_TIMEOUT:
-            break
-        if (
-            sum(len(chunk) for chunk in out_chunks) > output_limit
-            or sum(len(chunk) for chunk in err_chunks) > output_limit
-        ):
-            output_exceeded = True
-            break
+    try:
+        while True:
+            remaining = timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                timed_out = True
+                break
+            wait_ms = min(100, max(1, int(remaining * 1000)))
+            result = kernel32.WaitForSingleObject(pi.hProcess, wait_ms)
+            if result == 0:
+                break
+            if result != WAIT_TIMEOUT:
+                break
+            if (
+                sum(len(chunk) for chunk in out_chunks) > output_limit
+                or sum(len(chunk) for chunk in err_chunks) > output_limit
+            ):
+                output_exceeded = True
+                break
+    except BaseException:
+        kernel32.CloseHandle(job)
+        kernel32.WaitForSingleObject(pi.hProcess, 5000)
+        reader_out.join(timeout=2)
+        reader_err.join(timeout=2)
+        kernel32.CloseHandle(pi.hProcess)
+        raise
     if timed_out or output_exceeded:
         kernel32.CloseHandle(job)
         job = 0
@@ -1066,8 +1209,8 @@ def _run_cli_process_windows(args, cwd, timeout, output_limit, start):
         kernel32.CloseHandle(err_read)
     except OSError:
         pass
-    if exit_code.value != 0:
-        raise InvestigationBlocked("Copilot CLI exited unsuccessfully")
     if len(stdout) > output_limit or len(stderr) > output_limit:
         raise InvestigationBlocked("Copilot CLI output exceeded its limit")
+    if exit_code.value != 0:
+        raise _cli_exit_failure(stdout, stderr)
     return stdout, stderr

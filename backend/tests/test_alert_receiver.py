@@ -25,7 +25,7 @@ from app.alert_receiver import (
     collect_evidence,
     create_receiver_app,
 )
-from app.models import Base, IncidentAuditEvent, IncidentRecord
+from app.models import Base, IncidentAuditEvent, IncidentRecord, IncidentRepairJob
 
 SECRET = "SYNTHETIC_RECEIVER_BEARER_SECRET"
 NOW = datetime(2026, 10, 27, 23, 37, 31, 867000, tzinfo=UTC)
@@ -213,6 +213,7 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
         "status": "recorded",
         "evidence_status": "complete",
         "investigation_status": "blocked",
+        "repair_status": "escalated",
     }
     assert len(calls) == 4
     assert all(call[0] == "GET" and 0 < call[3] <= 10 for call in calls)
@@ -241,8 +242,13 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
         for event in _read_audit_events(database_url)
     } == {
         ("alert_received", "accepted", "authenticated_firing_alert"),
-        ("investigation_dispatch", "blocked", "model_runtime_unverified"),
+        (
+            "investigation_dispatch",
+            "blocked",
+            "application_revision_unavailable",
+        ),
         ("evidence_collected", "complete", "sources_complete"),
+        ("repair_dispatch", "blocked", "application_revision_unavailable"),
     }
     evidence = json.dumps(record.evidence)
     assert record.evidence["prometheus"]["api"] == "down"
@@ -257,6 +263,31 @@ def test_firing_alert_queries_fixed_read_only_sources_and_persists_sanitized_evi
     )
 
 
+def test_complete_evidence_queues_one_revision_bound_repair_job(tmp_path):
+    database_url = _database(tmp_path)
+    fetch_json, _ = _fetcher()
+    app = create_receiver_app(
+        database_url,
+        secret=SECRET,
+        fetch_json=fetch_json,
+        clock=lambda: NOW,
+        application_revision="abcdef0123456789",
+    )
+    with TestClient(app) as client:
+        response = _post(client, _webhook())
+
+    assert response.status_code == 200
+    assert response.json()["repair_status"] == "queued"
+    assert response.json()["investigation_status"] == "queued"
+    engine = create_engine(database_url)
+    with Session(engine) as session:
+        (job,) = session.scalars(select(IncidentRepairJob)).all()
+        assert job.status == "queued"
+        assert job.source_revision == "abcdef0123456789"
+        assert job.attempts == 0
+    engine.dispose()
+
+
 def test_database_integrity_failure_is_not_reported_as_duplicate(
     tmp_path, caplog, monkeypatch
 ) -> None:
@@ -266,19 +297,20 @@ def test_database_integrity_failure_is_not_reported_as_duplicate(
         database_url, secret=SECRET, fetch_json=fetch_json, clock=lambda: NOW
     )
 
-    def add_invalid_dispatch_event(session, record):
+    def add_invalid_dispatch_event(
+        session, incident_id, *, event_type, outcome, reason_code
+    ):
         session.add(
             IncidentAuditEvent(
-                incident_id=record.id,
+                incident_id=incident_id,
                 event_type="invalid",
                 outcome="blocked",
                 reason_code="test_failure",
             )
         )
-        return "blocked"
 
     monkeypatch.setattr(
-        "app.alert_receiver.dispatch_investigation", add_invalid_dispatch_event
+        "app.alert_receiver.append_incident_audit_event", add_invalid_dispatch_event
     )
     with caplog.at_level(logging.ERROR), TestClient(app) as client:
         response = _post(client, _webhook())
@@ -478,7 +510,7 @@ def test_firing_deduplication_survives_receiver_restart(tmp_path):
     assert len(first_calls) == 4
     assert second_calls == []
     assert len(_read_records(database_url)) == 1
-    assert len(_read_audit_events(database_url)) == 3
+    assert len(_read_audit_events(database_url)) == 4
 
 
 def test_injection_strings_are_ignored_and_telemetry_output_is_allowlisted(
@@ -567,6 +599,7 @@ def test_datasource_failures_are_explicit_and_never_complete(tmp_path):
         "status": "recorded",
         "evidence_status": "partial",
         "investigation_status": "blocked",
+        "repair_status": "escalated",
     }
     (record,) = _read_records(database_url)
     assert record.evidence_status == "partial"
@@ -585,10 +618,11 @@ def test_datasource_failures_are_explicit_and_never_complete(tmp_path):
         "status": "recorded",
         "evidence_status": "failed",
         "investigation_status": "blocked",
+        "repair_status": "escalated",
     }
     assert any(
         (event.event_type, event.outcome, event.reason_code)
-        == ("investigation_dispatch", "blocked", "model_runtime_unverified")
+        == ("investigation_dispatch", "blocked", "evidence_incomplete")
         for event in _read_audit_events(database_url)
     )
     assert any(
@@ -617,6 +651,7 @@ def test_datasource_errors_are_sanitized_and_mark_partial(tmp_path, caplog):
         "status": "recorded",
         "evidence_status": "partial",
         "investigation_status": "blocked",
+        "repair_status": "escalated",
     }
     assert record.evidence["status"] == "partial"
     assert record.evidence["logs"] == {"status": "failed"}

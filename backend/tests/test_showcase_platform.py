@@ -132,6 +132,48 @@ def test_start_core_does_not_need_alert_secrets(monkeypatch, tmp_path):
     assert not (tmp_path / "secrets").exists()
 
 
+def test_repair_worker_is_started_only_by_explicit_foreground_option(monkeypatch):
+    module = script("start")
+    calls = []
+    monkeypatch.setattr(module, "require_local_docker", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "prepare_environment",
+        lambda **kwargs: {
+            "APP_MODE": "local",
+            "POSTGRES_USER": "test user",
+            "POSTGRES_PASSWORD": "test:password",
+            "POSTGRES_DB": "testdb",
+            "POSTGRES_PORT": "5439",
+        },
+    )
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        if args[:3] == ("git", "branch", "--show-current"):
+            return type("Result", (), {"stdout": "feat/copilot-autonomous-repair"})()
+        return type("Result", (), {"stdout": ""})()
+
+    monkeypatch.setattr(module, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["start.py", "--observability", "--repair-worker"])
+
+    assert module.main() == 0
+    worker_args, worker_kwargs = calls[-1]
+    assert worker_args[-2:] == ("-m", "app.incident_repair")
+    env = worker_kwargs["env"]
+    assert env["BENCHSCOPE_COPILOT_REPAIR_ENABLED"] == "true"
+    assert env["BENCHSCOPE_REPAIR_BASE_BRANCH"] == "feat/copilot-autonomous-repair"
+    assert env["DATABASE_URL"] == (
+        "postgresql+psycopg://test%20user:test%3Apassword@127.0.0.1:5439/testdb"
+    )
+
+
+def test_repair_worker_requires_observability(monkeypatch):
+    module = script("start")
+    monkeypatch.setattr(sys, "argv", ["start.py", "--repair-worker"])
+    assert module.main() == 1
+
+
 def test_verification_rejects_skipped_database_tests(tmp_path):
     module = script("verify")
     report = tmp_path / "report.xml"

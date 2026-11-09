@@ -482,3 +482,78 @@ audit, duplicate suppression, restart persistence, and alert resolution. It
 still does **not** demonstrate an actual model assessment or AI-assisted
 recovery; those remain blocked by unverified model authentication and
 tool-restriction guarantees.
+
+## End-to-end repair demonstration (2026-11-09)
+
+Two supervised runs used a deliberate metrics outage in a disposable local
+Compose project (`benchscope-repair-demo-20261109`). The outage is committed
+only on branch `demo/incident-repair-outage-20261109` (commit `fcb26c1`), which
+changes `backend/app/main.py` to
+`if request_telemetry.enabled and False:`. That branch is evidence only and must
+not be merged or released. PR #62, which contains the repair worker changes but
+not the outage, targets `main` and is the reviewable change set.
+
+Both runs followed the real path: Grafana's managed `BenchScopeApiUnavailable`
+rule fired, the authenticated receiver persisted an incident with complete
+evidence, the worker claimed the job and made one verified `gpt-6-luna` Copilot
+CLI request, the returned patch applied and passed isolated tests, the worker
+opened a draft PR, and GitHub Actions CI ran. Merge and release remained manual;
+neither repair PR was merged or released.
+
+| Run | Source revision | Incident | Job outcome | Draft PR | CI |
+|---|---|---|---|---|---|
+| 1 | `583823639f04b30e06874d8d689a3b81d518da1c` | `e94c84b0-f7c8-425c-8726-2d531d554ff2` | `ci_failed` (worker race; checks actually passed) | [#63](https://github.com/ShaneGore/BenchScope/pull/63) | 5/5 success |
+| 2 | `79ce43c05dd023d81a660507f2db55d571639444` | `3839ac43-47f4-4f27-b3fa-ea9ac62a29f9` | `ci_passed` | [#64](https://github.com/ShaneGore/BenchScope/pull/64) | 5/5 success |
+
+### Run 1 — CI-watch race
+
+Run 1 recorded `alert_received/accepted`,
+`evidence_collected/complete`, `investigation_dispatch/accepted`,
+`repair_dispatch/accepted`, `repair_attempt/complete`
+(`copilot_patch_validated`), `repair_attempt/complete` (`tests_passed`), and
+`repair_pull_request/accepted` (`human_review_required`). It then recorded
+`repair_ci/failed` (`checks_failed`) within one second of opening PR #63,
+before GitHub had registered the workflow checks. All five checks
+(`backend`, `frontend`, `journey`, `container-images`, `backend-windows`)
+subsequently completed with `SUCCESS` for head
+`c304ec30640d5eeb8714c2ff6b3dd9047e313582`. The worker was changed to poll
+`gh pr view --json headRefOid,statusCheckRollup` with a 900-second deadline
+instead of `gh pr checks --watch`; that change is commit `79ce43c`.
+
+### Run 2 — recorded success
+
+Run 2 used the same disposable stack after the CI-watch fix. The incident was
+received at `2026-11-09T01:32:30.017943Z` with `alert_status=firing` and
+`evidence_status=complete`; its audit then recorded
+`investigation_dispatch/accepted` (`repair_job_queued`),
+`repair_dispatch/accepted` (`sanitized_evidence_ready`),
+`repair_attempt/complete` (`copilot_patch_validated`, 01:33:08Z),
+`repair_attempt/complete` (`tests_passed`, 01:33:15Z),
+`repair_pull_request/accepted` (`human_review_required`, 01:33:20Z), and
+`repair_ci/complete` (`checks_passed`, 01:34:55Z).
+
+The job (`2d68ced3-e56c-4d4b-b66a-58c1a4a62e05`) completed with
+`status=ci_passed`, `ci_status=passed`, one `gpt-6-luna` request, and reported
+premium cost 1. Its recorded root cause was that the metrics mount is
+unconditionally disabled by `and False` and that the evidence contained no
+request or log details to confirm that cause. PR #64 (head
+`b47a520325c189d62167035cf87d8bc6a6acb057`, branch
+`repair/incident-caf1593e7bd159d2-2d68ced3`) changed the mount back to
+`if request_telemetry.enabled:` and added
+`test_metrics_endpoint_is_mounted_when_telemetry_is_enabled`. All five CI
+checks passed.
+
+### Bounds of this evidence
+
+This demonstrates a genuine alert-to-draft-PR repair, including persisted
+audit events, an applied model patch, isolated tests, and green CI. It does not
+demonstrate merge, release, deployment, or independent post-release recovery:
+both PRs remain draft, the base branch is the intentionally faulty demo branch,
+and the disposable stack and its data were removed after evidence capture. The
+repair still requires human review; automated tests cannot prove that the new
+regression test is sufficient.
+
+The QA custom agent definition previously named the unavailable model
+`Claude 3.5 Sonnet`. All three agent definitions now use the verified CLI model
+ID `gpt-6-luna`, which was confirmed with a live CLI response. This resolves the
+configuration defect; it is not itself a QA review.
