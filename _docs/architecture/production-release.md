@@ -1,13 +1,15 @@
 # Production release path and owner runbook
 
-**Status: Neon provisioned; release path not provisioned.** As of 2026-11-09 the
-Neon production project `benchscope-production` exists, its `production` branch
-is at schema head `0008`, and the app has been exercised against it locally.
-There is still no GitHub `production` environment, no production Render service,
-no production Clerk application, and no `PRODUCTION_*` configuration. The
-promotion workflow has never run. This document is the owner runbook and
-evidence contract; it is not proof that a production deployment or rollback
-occurred.
+**Status: Neon, environment, and Clerk configured; release path not provisioned.**
+As of 2026-11-09 the Neon production project `benchscope-production` exists, its
+`production` branch is at schema head `0008`, and the app has been exercised
+against it locally. The GitHub `production` environment exists with
+`PRODUCTION_DATABASE_URL`, and the separate Clerk **Development** application
+`BenchScope Production` has verified issuer/JWKS settings and two synthetic
+users. There is still no production Render service and no Clerk Production
+instance. The promotion workflow has never run. This document is the owner
+runbook and evidence contract; it is not proof that a production deployment or
+rollback occurred.
 
 ## Scope and honest description
 
@@ -16,8 +18,9 @@ enterprise-grade commercial production. It uses:
 
 - Render Free for the production API;
 - Neon Free for the production database;
-- Clerk Hobby with a separate Development application for synthetic
-  authentication tests;
+- Clerk Hobby with a separate **Development** application, `BenchScope
+  Production`, used only to mint synthetic smoke identities; this is not a
+  Clerk Production instance and no public frontend uses it;
 - a protected GitHub `production` environment and the existing manual
   `Promote Production` workflow.
 
@@ -36,9 +39,10 @@ not marketed by their providers as production-grade.
 | Staging deployment | `Deploy Backend` run `42619781983` succeeded for `3e03a7b` |
 | Public frontend | `https://shanegore.github.io/BenchScope/` returns HTTP 200; Pages deployment run `42619781869` succeeded for `3e03a7b` |
 | Frontend source evidence | The Pages deployment record identifies the source SHA; the live static content is not SHA-stamped |
-| Production environment | Absent (GitHub API returns 404) |
-| Production configuration | No `PRODUCTION_*` secrets or variables are configured |
+| Production environment | Present; restricted to `main`, required reviewer, no admin bypass; `PRODUCTION_DATABASE_URL` secret set |
+| Production configuration | Only `PRODUCTION_DATABASE_URL` is set; Render hook, Clerk secret, smoke URLs, and user IDs remain required |
 | Neon production project | `benchscope-production` (`long-leaf-22616183`); branch `production` is the default; Postgres 18; schema `0008_incident_repair_jobs`; two synthetic verification runs persisted |
+| Clerk production-demo app | `BenchScope Production` (`app_3Lt94hQGdMu4NPPtIeRhSm6o15c`); Development instance; issuer `https://closing-moray-6146.clerk.accounts.dev`; two synthetic users; no Production instance |
 | Promotion workflow | `.github/workflows/promote-production.yml` has never produced a run |
 | Main ruleset | Active; PR plus the five required checks; strict checks; no bypass actors; **0 required approving reviews** |
 
@@ -151,12 +155,16 @@ APP_MODE=hosted
 APP_ENV=production
 HOST=0.0.0.0
 DATABASE_URL=<production Neon pooled connection string>
-CORS_ORIGINS=https://shanegore.github.io
+CORS_ORIGINS=["https://shanegore.github.io"]
 CLERK_JWKS_URL=<production Clerk JWKS URL>
 CLERK_ISSUER=<production Clerk issuer>
-CLERK_AUTHORIZED_PARTIES=https://shanegore.github.io
+CLERK_AUTHORIZED_PARTIES=["https://shanegore.github.io"]
 BENCHMARK_ENABLED=false
 ```
+
+`CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` must be JSON arrays of origins,
+for example `["https://shanegore.github.io"]`. Do not use comma-separated
+strings or origins with paths such as `https://shanegore.github.io/BenchScope/`.
 
 Use the **pooled** Neon URL for Render application traffic. The
 `PRODUCTION_DATABASE_URL` GitHub secret must be the **direct** URL instead,
@@ -188,18 +196,28 @@ data, and never run destructive migrations.
 
 ### 3. Clerk
 
-Create one separate **Development** application:
+The separate **Development** application `BenchScope Production`
+(`app_3Lt94hQGdMu4NPPtIeRhSm6o15c`) already exists. It is distinct from the
+staging application, has no Production instance, and no public frontend uses it.
 
-- Name: `BenchScope Production` (or similar).
-- Create two synthetic users, for example `smoke-a@example.com` and
-  `smoke-b@example.com`; record both user IDs.
-- Copy the issuer, JWKS URL, and secret key.
-- Do not reuse the staging Clerk application.
-- Do not change the staging Clerk configuration.
-- Do not upgrade to a Clerk Production instance for this demonstration.
+Verified settings for the production-demo API:
 
-Use the owner's GitHub UI or local `gh secret set` to store the secret key. Never
-paste secrets into chat, commit them, or place them in `VITE_*` variables.
+- Issuer: `https://closing-moray-6146.clerk.accounts.dev`
+- JWKS URL: `https://closing-moray-6146.clerk.accounts.dev/.well-known/jwks.json`
+- Two distinct synthetic users with `+clerk_test@example.com` addresses; user
+  IDs are recorded in issue #71.
+- Secret key: `sk_test_...`; store it only as the `PRODUCTION_CLERK_SECRET_KEY`
+  GitHub environment secret. It is used only by GitHub Actions to mint
+  short-lived smoke tokens; never add it to Render or a `VITE_*` variable.
+
+The smoke-token API is testing-only and requires a Development instance. Do not
+upgrade this application to a Clerk Production instance for this demonstration.
+If a public production frontend is added later, create a separate Clerk
+Production instance with an owned domain and revisit the smoke-token method.
+
+Do not change the staging Clerk application or the public Pages Clerk variables.
+The public Pages frontend remains staging-backed. Never paste secrets into chat,
+commit them, or place them in `VITE_*` variables.
 
 ### 4. GitHub
 

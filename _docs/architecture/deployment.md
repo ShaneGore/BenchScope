@@ -4,11 +4,17 @@ This document describes the hosted layout and the manual production-release
 path. As of 2026-11-09 the Pages frontend and the Render staging API are
 deployed and SHA-verified from `main`. The Neon production project
 `benchscope-production` exists with its `production` branch at schema head
-`0008`, but the rest of the production demonstration is **not provisioned**:
-there is no GitHub `production` environment, no production Render service, no
-production Clerk application, and no production promotion or rollback. See
-[production-release.md](./production-release.md) for the simplified architecture,
-owner checklist, and exact release/rollback runbook.
+`0008`, and the GitHub `production` environment plus the separate Clerk
+**Development** application `BenchScope Production` are configured. The rest of
+the production demonstration is **not provisioned**: there is no production
+Render service, no Clerk Production instance, and no production promotion or
+rollback. See [production-release.md](./production-release.md) for the simplified
+architecture, owner checklist, and exact release/rollback runbook.
+
+The separate Development instance is used only to mint synthetic smoke tokens
+for the backend-only demonstration. It is not a silent fallback to a production
+Clerk application, no public frontend uses it, and the public Pages Clerk
+variables remain unchanged and staging-backed.
 
 The production target is a **course demonstration environment**, not
 enterprise-grade production. It uses Render Free, Neon Free, and a Clerk
@@ -74,7 +80,10 @@ a successful deployment.
   permissions.
 - Hosted backend configuration currently requires `APP_MODE=hosted`, `HOST`,
   `DATABASE_URL`, `CORS_ORIGINS`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, and
-  `CLERK_AUTHORIZED_PARTIES`. Configure `HOST` as the provider-required public bind
+  `CLERK_AUTHORIZED_PARTIES`. `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` must
+  be JSON arrays of origins, for example `["https://shanegore.github.io"]`;
+  comma-separated strings and origins with paths are rejected. Configure `HOST`
+  as the provider-required public bind
   address (commonly `0.0.0.0`) and set the service port using the name the
   selected provider supports; the application setting is `PORT` (default
   `8000`). `DATABASE_URL` and any provider credentials belong only in the
@@ -103,7 +112,10 @@ a successful deployment.
   are not required.
 - The token-generation API is testing-only and requires a Clerk Development
   instance; it must not be used with a Production instance. The production
-  demonstration therefore uses a separate Clerk Development application.
+  demonstration therefore uses the separate `BenchScope Production` Development
+  application (`app_3Lt94hQGdMu4NPPtIeRhSm6o15c`), which is distinct from the
+  staging application and has no Production instance. Hosted end-to-end
+  verification of this application remains part of issue #70.
 - `VITE_CLERK_PUBLISHABLE_KEY` remains a public frontend build-time variable
   for GitHub Pages.
 - Render's runtime Clerk settings (`CLERK_JWKS_URL`, `CLERK_ISSUER`, and
