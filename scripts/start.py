@@ -150,6 +150,25 @@ def main() -> int:
                 f"postgresql+psycopg://{user}:{password}@127.0.0.1:{port}/{database}"
             )
             worker_env["BENCHSCOPE_COPILOT_REPAIR_ENABLED"] = "true"
+            if not worker_env.get("BENCHSCOPE_REPAIR_BASE_BRANCH"):
+                try:
+                    branch = run(
+                        "git", "branch", "--show-current", capture=True
+                    ).stdout.strip()
+                except (
+                    AttributeError,
+                    OSError,
+                    RuntimeError,
+                    subprocess.CalledProcessError,
+                ):
+                    branch = ""
+                if (
+                    branch
+                    and ".." not in branch
+                    and not branch.startswith("-")
+                    and all(char.isalnum() or char in "._/-" for char in branch)
+                ):
+                    worker_env["BENCHSCOPE_REPAIR_BASE_BRANCH"] = branch
             print("Starting the operator-supervised repair worker in the foreground.")
             run(
                 "uv",

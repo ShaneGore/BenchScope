@@ -147,9 +147,14 @@ def test_repair_worker_is_started_only_by_explicit_foreground_option(monkeypatch
             "POSTGRES_PORT": "5439",
         },
     )
-    monkeypatch.setattr(
-        module, "run", lambda *args, **kwargs: calls.append((args, kwargs))
-    )
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        if args[:3] == ("git", "branch", "--show-current"):
+            return type("Result", (), {"stdout": "feat/copilot-autonomous-repair"})()
+        return type("Result", (), {"stdout": ""})()
+
+    monkeypatch.setattr(module, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["start.py", "--observability", "--repair-worker"])
 
     assert module.main() == 0
@@ -157,6 +162,7 @@ def test_repair_worker_is_started_only_by_explicit_foreground_option(monkeypatch
     assert worker_args[-2:] == ("-m", "app.incident_repair")
     env = worker_kwargs["env"]
     assert env["BENCHSCOPE_COPILOT_REPAIR_ENABLED"] == "true"
+    assert env["BENCHSCOPE_REPAIR_BASE_BRANCH"] == "feat/copilot-autonomous-repair"
     assert env["DATABASE_URL"] == (
         "postgresql+psycopg://test%20user:test%3Apassword@127.0.0.1:5439/testdb"
     )
