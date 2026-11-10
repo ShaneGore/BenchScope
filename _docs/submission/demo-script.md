@@ -1,9 +1,3 @@
-# Demo Script
+# Exploring the demo
 
-Superseded by the reviewer-friendly [demo walkthrough](./demo-walkthrough.md),
-which is the maintained 5–8 minute script with exact URLs, timings, expected
-behaviour and evidence links.
-
-Use the public demo for anonymous comparison. Authenticated import and local
-observability are separate optional segments and require their respective
-environment and credentials; do not imply they are part of the anonymous demo.
+See [Exploring BenchScope](./demo-walkthrough.md) for the public comparison, local import and links to technical verification. The public catalogue is read-only; personal imports and local observability require their respective setup.

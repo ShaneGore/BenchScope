@@ -33,7 +33,7 @@ Requirements below are paraphrased from the official rubric. Evidence labels:
 | 9 | [CI/CD](#9-cicd) | 3 | [Promotion and rollback evidence](../architecture/production-release.md#promotion-evidence-executed) |
 | 10 | [Observability](#10-observability) | 2 | [Metric-to-trace verification](../observability/metric-trace-link.md) |
 | 11 | [Alerting on User Impact](#11-alerting-on-user-impact) | 1 | [Phase 3C recovery record](../incidents/phase3c-recovery-demo.md) |
-| 12 | [On-Call Agent](#12-on-call-agent) | 2 | [Phase 3C independently verified recovery](../incidents/phase3c-recovery-demo.md) |
+| 12 | [On-Call Agent](#12-on-call-agent) | Reviewer-dependent | [Phase 3C independently verified recovery](../incidents/phase3c-recovery-demo.md) |
 
 ---
 
@@ -408,33 +408,22 @@ issue.
 - A human reviews and applies/merges; merge, release and hosted recovery are
   never automated. The automatic executor is disabled.
 
-**Demonstrated end to end (Phase 3 durable)**
-1. A real Grafana alert fired after a controlled metrics failure.
-2. The authenticated receiver accepted and persisted the incident.
-3. The supervised local repair worker dispatched the repair job.
-4. GPT-6 Luna performed a genuine investigation and generated a patch.
-5. The patch passed allowlist, boundary and isolated-test validation.
-6. The worker opened a draft repair PR; the five GitHub CI checks passed.
-7. The generated repair was applied in a controlled disposable environment.
-8. Independent checks confirmed `/metrics` recovered.
-9. Prometheus returned to `up=1`.
-10. The Grafana alert resolved and the recovery evidence was recorded.
+**Recorded demonstrations (Phase 3 durable)**
 
-**Primary evidence:** the
-**[Phase 3C independently verified recovery](../incidents/phase3c-recovery-demo.md)**.
-A fresh disposable Grafana alert on faulty revision `79ce43c` persisted incident
-`33173824-ad32-412e-a158-aabe24c5a310` and repair job
-`4783dc6e-c4d6-49ad-bafb-59d69090f4dc`. The recorded GPT-6 Luna patch passed the
-allowlist, boundary and isolated-test validators, was applied with owner approval
-only to the affected disposable checkout, and recovery was independently
-confirmed: `/metrics` exposition restored, Prometheus `up=1`, Grafana alert
-cleared, incident `resolved` with an audit event.
+Two supervised runs ([#63](https://github.com/ShaneGore/BenchScope/pull/63)
+and [#64](https://github.com/ShaneGore/BenchScope/pull/64)) show a genuine
+model-generated patch progressing from a real alert to a tested draft pull
+request. The local worker was started explicitly; it did not autonomously merge
+or deploy a change.
 
-The alert-to-draft-PR path was also completed by two supervised runs
-(PR [#63](https://github.com/ShaneGore/BenchScope/pull/63) and
-PR [#64](https://github.com/ShaneGore/BenchScope/pull/64), both closed and
-unmerged as evidence). These show the generation stage; Phase 3C shows the fix.
-
+A separate [Phase 3C recovery exercise](../incidents/phase3c-recovery-demo.md)
+replayed the recorded PR #64 patch against a fresh disposable incident. With
+owner approval, the patch was applied to the affected disposable checkout;
+independent checks observed `/metrics` restored, Prometheus `up=1`, the Grafana
+alert cleared, and the incident resolved with an audit event. That exercise did
+not invoke the model again. It therefore does not demonstrate one continuous
+automatic alert-to-model-to-recovery run. Awarding full credit is a matter for
+the reviewer; the records support the two stages and their stated boundaries.
 **Evidence**
 - [Phase 3C verified recovery](../incidents/phase3c-recovery-demo.md) — incident,
   recovery and audit evidence
