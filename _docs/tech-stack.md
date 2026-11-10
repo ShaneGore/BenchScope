@@ -1,6 +1,9 @@
 # BenchScope — Technology Stack Decision
 
-**Status:** Stack choices are candidates; public React frontend on GitHub Pages and a separately hosted API/database are the intended layout. Provider terms, current limits, payment-method requirements, and $0 recurring-cost eligibility must be verified before provisioning. Architecture, backlog and agent roles are out of scope for this document.
+**Status:** Implemented. The stack below is in production-style use for the
+staging and production demonstration environments as of 2026-11-10. Architecture,
+backlog and agent roles are out of scope for this document. For current
+deployment state see `_docs/architecture/production-release.md`.
 **Source of requirements:** `_docs/plan.md` (unchanged).
 **Decision principle:** Prefer technologies already used successfully in the owner's course projects, keep recurring cost at $0, and keep the private benchmark and local model endpoints out of the public hosted environment.
 

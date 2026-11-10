@@ -1,6 +1,6 @@
 # BenchScope — Architecture
 
-**Status:** Draft (MVP). Companion to `_docs/plan.md` (product) and `_docs/tech-stack.md` (stack decision). This document set covers system architecture only; backlog, agent roles, and task tracking are out of scope here.
+**Status:** Implemented. Companion to `_docs/plan.md` (product) and `_docs/tech-stack.md` (stack decision). This document set covers system architecture only; backlog, agent roles, and task tracking are out of scope here. Current deployment and promotion state is recorded in [`deployment.md`](deployment.md) and [`production-release.md`](production-release.md).
 
 ## Scope
 

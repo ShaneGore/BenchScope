@@ -1,44 +1,142 @@
 # Known Limitations
 
-## Implemented and verified
+Dated 2026-11-10, `main` at `dd8064ac6e3ebf505acb23fa01f5da051e07747f`. This
+list is deliberately blunt: it separates what is verified, what is
+code-and-test-supported, and what remains incomplete.
 
-- Frontend and backend tests pass in CI.
-- Docker backend image builds.
-- Hosted frontend and backend are deployed.
-- Observability and an injected alert with manual recovery were exercised locally; supervised recovery components also have isolated tests.
-- A recorded AI-generated repair was independently verified to resolve its disposable incident, including metrics-scrape recovery and alert resolution; it was not released (see Phase 3C).
-- Windows process-tree safety foundation is implemented and tested with synthetic runners.
+## Verified in Phase 4
 
-## Implemented but not independently verified
+- Backend, frontend, contract and browser-journey tests pass through one
+  command on current `main` (531 backend, 102 frontend, 10 journeys).
+- The containerised core stack (frontend, API, PostgreSQL) starts and persists
+  data across an API restart.
+- Pages, staging API and the production demo API are reachable; staging and
+  production `/version`, `/health` and `/ready` were checked.
+- Production promotion, rollback and restoration each passed 13/13 smoke checks
+  and retained the same four synthetic run UUIDs at the same schema head.
 
-- Full end-to-end synthetic runner integration through the API is represented by tests, but the exact real runner contract is not connected.
-- Observability dashboards and alerts are verified in local Docker Compose, not as a hosted production observability stack.
+## Application
 
-## Blocked or incomplete
+- The private benchmark runner adapter is **not integrated**. Issue
+  [#25](https://github.com/ShaneGore/BenchScope/issues/25) remains open, and
+  there is no authoritative private runner wrapper contract. The runner seam is
+  exercised with synthetic adapters only.
+- Real private benchmark execution has not been performed against the public
+  application, and its inputs, expected outputs and raw results are not
+  published.
+- The real runner's process-tree cleanup is not proven by source inspection
+  alone; Windows safety is tested with synthetic runners.
+- `quality_score` remains `null` until an authoritative scoring definition
+  exists.
+- Global rate-limiting specifics are undefined.
 
-- Issue #25 remains open.
-- No authoritative private runner wrapper contract is established.
-- Real benchmark execution has not been performed.
-- `quality_score` remains null.
-- The real runner's process-tree cleanup is not proven by source inspection alone.
-- The receiver persists eligible repair jobs; it does not itself execute a model or recovery action. Recovery requires explicit approval and a successful restart reports `verification_required` rather than resolving the incident without post-checks. No AI-generated repair has been released. One recorded AI-generated repair has been independently verified to resolve its disposable incident (Phase 3C), but the automatic recovery executor remains disabled.
-- The experimental repair worker is started explicitly in the foreground with `scripts/start.py --observability --repair-worker`; Compose alone does not start it. It requires a clean local checkout and loopback PostgreSQL, and must remain operator-supervised because its host process is not OS-isolated. It can use the operator's existing GitHub CLI login, which is not least-privilege credential isolation. A local synthetic probe using Copilot CLI 1.0.105 produced a schema-validated `gpt-6-luna` patch for two synthetic files that passed `git apply --check`; the CLI event parser and usage output confirmed the selected/effective model and one request, with a reported premium cost of 1. The probe did not use a persisted incident or execute generated code. The CLI tool controls are not proof of OS isolation or complete tool restriction enforcement. The bundled 1.0.81 CLI lacks `--sync-session`; use a compatible installation through `BENCHSCOPE_COPILOT_CLI`. Genuine alert-to-repair runs and draft repair PRs are now demonstrated (see below); merge, release, and post-release recovery verification are not.
-- Repair scope is currently limited to the metrics enable condition, literal health response, and health-contract tests. Existing test functions must remain unchanged, but automated checks cannot establish that a new regression test is meaningful. Review each draft and verify recovery independently. A lost worker lock connection during an active job has not been proven safe; do not run multiple workers or leave the worker unattended. A timed-out CI watch leaves its draft PR for manual follow-up.
-- A disposable metrics outage produced a real Grafana alert, a persisted incident with complete evidence, and an automatically claimed job. A verified Luna response passed structured-output validation, but the job escalated as `patch_rejected` before tests or PR creation. A separate sanitized diagnostic generated a malformed Git patch whose context also failed with `git apply --recount`; this does not establish the precise reason the incident patch was rejected. The disposable database was removed after its sanitized audit events were captured; this is not evidence of an end-to-end repair or recovery.
-- A later supervised synthetic probe reproduced incorrect hunk counts and mismatched context in Luna diffs. The worker now asks for exact context and uses Git's `--recount` while retaining strict context and whitespace checks. One subsequent synthetic Luna patch applied and passed the application and regression-test structure validators. This probe did not originate from an alert, execute generated tests, create a PR, or establish the cause of the earlier incident's rejection.
-- A second disposable metrics outage produced a real firing Grafana alert, complete persisted evidence, and an automatically claimed job at revision `eecc744`. It escalated as `patch_rejected` before the `copilot_patch_validated` audit event; no tests or repair PR resulted. The old audit does not identify which pre-validation check failed. The worker now makes at most one additional model request when a proposal omits either required file, records verified usage for each response, and records that specific failure if both proposals omit a file. Subsequent genuine incidents completed the repair path, but do not establish that this specific retry was exercised.
-- At revision `8ba618d`, another disposable alert led to an automatically claimed incident and a verified `gpt-6-luna` response (one request, reported premium cost 1). The response passed the initial patch checks but the job again escalated before tests or a PR. The generic historical audit does not identify which worktree validation failed; the worker now persists a sanitized, stage-specific failure code without storing patch contents.
-- At revision `ee125cd`, a further genuine Grafana alert again dispatched a verified `gpt-6-luna` response (one request, reported premium cost 1). The worker recorded `patch_apply_failed` and escalated before isolated tests or PR creation. The exact Git failure was not retained, so this does not establish whether the patch had invalid context, whitespace or another application error.
-- On 2026-11-09, two supervised runs on the intentionally faulty `demo/incident-repair-outage-20261109` branch completed the genuine alert-to-draft-PR path. Run 1 (revision `5838236`) persisted incident `e94c84b0`, applied a verified Luna patch, passed isolated tests, and opened draft PR #63; its worker recorded `ci_failed` only because the check watch raced workflow registration, and all five checks later passed. After the watch fix (`79ce43c`), run 2 persisted incident `3839ac43`, applied a patch that re-enabled the metrics mount and added a regression test, opened draft PR #64, and recorded `ci_passed` with 5/5 green checks. Neither PR was merged or released; both are closed, evidence-only drafts against the demo branch, and no post-release recovery was independently verified. The disposable stack and data were removed after evidence capture.
-- On 2026-11-09, Phase 3C replayed the recorded PR #64 patch for a fresh disposable incident (`33173824...`, job `4783dc6e...`) at faulty revision `79ce43c`. With owner approval, the patch was applied only to the affected disposable checkout as local commit `4714610`, and only the API image/container were rebuilt. Independent checks confirmed `/metrics` exposition, Prometheus `up=1`, Grafana alert resolution, and incident `resolved`. This is a labelled replay, not a new model invocation; the repair job remained `queued` because no worker was started. The evidence-only demo branch still carries the pre-PR-#65 verifier and fails one revision-isolation test when `APP_REVISION` is inherited, so the authoritative one-command result is the full pass on `main`. No merge, release, or hosted recovery was performed. See [phase3c-recovery-demo.md](../incidents/phase3c-recovery-demo.md).
-- The QA custom agent definition previously named the unavailable model `Claude 3.5 Sonnet`; the PM and Software Engineer definitions used another unavailable display name. All three now specify the CLI model ID `gpt-6-luna`, but the QA agent still failed to launch in the 2026-11-09 Copilot SDK session because its configured model display name was unavailable. The CLI model probe does not establish that the custom agent can launch.
-- The repair worker's CI watch now tolerates delayed check registration, but a timed-out watch still leaves its draft PR for manual follow-up. The worker remains host-supervised and is not OS-isolated.
-- No distinct production target exists. The staging API and Pages frontend are deployed from `main` and the staging `/version` endpoint matched the source SHA on 2026-11-09, but both environments are `main`-only with no required reviewers. The `production` GitHub environment is absent, no `PRODUCTION_*` settings are configured, and `.github/workflows/promote-production.yml` has never run. The main ruleset requires a pull request and the five CI checks but zero approving reviews, so production approval must come from an environment reviewer.
-- The production promotion path is documented, not demonstrated. It accepts a selected SHA/tag, requires `main` ancestry and successful `main` CI, pins the Render deploy to that SHA, waits for `/version`, mints short-lived Clerk tokens at runtime, and runs the full synthetic API smoke test (import, persistence, run detail, comparison, and owner isolation). It does not deploy the frontend in the same run, and no promotion or rollback has been rehearsed. The frontend deployment record identifies its source SHA, but the live static content is not SHA-stamped.
-- Production rollback is not fully automated. Re-running promotion with a previously verified, schema-compatible SHA restores the backend, but the workflow runs `alembic upgrade head` before deploying and never reverses migrations. A rollback is only safe between revisions with the same Alembic head; destructive downgrades are not performed, and Neon Free history is not a backup.
+## Deployment
+
+- The public Pages frontend is **staging-backed**. Production is an API-only
+  demonstration, so production frontend-to-API connectivity is not exercised.
+- Production uses free tiers (Render Free, Neon Free) with no SLA, cold starts,
+  limited deploy history and no backup guarantee.
+- Production authentication uses a separate Clerk **Development** application
+  for synthetic smoke identities; there is no Clerk Production instance and no
+  public production frontend auth.
+- Production approval is a **self-approval** gate: the repository owner is the
+  only required reviewer (`prevent_self_review=false`).
+- The main ruleset requires **zero approving reviews**, so independent code
+  review is procedural, not enforced.
+- Production rollback is an **application revision** rehearsal. Migrations are
+  forward-only; no database downgrade, restore or point-in-time recovery was
+  performed. A rollback is only safe between schema-compatible revisions.
+- Neon Free history and its single manual snapshot are not a production backup.
+- The live static frontend content is not SHA-stamped; the Pages deployment
+  record identifies its source SHA.
+
+## Observability and alerting
+
+- Observability dashboards, the correlated trace and alerting are verified in
+  **local Docker Compose**, not as a hosted monitoring stack. Hosted staging and
+  production do not run Prometheus, Tempo, Loki or Grafana.
+- The observability correlation evidence was produced at revision `12c3206` and
+  was not re-executed during Phase 4.
+- Alerting is local; the production demo API does not deliver alerts to the
+  receiver.
+
+## Supervised AI repair — what is and is not proven
+
+- The repair worker is started explicitly and is **operator-supervised**. Its
+  host process is not OS-isolated, and it can use the operator's existing GitHub
+  CLI login, which is not least-privilege credential isolation.
+- It does not merge, release or recover hosted production. The automatic
+  recovery executor is disabled.
+- Repair scope is limited to the metrics enable condition, the literal health
+  response and health-contract tests. Automated checks cannot prove that a new
+  regression test is meaningful, so each draft needs human review.
+- A lost worker lock connection during an active job has not been proven safe;
+  do not run multiple workers or leave the worker unattended. A timed-out CI
+  watch leaves its draft PR for manual follow-up.
+- The repair job receiver persists eligible jobs but does not itself execute a
+  model or recovery action. Recovery requires explicit approval; a successful
+  restart reports `verification_required` rather than resolving the incident
+  without post-checks.
+
+### Repair development history (historical, kept for honesty)
+
+- A local synthetic probe using Copilot CLI 1.0.105 produced a schema-validated
+  `gpt-6-luna` patch for two synthetic files that passed `git apply --check`.
+  The probe did not use a persisted incident or execute generated code, and the
+  CLI tool controls are not proof of OS isolation.
+- The bundled CLI 1.0.81 lacks `--sync-session`; use a compatible installation
+  through `BENCHSCOPE_COPILOT_CLI`.
+- Several earlier disposable incidents escalated before tests or PR creation:
+  one as `patch_rejected`, another at `8ba618d` after initial checks, another at
+  `ee125cd` as `patch_apply_failed`. The worker now persists a sanitized,
+  stage-specific failure code and asks for exact context with `git apply
+  --recount`. These failures do not establish the precise cause of each
+  rejection, and later runs should not be read as proof the retry path was
+  exercised for those exact cases.
+- On 2026-11-09, two supervised runs on `demo/incident-repair-outage-20261109`
+  completed the genuine alert-to-draft-PR path. Run 1 (`5838236`) persisted
+  incident `e94c84b0`, passed isolated tests and opened draft PR #63; it recorded
+  `ci_failed` only because the check watch raced workflow registration, and all
+  five checks later passed. After the watch fix (`79ce43c`), run 2 persisted
+  incident `3839ac43`, re-enabled the metrics mount with a regression test,
+  opened draft PR #64 and recorded `ci_passed` with 5/5 green. Neither PR was
+  merged or released.
+- Phase 3C replayed the recorded PR #64 patch for a fresh disposable incident
+  (`33173824…`, job `4783dc6e…`) at faulty revision `79ce43c`. With owner
+  approval the patch was applied only to the affected disposable checkout, and
+  only the API image/container were rebuilt. Independent checks confirmed
+  `/metrics`, Prometheus `up=1`, Grafana resolution and incident `resolved`. This
+  is a labelled replay, not a new model invocation, and nothing was merged,
+  released or deployed outside the disposable project. See
+  [phase3c-recovery-demo.md](../incidents/phase3c-recovery-demo.md).
+- The evidence-only demo branch still carries the pre-PR-#65 verifier and fails
+  one revision-isolation test when `APP_REVISION` is inherited. The authoritative
+  one-command result is the current `main` run in the
+  [dated log](./submission-checklist.md#dated-verification-log).
+
+## Agent team
+
+- The QA custom agent definition previously named an unavailable model; the PM
+  and Software Engineer definitions used another unavailable display name. All
+  three now specify the CLI model ID `gpt-6-luna`, but the QA agent still failed
+  to launch in a 2026-11-09 Copilot SDK session because its configured model
+  display name was unavailable. A CLI model probe does not establish that the
+  custom agent can launch.
 
 ## Privacy and hosting
 
-- Hosted mode does not run benchmarks.
-- The deployment uses free-tier services; two historical demo configurations were run through the paid OpenRouter API.
-- Only selected approved benchmark summary values are publicly served; private prompts, responses, test content and paths are not.
+- Hosted mode never runs benchmarks; `/api/v1/benchmark/capabilities` returns
+  `{"enabled":false}`.
+- Only selected approved benchmark aggregate summaries are publicly served;
+  private prompts, responses, test content and paths are not.
+- Two historical demo configurations were run through the paid OpenRouter API.
+- The deployment uses free-tier services and is a course demonstration, not an
+  enterprise production system.
+
+## Deferred work
+
+- Resolve the private runner adapter contract and integrate it (issue #25).
+- Define `quality_score` and rate limiting.
+- Decide whether a hosted observability stack or a production frontend is in
+  scope.
+- Add a second maintainer so independent review can be required.

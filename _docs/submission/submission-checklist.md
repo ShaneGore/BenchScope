@@ -1,36 +1,156 @@
-# Submission checklist
+# Submission checklist and dated verification log
 
-Compared against the [current course criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md). This is an evidence map, not an awarded score; the reviewer determines the grade.
+The criterion-by-criterion assessment lives in the
+[official rubric evidence matrix](./rubric-evidence.md). This page is the
+supporting record: the exact verification runs, their revision, and the owner
+actions that remain.
 
-| Criterion | Implemented or documented | Test and runtime evidence; limits |
-| --- | --- | --- |
-| Problem description | [README](../../README.md) describes the problem, functionality and expected behaviour. | Documentation, not a runtime demonstration. |
-| Product specification | [Product plan](../plan.md) and [public issues](https://github.com/ShaneGore/BenchScope/issues) record requirements and work. | Requirements and issue history, not proof of completion. |
-| Agent team | [Process](../process.md) and [role instructions](../team/) describe PM, engineering and QA responsibilities. The three custom agent definitions use the verified CLI model ID `gpt-6-luna`. | Documentation of the workflow and a verified model configuration; the QA review itself is still a human-supervised step. |
-| Context management | [AGENTS.md](../../AGENTS.md) links modular project documentation. | Documentation of the project context. |
-| Application | Frontend, FastAPI and PostgreSQL are present; see README for setup and the live demo. | The local browser journeys below were demonstrated; a full clean-start execution remains to be verified. Check live links during review. |
-| Testing | Unit and integration tests exist; PostgreSQL-dependent tests require a disposable database. The README documents a single-command verifier. | On 2026-11-09, `scripts/verify.py` passed on `main` at `c47adc1`: Ruff, 525 backend tests with no skips, 102 frontend tests, build, API contract, container browser check, and 10 browser journeys. PR #65 (`2be61f5`) removed the revision-isolation defect that had produced a false failure; the evidence-only demo branch still carries the older verifier (see [Phase 3C](../incidents/phase3c-recovery-demo.md#repaired-checkout-regression-run)). |
-| Containerization | Compose defines frontend, API and PostgreSQL plus observability. | A disposable local stack was used for the exercises below; first-time environment and secret setup are required. A fresh current-source offline API build was blocked. |
-| Deployment | README links the deployed frontend and staging API; the [deployment guide](../architecture/deployment.md) and [production runbook](../architecture/production-release.md) describe promotion and rollback. | Staging API and Pages are live and SHA-verified from `2be61f5`; production promotion and rollback are unexecuted and no distinct production target exists. |
-| CI/CD | GitHub Actions runs PR and main CI, deploys staging API and Pages from successful main CI, and defines a guarded manual production-promotion workflow. The [production runbook](../architecture/production-release.md) records the exact owner steps. | Staging `/version` matched `main` at `2be61f5` and `/ready` returned ready; the Pages deployment at the same SHA returned HTTP 200. No `production` environment or target exists, no `PRODUCTION_*` settings are configured, and promotion/rollback has never run. Workflow definitions are not evidence of a production release. |
-| Observability | Local OpenTelemetry, Prometheus, Grafana, Loki and Tempo setup is documented in [metric-to-trace verification](../observability/metric-trace-link.md) and [incidents](../incidents/). | A fresh `12c3206` local exercise correlated an exemplar, trace and log via Grafana; hosted correlation is not established. |
-| Alerting on user impact | Alert rules and a local incident exercise are documented under [incidents](../incidents/). | Supervised disposable exercises dispatched repair jobs automatically; they do not prove hosted production alerting. |
-| On-call agent | Incident-handling and supervised repair components are documented under [incidents](../incidents/), including the [repair demonstration](../incidents/task-23.md#end-to-end-repair-demonstration-2026-11-09) and the [verified recovery](../incidents/phase3c-recovery-demo.md). | Two supervised disposable runs (2026-11-09) completed the real alert-to-draft-PR path: persisted incident, verified `gpt-6-luna` patch, isolated tests, and draft PRs #63/#64 with 5/5 CI checks; run 2 recorded `ci_passed`. On 2026-11-09, a fresh disposable incident (`33173824...`, job `4783dc6e...`) replayed that recorded patch through the worker validators, applied it under owner approval to the affected disposable API, rebuilt/recreated only that container, and independently verified recovery: `/metrics` exposition restored, Prometheus `up=1`, Grafana alert cleared, and incident `resolved` with an audit event. This was a labelled replay, not a new model invocation, and the job stayed `queued` because no worker ran. Merge, release, and hosted production recovery remain unperformed; fixed recovery is still disabled. |
+**Baseline:** `main` at `dd8064ac6e3ebf505acb23fa01f5da051e07747f` (2026-11-10).
 
-## Dated verification and provenance
+## Phase 4 status at a glance
 
-- **Historical:** [PR #57](https://github.com/ShaneGore/BenchScope/pull/57) was merged at `c108909`, and [issue #56](https://github.com/ShaneGore/BenchScope/issues/56) was closed. The backend full suite passed 412 tests **before** the latest changes; this is not a current full-suite result.
-- **2026-11-08, current branch, local tests:** frontend tests passed (102 tests) and the frontend build passed.
-- **2026-11-08, backend verification:** the post-CI-gate `uv run --no-sync pytest -q` passed 460 tests with no skips against disposable PostgreSQL. `ruff check .` and `ruff format --check .` passed (59 files).
-- **2026-11-08, runtime demonstration:** 10 browser journeys (6 + 3 + 1) passed in an isolated sequential final rerun using alternate loopback ports and disposable PostgreSQL. In an earlier attempt, one browser test timed out while the frontend suite ran concurrently; the cause is undetermined. Three isolated import reruns and the full 10-journey sequential rerun passed. The original default-port run was blocked because port 8000 was occupied.
-- **2026-11-07, limited runtime demonstration:** on a disposable stack, a metric exemplar matched a trace in Tempo and Grafana. The API used a cached image of unknown source, so this does not establish current-source behavior. A fresh current-source offline build was blocked by a missing cached locked dependency; fresh log correlation was not demonstrated.
-- **2026-11-09, on-call repair demonstration:** two supervised disposable runs produced genuine Grafana alerts, persisted incidents with complete evidence, verified `gpt-6-luna` patches, passing isolated tests, and draft PRs #63/#64 with all five CI checks green. Run 1 recorded `ci_failed` because its check watch raced workflow registration; run 2 recorded `ci_passed`. Neither PR was merged or released, and both remain based on the intentionally faulty demo branch.
-- **2026-11-09, merged repair implementation:** PR #62 was merged as `12c3206`; its five main CI checks and automatic staging and Pages deployments passed. The two demonstration PRs are closed and unmerged. The main ruleset requires the five checks but zero approving reviews, so human approval remains procedural rather than enforced.
-- **2026-11-09, deployment review:** staging API `/version` returned `2be61f5cfc502a0425719f5f97705e716fb2061e` (the same SHA as `main`) and `/ready` returned `{"status":"ready"}`; the Pages site returned HTTP 200. `Deploy Backend` and `Deploy GitHub Pages` succeeded for that SHA. GitHub has no `production` environment and no `PRODUCTION_*` settings, and `promote-production.yml` has never run. Staging and Pages environments are `main`-only with no required reviewers.
-- **2026-11-09, fresh single-command verification:** on clean `12c3206`, container startup, synthetic import, history and detail, and persistence after an API restart passed. The verifier then failed one alert-receiver test because it passed the container's `APP_REVISION` into the backend test environment; 523 tests passed. At fix commit `18c4e01`, the same command passed with conflicting inherited revision variables: Ruff, 525 backend tests with no skips, 102 frontend tests, build, API contract, container browser check, and 10 browser journeys. Both disposable stacks and their volumes were removed.
-- **2026-11-09, fresh observability verification:** the isolated current-source verifier on `12c3206` matched Prometheus exemplar, Tempo trace, Loki request log and anonymous Grafana trace proxy for trace `802cccdd7ebb4fc79cdd9750c0f8063d`, span `20e0cee9bf281408`. It cleaned up its disposable project; this is local, not hosted, evidence.
-- **2026-11-09, current-`main` single-command verification:** `uv run --no-project python scripts/verify.py` passed on `main` at `c47adc1`: Ruff, 525 backend tests with no skips, 102 frontend tests, build, API contract check, container browser check, and 10 browser journeys. A Windows working-tree CRLF/LF mix in `backend/tests/test_incident_investigation.py` first failed the format gate; restoring the repository's LF bytes (content unchanged) resolved it. PR #65 fixed the revision-isolation defect that previously caused a false backend failure.
-- **2026-11-09, Phase 3C verified recovery:** a fresh disposable Grafana alert on faulty revision `79ce43c` persisted incident `33173824-ad32-412e-a158-aabe24c5a310` and repair job `4783dc6e-c4d6-49ad-bafb-59d69090f4dc`. The recorded PR #64 `gpt-6-luna` patch passed the worker's allowlist, boundary, and isolated-test validators and was then applied, with owner approval, only to the affected disposable checkout (`4714610...`); only the API image/container were rebuilt. Independent checks confirmed `/metrics` exposition, Prometheus `up=1`, Grafana alert resolution, incident `resolved`, and a passing health smoke including anonymous demo immutability. The job remained `queued` because no worker ran; nothing was merged, released, or deployed outside the disposable project. See [Phase 3C](../incidents/phase3c-recovery-demo.md).
+| Area | State |
+|---|---|
+| Full-stack app | Working locally and hosted; single-command start and verify |
+| Tests | 531 backend, 102 frontend, 10 browser journeys — passed at Phase 4 |
+| Containers | `compose.yaml` core stack + observability overlay |
+| Deployment | Pages + staging API automatic; production API manual/protected |
+| CI/CD | Five required checks; staging CD; manual production; rehearsed rollback |
+| Observability | Local correlated metrics/traces/logs with shared trace ID |
+| Alerting | Real Grafana availability alert; authenticated receiver |
+| AI repair | Supervised alert→draft-PR; recovery independently verified in a disposable environment |
+| Private runner | Not integrated; [#25](https://github.com/ShaneGore/BenchScope/issues/25) open |
 
-- [ ] Complete **three peer reviews** in the course platform; this is required to pass.
-- [ ] Confirm current deployment and complete the submission form on the course platform.
+## Dated verification log
+
+### 2026-11-10 — Phase 4, current `main` (`dd8064a`)
+
+`uv run --no-project python scripts/verify.py` on `main` plus the Phase 4
+documentation changes:
+
+- Ruff: all checks passed; 65 files already formatted.
+- Backend: **531 passed**, no skips, 159 s, disposable PostgreSQL.
+- Frontend: **18 test files, 102 tests passed**.
+- Production build: passed.
+- API contract: `openapi.yaml` regeneration produced no diff.
+- Container browser check: built container frontend read an imported result from
+  its real API in Chromium.
+- Browser journeys: **6 + 3 + 1 = 10 passed** (import/history/comparison,
+  demo immutability, ownership, runner lifecycle, base path).
+- Persistence after API restart: passed.
+- Disposable containers, network, volumes and images removed.
+
+Live checks:
+
+- Staging `/version` = `dd8064ac6e3ebf505acb23fa01f5da051e07747f`; `/health` 200;
+  `/ready` `{"status":"ready"}`.
+- Production `/version` = `dd8064ac6e3ebf505acb23fa01f5da051e07747f`; `/health`
+  200; `/ready` `{"status":"ready"}`; capabilities `{"enabled":false}`.
+- Pages HTTP 200; deployed JS references the staging origin (7 matches) and no
+  production origin.
+- Main CI [`42714645314`](https://github.com/ShaneGore/BenchScope/actions/runs/42714645314): all five jobs success.
+- Staging deploy [`42714879812`](https://github.com/ShaneGore/BenchScope/actions/runs/42714879812) and Pages [`42714879726`](https://github.com/ShaneGore/BenchScope/actions/runs/42714879726): success at `dd8064a`.
+- Production promotion [`42726216077`](https://github.com/ShaneGore/BenchScope/actions/runs/42726216077), rollback [`42727553382`](https://github.com/ShaneGore/BenchScope/actions/runs/42727553382), restore [`42728234322`](https://github.com/ShaneGore/BenchScope/actions/runs/42728234322): all success, 13/13 smoke.
+
+### 2026-11-09 — Phase 3C verified recovery (durable)
+
+A fresh disposable Grafana alert on faulty revision `79ce43c` persisted incident
+`33173824-ad32-412e-a158-aabe24c5a310` and repair job
+`4783dc6e-c4d6-49ad-bafb-59d69090f4dc`. The recorded PR #64 GPT-6 Luna patch
+passed the worker's allowlist, boundary and isolated-test validators, then was
+applied with owner approval only to the affected disposable checkout; only the
+API image/container were rebuilt. `/metrics` exposition restored, Prometheus
+`up=1`, Grafana alert resolved, incident `resolved` with an audit event. This was
+a labelled replay, not a new model invocation. See
+[phase3c-recovery-demo.md](../incidents/phase3c-recovery-demo.md).
+
+### 2026-11-09 — Supervised repair runs (durable)
+
+Two supervised runs on the intentionally faulty
+`demo/incident-repair-outage-20261109` branch completed the genuine
+alert→investigation→patch→isolated-tests→draft-PR path:
+
+- Run 1, revision `5838236`: incident `e94c84b0`, draft PR #63, recorded
+  `ci_failed` because the check watch raced workflow registration; all five
+  checks later passed.
+- Run 2, revision `79ce43c`: incident `3839ac43`, draft PR #64, recorded
+  `ci_passed` with 5/5 green.
+
+Neither PR was merged or released; both are closed evidence-only drafts.
+
+### 2026-11-09 — Local observability correlation (durable)
+
+Isolated current-source verifier at `12c3206` matched a Prometheus exemplar,
+Tempo trace, Loki request log and anonymous Grafana trace proxy for trace
+`802cccdd7ebb4fc79cdd9750c0f8063d`, span `20e0cee9bf281408`. Local, not hosted.
+See [metric-trace-link.md](../observability/metric-trace-link.md).
+
+### 2026-11-09 — Verifier isolation fix
+
+PR #65 (`2be61f5`) removed the defect where the container's `APP_REVISION`
+leaked into the backend test environment and produced a false failure. The fix
+is on `main`; the 2026-11-10 Phase 4 run above is the authoritative current
+result.
+
+### Historical results (do not combine with current totals)
+
+- 2026-11-09, `main` at `c47adc1`: Ruff, 525 backend tests, 102 frontend tests,
+  build, contract, container check, 10 browser journeys — passed. Superseded by
+  the Phase 4 run; the backend total rose to 531 with later merges.
+- 2026-11-08, post-CI-gate: 460 backend tests on disposable PostgreSQL.
+- 2026-11-07: metric exemplar matched a trace, but from a cached image of
+  unknown source; not current-source evidence.
+
+## Submission platform facts (verified 2026-11-10)
+
+Source: <https://courses.datatalks.club/ai-dev-tools-2026/project/project2>.
+
+| Item | Verified value |
+|---|---|
+| Active attempt | **Project 2** (Project 1 closed as Completed) |
+| Deadline | **16 November 2026 (Mon), 23:00**, shown in the viewer's timezone |
+| Submission status | **Not verifiable from the public page.** It shows only a login prompt; the owner's account status must be checked while signed in. |
+| Required fields | GitHub link to the project; **exact commit ID** to evaluate |
+| Optional fields | Up to 14 learning-in-public links; time spent (hours); FAQ contribution URL; certificate name |
+| Video/screenshots | Not requested by the submission form |
+| Peer review | Three reviews of other participants' projects; voting happens on each project's page |
+
+The project must therefore be submitted with a **specific commit SHA**, not just
+the repository URL. Choose the final reviewed `main` commit at submission time.
+
+## Owner actions
+
+### Completed by the agent/repository
+
+- [x] Repository baseline recorded and all environments SHA-verified.
+- [x] Phase 4 documentation set written and corrected.
+- [x] Rubric evidence matrix and demo walkthrough prepared.
+- [x] Security and privacy review performed.
+- [x] Production promotion, rollback and restoration evidenced.
+- [x] Course deadline and submission fields checked on the public platform page.
+
+### Owner must complete (not agent-verifiable)
+
+- [ ] **Log in and submit Project 2** before 16 November 2026 23:00 (viewer
+      timezone). The exact deadline is displayed on the platform.
+- [ ] **Supply the exact commit ID** to evaluate. Merge the Phase 4 PR (or choose
+      another reviewed `main` commit) and paste that 40-character SHA.
+- [ ] **Complete three peer reviews.** Mandatory to pass, independent of the
+      rubric score. Voting is on other participants' project pages.
+- [ ] Optionally add learning-in-public links, hours spent, FAQ contribution and
+      certificate name.
+- [ ] Record the submission receipt outside the repository.
+
+### Not yet verified
+
+- The owner's actual submission status while signed in. The unauthenticated public
+  page cannot establish whether a draft or submission exists.
+- The exact peer-review window and whether reviews must be completed before or
+  after the submission deadline.
+- Whether the platform enforces a minimum score for peer reviews to count.
+
+## Honest limitations
+
+See [known-limitations.md](./known-limitations.md). The two most likely to affect
+a reviewer's score are the supervised (not autonomous) AI repair and the
+local-only observability stack.

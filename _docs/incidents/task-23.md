@@ -427,7 +427,7 @@ uv run pytest -q tests\test_alert_receiver.py tests\test_incident_investigation.
 ```
 
 For the local incident walkthrough, use the isolated Stage 1 procedure under
-[Issue #32 — Stage 1 authenticated alert intake](#issue-32-stage-1-authenticated-alert-intake).
+[Issue #32 — Stage 1 authenticated alert intake](#issue-32--stage-1-authenticated-alert-intake).
 After observing the firing alert, verify that one incident has one
 `investigation_dispatch` audit row with the blocked reason above. Stop there:
 the model gate and Docker recovery gate must not be bypassed.

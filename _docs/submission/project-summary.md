@@ -38,8 +38,13 @@ BenchScope imports supported JSON result files, validates required fields, norma
 
 ## Hosted demo
 
-- Frontend: https://shanegore.github.io/BenchScope/
-- Backend: https://benchscope-staging-api.onrender.com
+- Frontend (staging-backed): https://shanegore.github.io/BenchScope/
+- Staging API: https://benchscope-staging-api.onrender.com
+- Production demo API (backend-only): https://benchscope-production-api.onrender.com
+
+The public frontend remains connected to staging. Production is a separate API
+and database, released manually through a protected workflow. Both currently
+report `dd8064ac6e3ebf505acb23fa01f5da051e07747f`.
 
 ## Privacy and safety
 
@@ -49,5 +54,8 @@ BenchScope never stores private prompts, reference answers, hidden tests, genera
 
 - Real benchmark launch and cancellation are not yet fully integrated; Issue #25 remains open.
 - The local subprocess adapter is implemented and tested with synthetic runners.
-- Observability and alerting are verified in local Docker Compose.
+- Observability and alerting are verified in local Docker Compose, not hosted.
+- The AI repair workflow is supervised; hosted autonomous recovery is disabled.
+- The public frontend is staging-backed; production is API-only.
+- Free-tier hosting has no SLA, cold starts and no backup guarantee.
 - `quality_score` remains null until an authoritative scoring definition exists.
