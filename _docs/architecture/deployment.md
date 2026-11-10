@@ -1,15 +1,14 @@
 # Deployment design and readiness
 
-This document describes the hosted layout and the manual production-release
-path. As of 2026-11-09 the Pages frontend and the Render staging API are
-deployed and SHA-verified from `main`. The Neon production project
-`benchscope-production` exists with its `production` branch at schema head
-`0008`, and the GitHub `production` environment plus the separate Clerk
-**Development** application `BenchScope Production` are configured. The rest of
-the production demonstration is **not provisioned**: there is no production
-Render service, no Clerk Production instance, and no production promotion or
-rollback. See [production-release.md](./production-release.md) for the simplified
-architecture, owner checklist, and exact release/rollback runbook.
+This document describes the hosted layout, the automatic staging path and the
+manual production-release path. As of 2026-11-10 all of it is **provisioned and
+demonstrated**: the Pages frontend and the Render staging API deploy
+automatically from `main`, and the separate production demonstration API,
+Neon production database, GitHub `production` environment and Clerk
+**Development** application all exist. Production promotion, a rollback and a
+restoration were executed successfully. See
+[production-release.md](./production-release.md) for the exact evidence,
+architecture and reusable runbook.
 
 The separate Development instance is used only to mint synthetic smoke tokens
 for the backend-only demonstration. It is not a silent fallback to a production
@@ -33,9 +32,9 @@ approval.
 | Component | Staging | Production demonstration |
 |---|---|---|
 | Static frontend | GitHub Pages, pointing at the staging API | Not included; public Pages remains staging-backed |
-| API | Existing Render Free web service | New Render Free web service, automatic deploys disabled |
-| Database | Existing Neon Free project | New Neon Free project, separate credentials |
-| Authentication | Existing Clerk Development instance | New Clerk Development application, synthetic users only |
+| API | Render Free web service | Separate Render Free web service, automatic deploys disabled |
+| Database | Neon Free project | Separate Neon Free project, separate credentials |
+| Authentication | Clerk Development instance | Separate Clerk Development application, synthetic users only |
 | Deployment | Automatic after successful `main` CI | Manual `workflow_dispatch` with typed confirmation and `production` environment approval |
 
 GitHub Pages cannot run the backend, database, or benchmark runner. The
@@ -115,7 +114,9 @@ a successful deployment.
   demonstration therefore uses the separate `BenchScope Production` Development
   application (`app_3Lt94hQGdMu4NPPtIeRhSm6o15c`), which is distinct from the
   staging application and has no Production instance. Hosted end-to-end
-  verification of this application remains part of issue #70.
+  verification of this application was completed by the production promotion run
+  [`42726216077`](https://github.com/ShaneGore/BenchScope/actions/runs/42726216077)
+  and is recorded in issue #70.
 - `VITE_CLERK_PUBLISHABLE_KEY` remains a public frontend build-time variable
   for GitHub Pages.
 - Render's runtime Clerk settings (`CLERK_JWKS_URL`, `CLERK_ISSUER`, and
@@ -128,8 +129,8 @@ a successful deployment.
 Current code behavior is limited to the following known facts:
 
 - `/health` reports process health; `/ready` checks whether the configured
-  database is reachable. Both are live-verified on staging. They have not yet
-  been exercised against the production demonstration service.
+  database is reachable. Both are live-verified on staging and on the production
+  demonstration service (2026-11-10).
 - The hosted settings validator requires a PostgreSQL `DATABASE_URL`, a
   non-empty CORS allowlist, a public bind host, and all three Clerk settings.
   Wildcard CORS origins are rejected in hosted mode.
@@ -137,9 +138,10 @@ Current code behavior is limited to the following known facts:
   `alembic upgrade head` against `PRODUCTION_DATABASE_URL` before triggering the
   deploy hook. Put the **direct** Neon URL in that secret and the **pooled** URL
   in Render's `DATABASE_URL`; Alembic also prefers `DATABASE_URL_UNPOOLED` when
-  present. The migration has been verified locally against the production Neon
-  branch, but not yet through the GitHub workflow. Migrations are forward-only;
-  rollback is safe only between schema-compatible revisions.
+  present. The migration was verified locally against the production Neon
+  branch and then executed through the GitHub promotion workflow on 2026-11-10.
+  Migrations are forward-only; rollback is safe only between schema-compatible
+  revisions.
 - Application records are stored through the configured database. The selected
   API host's filesystem persistence, restart behavior, cold starts, quotas, and
   database plan limits are provider-dependent. Render Free may sleep or restart;
@@ -189,10 +191,12 @@ environment gate is technically enforced by GitHub, but because the owner is the
 sole reviewer it is a self-approval gate, not independent second-person review.
 The main ruleset still requires zero approving reviews.
 
-As of 2026-11-09 none of those settings exists and the `production` environment
-has not been created, so the workflow has never run. Creating the environment
-and the production target requires the owner approval described in
-[production-release.md](./production-release.md).
+**Historical (2026-11-09):** before provisioning, none of those settings existed,
+the `production` environment had not been created, and the workflow had never
+run. That is no longer the current state. As of 2026-11-10 the environment,
+secrets, variables and production Render service are configured, and the
+promotion, rollback and restoration runs completed successfully. See
+[production-release.md](./production-release.md#current-verified-state).
 
 ### Promotion guards
 
@@ -216,16 +220,16 @@ HTTP requests to `/version` with synthetic revision values, and exercises the
 deployment verifier against synthetic ready, wrong-revision and not-ready
 responses. A failed or unsupported preflight fails closed. The checked-out SHA
 is used for the deploy hook, the readiness/revision check, and the smoke test.
-These guards do not constitute owner approval or evidence that production
-deployment has been exercised.
+These guards do not constitute owner approval. Their effectiveness is
+demonstrated by the successful promotion run `42726216077` and by the earlier
+failures they would have caught.
 
 ### Rollback
 
 1. Identify the current production SHA and a previously verified,
-   schema-compatible SHA. A safe demonstration pair is the current `main` SHA
-   and `c47adc16aa3f4135a2cc1da81ff4cab16b6753b6`, which has a successful `main`
-   CI run and the same Alembic head (`0008`); the difference is documentation
-   only.
+   schema-compatible SHA. The rehearsal used `ab6ea5dc10d18059071f06696478edc0b1c46284`
+   as the rollback revision and `dd8064ac6e3ebf505acb23fa01f5da051e07747f` as the
+   restore revision; both share the same Alembic head (`0008`).
 2. Re-run the promotion workflow with the rollback SHA and approve the
    `production` environment.
 3. Verify `/version`, `/ready`, the full smoke test, and that previously
@@ -237,12 +241,12 @@ deployment has been exercised.
    or an approved database recovery procedure.
 6. Neon Free history and its single manual snapshot are not a production backup.
 
-The staging API and Pages frontend have been deployed from `main`, and the
-staging `/version` endpoint matched the source SHA on 2026-11-09. No production
-promotion, production health/readiness check, production migration, production
-smoke test, production rollback, or recreation has been exercised. Record
-production URLs and rehearsal results in the release evidence; do not mark them
-complete until verified.
+The staging API and Pages frontend deploy from `main`, and both staging and
+production `/version` returned `dd8064a…` on 2026-11-10. Production promotion
+(`42726216077`), rollback (`42727553382`) and restoration (`42728234322`) have
+all been exercised, each passing 13/13 smoke checks with the same four synthetic
+run UUIDs retained. This was an **application revision** rehearsal only: no
+database rollback, restore or downgrade was performed.
 
 ## Provider terms to recheck before provisioning
 

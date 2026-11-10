@@ -1,5 +1,14 @@
 # BenchScope release-readiness audit
 
+> **Historical document (2026-10-27, commit `228081d`).** This audit concluded
+> BLOCKED for that revision and is retained as engineering history. It is **not**
+> the current status. Since then the blockers it recorded were addressed:
+> staging and production demonstration environments exist, deployment and
+> rollback were executed and evidenced, and the one-command verifier passes on
+> current `main`. For current state see
+> [README](../../README.md) and
+> [production-release.md](../architecture/production-release.md).
+
 ## Result and audit boundary
 
 **Release conclusion: BLOCKED — not READY.** This is an evidence audit, not a

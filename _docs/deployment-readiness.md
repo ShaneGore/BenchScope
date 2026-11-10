@@ -1,5 +1,13 @@
 # Hosted deployment readiness and provider constraints
 
+> **Historical document (2026-10-29).** This was a pre-provisioning readiness
+> analysis. It is kept because it explains the free-tier decisions. It is **not**
+> current status: the staging and production demonstration environments, the
+> protected `production` environment and the promotion/rollback rehearsal now
+> exist. For current state see
+> [production-release.md](./architecture/production-release.md) and
+> [README](../README.md).
+
 Date checked: 2026-10-29.
 
 This document prepares repository-side deployment work for Issue #21. It does not

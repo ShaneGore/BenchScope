@@ -1,6 +1,10 @@
 # Backend API contract
 
-FastAPI-generated OpenAPI is the source of truth; TS types generated via `openapi-typescript` (CI or dev). All paths prefixed `/api/v1`.
+The committed [`openapi.yaml`](../../../openapi.yaml) is the authoritative contract.
+FastAPI serves no runtime OpenAPI document (`openapi_url=None`), so the TypeScript
+types are generated from the committed file with `openapi-typescript` via
+`pnpm gen:api`; `pnpm check:api` regenerates and fails on drift. All paths are
+prefixed `/api/v1`.
 
 ## Conventions
 
